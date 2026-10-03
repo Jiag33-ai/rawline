@@ -253,6 +253,8 @@ void Engine::setGeometryUniforms(GLuint prog, const float *p) {
     glUniform4fv(glGetUniformLocation(prog, "uCrop"), 1, p + G_CROP);
     glUniform4fv(glGetUniformLocation(prog, "uGeo"), 1, p + G_GEO);
     glUniform4fv(glGetUniformLocation(prog, "uGeo2"), 1, p + G_GEO2);
+    glUniform4fv(glGetUniformLocation(prog, "uLensDist"), 1, p + G_LDIST);
+    glUniform2f(glGetUniformLocation(prog, "uLensDist2"), p[G_LDIST + 4], p[G_LDIST_ON]);
 }
 
 void Engine::runAnalysis(const float *p) {
@@ -337,6 +339,10 @@ void Engine::runMain(const float *p, Rect vis, int pw, int ph, Target &e, int ma
     glUniform1i(glGetUniformLocation(pr, "uNumMasks"), int(p[G_NUM_MASKS] + 0.5f));
     glUniform1i(glGetUniformLocation(pr, "uShowMask"), int(std::lround(p[G_SHOWMASK])));
     glUniform1f(glGetUniformLocation(pr, "uAspect"), float(ow) / float(oh));
+    glUniform3fv(glGetUniformLocation(pr, "uTcaR"), 1, p + G_LTCA);
+    glUniform3fv(glGetUniformLocation(pr, "uTcaB"), 1, p + G_LTCA + 3);
+    glUniform3fv(glGetUniformLocation(pr, "uLensVig"), 1, p + G_LVIG);
+    glUniform3f(glGetUniformLocation(pr, "uLensFlags"), p[G_LTCA_ON], p[G_LVIG_ON], 0.f);
     glUniform1f(glGetUniformLocation(pr, "uOverlayOn"), overlayW_ > 0 ? p[G_OVERLAY] : 0.f);
     (void)bw;
     setGeometryUniforms(pr, p);

@@ -66,6 +66,8 @@ class EditorSession(
     private var surfaceW = 1
     private var surfaceH = 1
     private var photo: Photo? = null
+    @Volatile var lens: LensCorrection? = null
+        private set
     private var orientation = 1
     private var srcW = 1
     private var srcH = 1
@@ -93,6 +95,7 @@ class EditorSession(
 
     fun load(p: Photo) {
         photo = p
+        lens = LensProfiles.get(context).find(p.lens, p.focal.toFloat(), p.aperture.toFloat())
         generation++
         fullRequested = false
         firstFrameDone = false
@@ -389,7 +392,7 @@ class EditorSession(
         if (engine == 0L) return
         var r = if (before) EditRecipe() else recipe
         if (cropMode && !before) r = r.copy(geometry = r.geometry.copy(cropX = 0f, cropY = 0f, cropW = 1f, cropH = 1f))
-        val arr = RenderParams.build(r, orientation, layerIndex, showMask = if (before) -1 else showMask, overlayOn = overlayOn && !before)
+        val arr = RenderParams.build(r, orientation, layerIndex, showMask = if (before) -1 else showMask, overlayOn = overlayOn && !before, lens = if (before) null else lens)
         params = arr
         geometryOutSize = Native.engineOutputSize(engine, arr)
     }

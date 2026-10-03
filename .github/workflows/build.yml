@@ -8,7 +8,25 @@ permissions:
   contents: write
 
 jobs:
+  golden:
+    # The real shader pipeline on Mesa llvmpipe against stored reference renders.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Mesa and Pillow
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgles2-mesa-dev libegl1-mesa-dev libgl1-mesa-dri libegl-mesa0 cmake python3-pil
+      - name: Golden render tests
+        run: ./tools/golden/run-golden.sh
+      - name: Preview parser test on real S5IIX files
+        run: |
+          mkdir -p testdata
+          curl -fsSL -o testdata/P1055415.RW2 https://raw.pixls.us/data/Panasonic/DC-S5M2X/P1055415.RW2
+          ./tools/test-preview-parser.sh
+
   build:
+    needs: golden
     runs-on: ubuntu-latest
     env:
       GITHUB_RUN_NUMBER: ${{ github.run_number }}

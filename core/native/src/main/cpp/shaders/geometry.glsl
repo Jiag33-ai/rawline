@@ -3,6 +3,8 @@ uniform vec2 uSrcSize;   // source pixels
 uniform vec4 uCrop;      // x, y, w, h in the oriented base image, normalised
 uniform vec4 uGeo;       // straighten angle (rad), flipH, flipV, rot90 (0..3, clockwise)
 uniform vec4 uGeo2;      // keystone vertical, keystone horizontal, distortion, manual vignette
+uniform vec4 uLensDist;  // lens profile distortion polynomial p0..p3
+uniform vec2 uLensDist2; // p4, enabled
 
 vec2 baseDims() { return (uGeo.w > 0.5 && uGeo.w < 1.5) || uGeo.w > 2.5 ? uSrcSize.yx : uSrcSize; }
 
@@ -16,6 +18,12 @@ vec3 srcUv(vec2 p) {
     q.y *= 1.0 + uGeo2.y * n.x;
     float s = sin(uGeo.x), co = cos(uGeo.x);
     q = vec2(co * q.x - s * q.y, s * q.x + co * q.y);
+    if (uLensDist2.y > 0.5) {
+        // Lens profile (lensfun ptlens/poly3/poly5 as a polynomial); radius is half of the shorter side
+        float rn = length(q) / (0.5 * min(dims.x, dims.y));
+        float f = uLensDist.x + rn * (uLensDist.y + rn * (uLensDist.z + rn * (uLensDist.w + rn * uLensDist2.x)));
+        q *= f;
+    }
     float r2 = dot(q, q) / (dims.y * dims.y * 0.25 + dims.x * dims.x * 0.25);
     q *= 1.0 + uGeo2.z * r2;
     vec2 b = q / dims + 0.5;

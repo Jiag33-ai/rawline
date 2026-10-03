@@ -22,6 +22,10 @@ uniform float uLod;
 uniform int uNumMasks;
 uniform int uShowMask;
 uniform float uAspect;       // output image width / height
+uniform vec3 uTcaR;          // lens chromatic aberration scale polynomials (v, c, b)
+uniform vec3 uTcaB;
+uniform vec3 uLensVig;       // lens vignetting k1 k2 k3
+uniform vec3 uLensFlags;     // tca on, vignetting on
 
 //@include geometry.glsl
 
@@ -222,8 +226,24 @@ float maskAlpha(int m, vec2 p, float asp, vec3 c) {
 void main() {
     vec2 p = uView.xy + vUv * uView.zw;
     vec3 g = srcUv(p);
-    vec4 s = textureLod(uSrc, clamp(g.xy, 0.0, 1.0), uLod);
+    vec2 guv = clamp(g.xy, 0.0, 1.0);
+    vec4 s = textureLod(uSrc, guv, uLod);
     vec3 c = s.rgb;
+    // Lens profile: lateral chromatic aberration (red and blue sampled at their own radius) and vignetting
+    vec2 sd = (guv - 0.5) * uSrcSize;
+    if (uLensFlags.x > 0.5) {
+        float rn = length(sd) / (0.5 * min(uSrcSize.x, uSrcSize.y));
+        float sr = uTcaR.x + rn * (uTcaR.y + rn * uTcaR.z);
+        float sb = uTcaB.x + rn * (uTcaB.y + rn * uTcaB.z);
+        c.r = textureLod(uSrc, clamp(0.5 + (guv - 0.5) * sr, 0.0, 1.0), uLod).r;
+        c.b = textureLod(uSrc, clamp(0.5 + (guv - 0.5) * sb, 0.0, 1.0), uLod).b;
+    }
+    if (uLensFlags.y > 0.5) {
+        float rv = length(sd) / (0.5 * length(uSrcSize));
+        float r2v = rv * rv;
+        float corr = 1.0 + uLensVig.x * r2v + uLensVig.y * r2v * r2v + uLensVig.z * r2v * r2v * r2v;
+        c /= max(corr, 0.12);
+    }
     if (uOverlayOn > 0.5) {
         vec4 o = texture(uOverlay, clamp(g.xy, 0.0, 1.0));
         c = c * (1.0 - o.a) + o.rgb;

@@ -77,6 +77,11 @@ int main(int argc, char **argv) {
         else if (k == "angle") p[G_GEO] = v;
         else if (k == "grain") p[G_FX2] = v;
         else if (k == "cropw") p[G_CROP + 2] = v;
+        else if (k == "lens") {   // synthetic Lumix S 20-60 @ 20 mm style profile: ptlens a b c, strong vignetting, TCA
+            p[G_LDIST] = 1.f - 0.02161f + 0.03781f + 0.08584f; p[G_LDIST + 1] = -0.08584f; p[G_LDIST + 2] = -0.03781f; p[G_LDIST + 3] = 0.02161f; p[G_LDIST_ON] = v;
+            p[G_LTCA] = 1.0005613f; p[G_LTCA + 2] = -0.0002213f; p[G_LTCA + 3] = 0.9996489f; p[G_LTCA + 5] = 0.0002051f; p[G_LTCA_ON] = v;
+            p[G_LVIG] = -0.8703127f; p[G_LVIG + 1] = 0.1721043f; p[G_LVIG + 2] = -0.1557695f; p[G_LVIG_ON] = v;
+        }
         else if (k == "maskexp") {   // linear gradient mask 0 with exposure delta
             float *m = p.data() + kOffMasks;
             m[0] = 1; m[1] = 1; m[2] = 0; m[3] = 0;                 // header: 1 component, amount 1

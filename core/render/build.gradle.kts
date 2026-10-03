@@ -21,4 +21,5 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     testImplementation(libs.junit)
     testImplementation(libs.json)
+    testImplementation(libs.kxml)
 }

@@ -141,13 +141,24 @@ private fun DetailSlider(state: EditorState, label: String, range: ClosedFloatin
 // ---------------- Optics ----------------
 
 @Composable
-fun OpticsPanel(state: EditorState) = PanelColumn {
+fun OpticsPanel(state: EditorState, lensName: String?, photoLens: String?) = PanelColumn {
+    val o = state.recipe.optics
+    SectionTitle("Lens profile")
     Text(
-        "Manual lens fixes. Automatic lens profiles are not available in this build.",
-        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(16.dp),
+        if (lensName != null) "Profile found: $lensName" else if (photoLens.isNullOrBlank()) "No lens name in this photo, so no profile can be chosen." else "No profile for \"$photoLens\" in the lens database.",
+        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
     )
-    OpticSlider(state, "Distortion", -100f..100f, { it.distortion }, { o, v -> o.copy(distortion = v) })
-    OpticSlider(state, "Vignetting", -100f..100f, { it.vignetting }, { o, v -> o.copy(vignetting = v) })
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+        Text("Fix distortion and vignetting", modifier = Modifier.weight(1f))
+        Switch(o.lensCorrection, { on -> state.edit(if (on) "Lens profile on" else "Lens profile off") { it.copy(optics = it.optics.copy(lensCorrection = on)) } }, enabled = lensName != null)
+    }
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+        Text("Remove chromatic aberration", modifier = Modifier.weight(1f))
+        Switch(o.removeCa, { on -> state.edit(if (on) "Remove CA on" else "Remove CA off") { it.copy(optics = it.optics.copy(removeCa = on)) } }, enabled = lensName != null)
+    }
+    SectionTitle("Manual")
+    OpticSlider(state, "Distortion", -100f..100f, { it.distortion }, { o2, v -> o2.copy(distortion = v) })
+    OpticSlider(state, "Vignetting", -100f..100f, { it.vignetting }, { o2, v -> o2.copy(vignetting = v) })
 }
 
 @Composable

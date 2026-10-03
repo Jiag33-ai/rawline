@@ -27,7 +27,13 @@ enum Global {
     G_NUM_MASKS = 28,  // 1
     G_OVERLAY = 29,    // 1
     G_SHOWMASK = 30,   // 1: mask index to tint red for editing, -1 off
-    G_COUNT = 32
+    G_LDIST = 32,      // 5: lens distortion polynomial p0..p4 (r_src = r * (p0 + p1 r + p2 r^2 + p3 r^3 + p4 r^4))
+    G_LDIST_ON = 37,   // 1
+    G_LTCA = 38,       // 6: red (v, c, b), blue (v, c, b) scale polynomials about the source centre
+    G_LTCA_ON = 44,    // 1
+    G_LVIG = 45,       // 3: vignetting k1 k2 k3 (lensfun 'pa')
+    G_LVIG_ON = 48,    // 1
+    G_COUNT = 56
 };
 
 constexpr int kOffBlocks = G_COUNT;

@@ -27,7 +27,13 @@ object P {
     const val G_NUM_MASKS = 28
     const val G_OVERLAY = 29
     const val G_SHOWMASK = 30
-    const val G_COUNT = 32
+    const val G_LDIST = 32
+    const val G_LDIST_ON = 37
+    const val G_LTCA = 38
+    const val G_LTCA_ON = 44
+    const val G_LVIG = 45
+    const val G_LVIG_ON = 48
+    const val G_COUNT = 56
 
     const val OFF_BLOCKS = G_COUNT
     const val OFF_MASKS = OFF_BLOCKS + MAX_BLOCKS * BLOCK_FLOATS
@@ -65,7 +71,7 @@ object RenderParams {
      */
     fun build(
         recipe: EditRecipe, orientation: Int, layers: Map<String, Int> = emptyMap(), showMask: Int = -1,
-        useBaseline: Boolean = true, overlayOn: Boolean = false, out: FloatArray = FloatArray(P.TOTAL),
+        useBaseline: Boolean = true, overlayOn: Boolean = false, lens: LensCorrection? = null, out: FloatArray = FloatArray(P.TOTAL),
     ): FloatArray {
         out.fill(0f)
         val g = recipe.geometry
@@ -80,6 +86,14 @@ object RenderParams {
         out[P.G_GEO2 + 1] = g.keystoneH / 100f * 0.5f
         out[P.G_GEO2 + 2] = recipe.optics.distortion / 100f * 0.5f
         out[P.G_GEO2 + 3] = recipe.optics.vignetting / 100f * 0.6f
+
+        if (lens != null) {
+            if (recipe.optics.lensCorrection) {
+                lens.dist?.let { for (i in 0 until 5) out[P.G_LDIST + i] = it[i]; out[P.G_LDIST_ON] = 1f }
+                lens.vig?.let { for (i in 0 until 3) out[P.G_LVIG + i] = it[i]; out[P.G_LVIG_ON] = 1f }
+            }
+            if (recipe.optics.removeCa) lens.tca?.let { for (i in 0 until 6) out[P.G_LTCA + i] = it[i]; out[P.G_LTCA_ON] = 1f }
+        }
 
         val d = recipe.detail
         out[P.G_DETAIL] = d.sharpen + if (useBaseline) Baseline.SHARPEN else 0f

@@ -259,7 +259,7 @@ fun EditorScreen(
                 "grade" -> GradingPanel(state, AdjustTarget.Global)
                 "effects" -> EffectsPanel(state, AdjustTarget.Global)
                 "detail" -> DetailPanel(state, onAiDenoiseChanged)
-                "optics" -> OpticsPanel(state)
+                "optics" -> OpticsPanel(state, session.lens?.name, photo.lens)
                 "geometry" -> GeometryPanel(state, ow / oh, onAutoLevel = {
                     placeholder?.let { b -> val a = AutoTools.autoLevel(b); state.edit("Auto level") { it.copy(geometry = it.geometry.copy(angle = a)) } }
                 }, onAutoPerspective = null)
