@@ -3,7 +3,11 @@ package app.rawline.core.ui
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,7 +35,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -43,7 +49,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import java.util.Locale
 
-/** Slider with a typed-value dialog (tap the number) and reset (double tap the label). 48 dp tall for one-handed use. */
+/**
+ * Lightroom style slider: label left, value right, a thin track with a round thumb. Drag the track to change the value,
+ * double tap to reset, tap the number to type a value. 48 dp+ tall for one-handed use.
+ */
 @Composable
 fun RawSlider(
     label: String,
@@ -60,51 +69,70 @@ fun RawSlider(
 ) {
     var typing by remember { mutableStateOf(false) }
     val text = format?.invoke(value) ?: if (decimals == 0) value.toInt().toString() else String.format(Locale.US, "%.${decimals}f", value)
-    Column(modifier.fillMaxWidth().padding(horizontal = 16.dp).semantics { contentDescription = "$label $text$unit" }) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                label, style = MaterialTheme.typography.labelLarge,
-                modifier = Modifier.pointerInput(label) {
-                    detectTapGestures(onDoubleTap = { onChange(default); onCommit() })
-                }.defaultMinSize(minHeight = 24.dp),
-            )
-            Text(
-                "$text$unit",
-                style = MaterialTheme.typography.labelLarge,
-                color = if (value != default) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.clickable { typing = true }.defaultMinSize(minWidth = 48.dp, minHeight = 24.dp),
-            )
+    val changed = kotlin.math.abs(value - default) > 1e-4f
+    Column(modifier.fillMaxWidth().padding(horizontal = 20.dp).semantics { contentDescription = "$label $text$unit" }) {
+        Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text(label, style = MaterialTheme.typography.bodyMedium, color = if (changed) Lr.Text else Lr.TextDim,
+                modifier = Modifier.pointerInput(label) { detectTapGestures(onDoubleTap = { onChange(default); onCommit() }) }.defaultMinSize(minHeight = 24.dp))
+            Text("$text$unit", style = MaterialTheme.typography.bodyMedium, color = if (changed) Lr.Accent else Lr.TextDim,
+                modifier = Modifier.clickable { typing = true }.defaultMinSize(minWidth = 56.dp, minHeight = 24.dp).wrapContentWidth(Alignment.End))
         }
-        Box(Modifier.fillMaxWidth().height(32.dp), contentAlignment = Alignment.Center) {
-            if (trackColors != null) {
-                Box(Modifier.fillMaxWidth().padding(horizontal = 10.dp).height(4.dp).background(Brush.horizontalGradient(trackColors), RoundedCornerShape(2.dp)))
-            }
-            Slider(
-                value = value.coerceIn(range.start, range.endInclusive),
-                onValueChange = onChange,
-                onValueChangeFinished = onCommit,
-                valueRange = range,
-                colors = if (trackColors != null) SliderDefaults.colors(activeTrackColor = Color.Transparent, inactiveTrackColor = Color.Transparent) else SliderDefaults.colors(),
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
+        LrTrack(value, range, default, trackColors, onChange, onCommit, Modifier.fillMaxWidth().height(32.dp))
     }
     if (typing) {
         var input by remember { mutableStateOf(text) }
         AlertDialog(
             onDismissRequest = { typing = false },
             title = { Text(label) },
-            text = {
-                OutlinedTextField(input, { input = it }, singleLine = true, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Decimal))
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    input.toFloatOrNull()?.let { onChange(it.coerceIn(range.start, range.endInclusive)); onCommit() }
-                    typing = false
-                }) { Text("Set") }
-            },
+            text = { OutlinedTextField(input, { input = it }, singleLine = true, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Decimal)) },
+            confirmButton = { TextButton(onClick = { input.toFloatOrNull()?.let { onChange(it.coerceIn(range.start, range.endInclusive)); onCommit() }; typing = false }) { Text("Set") } },
             dismissButton = { TextButton(onClick = { typing = false }) { Text("Cancel") } },
         )
+    }
+}
+
+@Composable
+private fun LrTrack(
+    value: Float, range: ClosedFloatingPointRange<Float>, default: Float, colors: List<Color>?,
+    onChange: (Float) -> Unit, onCommit: () -> Unit, modifier: Modifier,
+) {
+    var dragging by remember { mutableStateOf(false) }
+    val currentChange by androidx.compose.runtime.rememberUpdatedState(onChange)
+    val currentCommit by androidx.compose.runtime.rememberUpdatedState(onCommit)
+    Canvas(
+        modifier
+            .pointerInput(range) { detectTapGestures(onDoubleTap = { currentChange(default); currentCommit() }) }
+            .pointerInput(range) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    dragging = true
+                    val pad = 12.dp.toPx()
+                    fun at(x: Float) = range.start + ((x - pad) / (size.width - 2 * pad)).coerceIn(0f, 1f) * (range.endInclusive - range.start)
+                    currentChange(at(down.position.x))
+                    down.consume()
+                    do {
+                        val ev = awaitPointerEvent()
+                        val c = ev.changes.firstOrNull() ?: break
+                        if (c.pressed) { currentChange(at(c.position.x)); c.consume() }
+                    } while (ev.changes.any { it.pressed })
+                    dragging = false
+                    currentCommit()
+                }
+            },
+    ) {
+        val pad = 12.dp.toPx(); val cy = size.height / 2f
+        val span = range.endInclusive - range.start
+        fun px(v: Float) = pad + ((v - range.start) / span).coerceIn(0f, 1f) * (size.width - 2 * pad)
+        if (colors != null) {
+            drawRoundRect(Brush.horizontalGradient(colors, startX = pad, endX = size.width - pad), Offset(pad, cy - 2.dp.toPx()), Size(size.width - 2 * pad, 4.dp.toPx()), CornerRadius(2.dp.toPx()))
+        } else {
+            drawLine(Lr.TrackOff, Offset(pad, cy), Offset(size.width - pad, cy), 2.dp.toPx(), StrokeCap.Round)
+            // the part between the default and the thumb is drawn bright, as in Lightroom
+            drawLine(Lr.Text, Offset(px(default), cy), Offset(px(value), cy), 2.5.dp.toPx(), StrokeCap.Round)
+        }
+        if (default > range.start && default < range.endInclusive) drawLine(Lr.TextDim, Offset(px(default), cy - 6.dp.toPx()), Offset(px(default), cy - 3.dp.toPx()), 1.5.dp.toPx())
+        drawCircle(Color(0x55000000), (if (dragging) 13 else 10).dp.toPx(), Offset(px(value), cy + 1.dp.toPx()))
+        drawCircle(Color.White, (if (dragging) 11 else 9).dp.toPx(), Offset(px(value), cy))
     }
 }
 
@@ -136,8 +164,8 @@ fun Histogram(hist: IntArray?, modifier: Modifier = Modifier) {
 
 @Composable
 fun ChipButton(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    val bg = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
-    val fg = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+    val bg = if (selected) Lr.Accent else Lr.Surface
+    val fg = if (selected) Color(0xFF00121F) else Lr.Text
     Box(
         modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp).background(bg, RoundedCornerShape(20.dp)).clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center,

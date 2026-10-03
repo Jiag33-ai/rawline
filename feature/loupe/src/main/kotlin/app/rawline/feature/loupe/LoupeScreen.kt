@@ -9,12 +9,20 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import app.rawline.core.ui.Lr
+import app.rawline.core.ui.LrIcon
+import app.rawline.core.ui.LrIconView
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.shape.CircleShape
@@ -65,66 +73,82 @@ fun LoupeScreen(
     onRate: (Photo, Int) -> Unit,
     onFlag: (Photo, Int) -> Unit,
     onLabel: (Photo, Int) -> Unit,
+    onExport: (Photo) -> Unit,
     onDwell: (Photo) -> Unit = {},
 ) {
     if (photos.isEmpty()) { LaunchedEffect(Unit) { onBack() }; return }
     val pager = rememberPagerState(initialPage = startIndex.coerceIn(0, photos.lastIndex)) { photos.size }
     LaunchedEffect(pager) {
         snapshotFlow { pager.currentPage }.collect { page ->
-            // Next 3 and previous 2 in swipe direction, current first.
-            val want = (listOf(page) + (1..3).map { page + it } + (1..2).map { page - it }).mapNotNull { photos.getOrNull(it) }
+            // Current first, then three ahead and two behind. Wider than that costs memory for little gain.
+            val want = (listOf(page) + (1..4).map { page + it } + (1..3).map { page - it }).mapNotNull { photos.getOrNull(it) }
             previews.prefetch(want)
         }
     }
     var info by remember { mutableStateOf(false) }
+    var chrome by remember { mutableStateOf(true) }
+    var stars by remember { mutableStateOf(false) }
     LaunchedEffect(pager.currentPage) {
         kotlinx.coroutines.delay(1500)
         photos.getOrNull(pager.currentPage)?.let(onDwell)
     }
-    Box(Modifier.fillMaxSize().background(Color(0xFF1A1A1A)).pointerInput(Unit) {
-        // Swipe up opens the info panel, swipe down closes it (only counts when not zoomed: the page keeps pinch/pan to itself).
+    val p = photos.getOrNull(pager.currentPage)
+    Box(Modifier.fillMaxSize().background(Color.Black).pointerInput(Unit) {
+        // Swipe up opens the info panel, swipe down closes it
         var total = 0f
         detectVerticalDragGestures(
             onDragStart = { total = 0f },
             onDragEnd = { if (total < -120f) info = true else if (total > 120f) info = false },
         ) { _, dy -> total += dy }
     }) {
-        HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = 1, key = { photos[it].id }) { page ->
-            LoupePage(photos[page], previews, thumbs, isCurrent = page == pager.currentPage)
+        HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = 2, key = { photos[it].id }) { page ->
+            LoupePage(photos[page], previews, thumbs, isCurrent = page == pager.currentPage, onTap = { chrome = !chrome; stars = false })
         }
-        Column(Modifier.align(Alignment.TopStart).safeDrawingPadding().padding(8.dp)) {
-            TextButton(onClick = onBack) { Text("Back", color = Color.White) }
-            if (showOverlay) {
-                var line by remember { mutableStateOf("") }
-                LaunchedEffect(pager.currentPage) { kotlinx.coroutines.delay(300); line = PerfLog.lastOpen }
-                Text(line, color = Color(0xFF9EE493), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 12.dp))
+        if (chrome && p != null) {
+            Row(Modifier.align(Alignment.TopStart).fillMaxWidth().background(Color(0x66000000)).safeDrawingPadding().padding(horizontal = 4.dp).height(52.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(48.dp).clickable(onClick = onBack), contentAlignment = Alignment.Center) { LrIconView(LrIcon.BACK, Color.White) }
+                Column(Modifier.weight(1f)) {
+                    Text(p.name, color = Color.White, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                    Text("${pager.currentPage + 1} of ${photos.size}", color = Lr.TextDim, style = MaterialTheme.typography.labelSmall)
+                }
+                if (showOverlay) {
+                    var line by remember { mutableStateOf("") }
+                    LaunchedEffect(pager.currentPage) { kotlinx.coroutines.delay(300); line = PerfLog.lastOpen }
+                    Text(line, color = Color(0xFF9EE493), style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(2f))
+                }
             }
         }
-        val p = photos.getOrNull(pager.currentPage)
-        if (p != null) {
-            Column(Modifier.align(Alignment.BottomStart).safeDrawingPadding().fillMaxWidth().background(Color(0x99000000)).padding(12.dp)) {
-                Text(p.name + "   ${pager.currentPage + 1} / ${photos.size}", color = Color.White, style = MaterialTheme.typography.bodyMedium)
-                Text(exifLine(p), color = Color(0xFFB8B8B8), style = MaterialTheme.typography.bodySmall)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    for (i in 1..5) {
-                        Text(
-                            if (i <= p.rating) "\u2605" else "\u2606", color = Color(0xFFFFD54F), style = MaterialTheme.typography.headlineSmall,
-                            modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp).clickable { onRate(p, if (p.rating == i) 0 else i) }.wrapContentSize(),
-                        )
+        if (chrome && p != null) {
+            Column(Modifier.align(Alignment.BottomStart).fillMaxWidth().background(Color(0x99000000)).safeDrawingPadding()) {
+                if (stars) Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                    for (i in 1..5) Box(Modifier.size(52.dp).clickable { onRate(p, if (p.rating == i) 0 else i) }, contentAlignment = Alignment.Center) {
+                        LrIconView(if (i <= p.rating) LrIcon.STAR_FILLED else LrIcon.STAR, Color.White, size = 30.dp)
                     }
-                    Spacer(Modifier.weight(1f))
-                    TextButton(onClick = { onFlag(p, if (p.flag == 1) 0 else 1) }) { Text(if (p.flag == 1) "\u2691 Picked" else "\u2690 Pick", color = Color.White) }
-                    TextButton(onClick = { onFlag(p, if (p.flag == -1) 0 else -1) }) { Text(if (p.flag == -1) "\u2715 Rejected" else "Reject", color = if (p.flag == -1) Color(0xFFE57373) else Color.White) }
-                    TextButton(onClick = { onEdit(p) }) { Text("Edit", color = Color(0xFF8AB4F8)) }
                 }
-                Row(Modifier.padding(top = 2.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    listOf(Color(0xFF666666), Color(0xFFE53935), Color(0xFFFDD835), Color(0xFF43A047), Color(0xFF1E88E5), Color(0xFF8E24AA)).forEachIndexed { i, c ->
-                        Box(Modifier.size(if (p.label == i) 30.dp else 22.dp).background(c, CircleShape).clickable { onLabel(p, i) })
+                Text(exifLine(p), color = Lr.TextDim, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp))
+                Row(Modifier.fillMaxWidth().height(56.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+                    BarIcon(LrIcon.INFO, "Info", info) { info = !info }
+                    BarIcon(if (p.flag == 1) LrIcon.FLAG_FILLED else LrIcon.FLAG, "Pick", p.flag == 1) { onFlag(p, if (p.flag == 1) 0 else 1) }
+                    BarIcon(if (p.rating > 0) LrIcon.STAR_FILLED else LrIcon.STAR, "Rating", stars) { stars = !stars }
+                    BarIcon(LrIcon.REJECT, "Reject", p.flag == -1) { onFlag(p, if (p.flag == -1) 0 else -1) }
+                    BarIcon(LrIcon.SHARE, "Add to export queue", false) { onExport(p) }
+                    Box(Modifier.height(40.dp).clip(RoundedCornerShape(20.dp)).background(Lr.Accent).clickable { onEdit(p) }.padding(horizontal = 20.dp), contentAlignment = Alignment.Center) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            LrIconView(LrIcon.EDIT, Color.White, size = 20.dp)
+                            Text("  Edit", color = Color.White, style = MaterialTheme.typography.labelLarge)
+                        }
                     }
                 }
             }
             if (info) InfoSheet(p, previews.peek(p.id), Modifier.align(Alignment.Center))
         }
+    }
+}
+
+@Composable
+private fun BarIcon(icon: LrIcon, description: String, active: Boolean, onClick: () -> Unit) {
+    Box(Modifier.size(48.dp).clickable(onClick = onClick).semantics { contentDescription = description }, contentAlignment = Alignment.Center) {
+        LrIconView(icon, if (active) Lr.Accent else Color.White, size = 26.dp)
     }
 }
 
@@ -140,10 +164,8 @@ private fun exifLine(p: Photo): String {
 }
 
 @Composable
-private fun LoupePage(p: Photo, previews: PreviewCache, thumbs: ThumbStore, isCurrent: Boolean) {
-    val thumb by produceState(thumbs.peek(p.id), p.id, p.indexed) {
-        if (value == null && p.indexed) value = withContext(Dispatchers.IO) { thumbs.load(p.id) }
-    }
+private fun LoupePage(p: Photo, previews: PreviewCache, thumbs: ThumbStore, isCurrent: Boolean, onTap: () -> Unit) {
+    val thumb by produceState(thumbs.peek(p.id), p.id) { if (value == null) value = thumbs.obtain(p) }
     val preview by produceState(previews.peek(p.id), p.id) {
         if (value == null) {
             val t0 = System.nanoTime()
@@ -159,7 +181,7 @@ private fun LoupePage(p: Photo, previews: PreviewCache, thumbs: ThumbStore, isCu
         Modifier
             .fillMaxSize()
             .pointerInput(p.id) {
-                detectTapGestures(onDoubleTap = {
+                detectTapGestures(onTap = { onTap() }, onDoubleTap = {
                     if (scale > 1f) { scale = 1f; offset = Offset.Zero } else scale = 3f
                 })
             }

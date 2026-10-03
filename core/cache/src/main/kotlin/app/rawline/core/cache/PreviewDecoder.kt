@@ -36,6 +36,10 @@ object PreviewDecoder {
         else decodeImage(context, uri, p, longEdge, software, wantExif)
     }
 
+    /** EXIF of a plain image without decoding any pixels. */
+    fun readExifOnly(context: Context, uri: Uri): ExifSummary? =
+        runCatching { context.contentResolver.openInputStream(uri)?.use { readExif(it, 1) } }.getOrNull()
+
     private fun decodeRaw(context: Context, uri: Uri, p: Photo, longEdge: Int, software: Boolean, wantExif: Boolean): PreviewResult? {
         context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
             val t0 = System.nanoTime()

@@ -7,6 +7,7 @@ import android.os.Environment
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import androidx.exifinterface.media.ExifInterface
+import app.rawline.core.data.ExportJobEntity
 import app.rawline.core.ml.Denoiser
 import app.rawline.core.model.EditRecipe
 import app.rawline.core.model.Photo
@@ -31,24 +32,53 @@ class ExportRunner(private val context: Context, private val graph: Graph) {
 
     private val exporter = Exporter(context, graph.maskStore, graph.patchStore) { h, a, p -> Denoiser(context, graph.modelStore).run(h, a, p) }
 
-    /** Exports to the chosen folder (or Pictures/Rawline). Returns the number of files written. */
-    fun exportAll(photos: List<Photo>, s: ExportSettings): Int {
-        cancelled = false
-        var ok = 0
-        progress.value = ExportProgress(photos.size, 0, photos.firstOrNull()?.name ?: "", 0f, true)
-        photos.forEachIndexed { i, p ->
-            if (cancelled) return@forEachIndexed
+    /** Adds photos to the export queue (kept in the database) and makes sure the service is working through it. */
+    suspend fun enqueue(photos: List<Photo>, settings: ExportSettings) {
+        val json = settings.toJson()
+        graph.db.exports().add(photos.map { ExportJobEntity(photoKey = it.key, photoUri = it.uri, photoName = it.name, settingsJson = json, createdAt = System.currentTimeMillis()) })
+        startService()
+    }
+
+    fun startService() {
+        androidx.core.content.ContextCompat.startForegroundService(context, android.content.Intent(context, ExportService::class.java))
+    }
+
+    fun cancelCurrent() { cancelled = true }
+
+    /** Works through waiting jobs one at a time (blocking; runs on the service's thread). Returns how many files were written. */
+    fun processQueue(): Int {
+        val dao = graph.db.exports()
+        runBlocking { dao.resetRunning() }
+        var written = 0
+        var n = 0
+        while (true) {
+            val job = runBlocking { dao.nextWaiting() } ?: break
+            n++
+            cancelled = false
+            runBlocking { dao.start(job.id) }
+            val remaining = runBlocking { dao.activeCount() }
+            progress.value = ExportProgress(remaining + n - 1, n - 1, job.photoName, 0f, true)
+            val entity = runBlocking { graph.db.photos().byUri(job.photoUri) }
+            if (entity == null) { runBlocking { dao.finish(job.id, 3, "Photo no longer in the library", null, 0f) }; continue }
+            val photo = entity.toModel()
+            val settings = ExportSettings.fromJson(job.settingsJson)
+            var lastWrite = 0L
             try {
-                val uri = exportOne(p, s, i + 1) { f -> progress.value = ExportProgress(photos.size, i, p.name, f, true) }
-                if (uri != null) ok++
+                val uri = exportOne(photo, settings, n) { f ->
+                    progress.value = ExportProgress(remaining + n - 1, n - 1, job.photoName, f, true)
+                    val now = System.currentTimeMillis()
+                    if (now - lastWrite > 400) { lastWrite = now; runBlocking { dao.progress(job.id, f) } }
+                }
+                if (cancelled) runBlocking { dao.finish(job.id, 4, "Cancelled", null, 0f) }
+                else if (uri != null) { written++; runBlocking { dao.finish(job.id, 2, null, uri.toString(), 1f) } }
+                else runBlocking { dao.finish(job.id, 3, "Could not write the file", null, 0f) }
             } catch (e: Throwable) {
-                app.rawline.core.cache.PerfLog.error("export ${p.name}: ${e.message}")
-                progress.value = progress.value.copy(lastMessage = "Failed: ${p.name}: ${e.message}")
+                app.rawline.core.cache.PerfLog.error("export ${photo.name}: ${e.message}")
+                runBlocking { dao.finish(job.id, 3, e.message ?: e.javaClass.simpleName, null, 0f) }
             }
-            progress.value = ExportProgress(photos.size, i + 1, p.name, 1f, true, progress.value.lastMessage)
         }
-        progress.value = ExportProgress(photos.size, photos.size, "", 1f, false, if (cancelled) "Cancelled after $ok" else "Exported $ok of ${photos.size}")
-        return ok
+        progress.value = ExportProgress(n, n, "", 1f, false, if (n == 0) null else "Exported $written of $n")
+        return written
     }
 
     /** Renders to a cache file for the share sheet. */

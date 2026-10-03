@@ -22,7 +22,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import app.rawline.core.ui.Lr
+import app.rawline.core.ui.LrIcon
+import app.rawline.core.ui.LrIconView
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -95,6 +104,9 @@ fun EditorScreen(
     onDeletePreset: (Preset) -> Unit,
     onSnapshot: (String) -> Unit,
     onExport: () -> Unit,
+    onExportSettings: () -> Unit = {},
+    /** +1 next photo, -1 previous. Swipe sideways on the photo when nothing else is using one finger. */
+    onSwipePhoto: (Int) -> Unit = {},
     onBack: () -> Unit,
     onAiDenoiseChanged: (Boolean) -> Unit = {},
 ) {
@@ -185,6 +197,7 @@ fun EditorScreen(
                                 val tool = toolGestures(tab, PhotoMapper(session, viewW, viewH))
                                 var toolClaimed = tool != null && mode == PhotoMode.NONE && tool.onDown(down.position)
                                 if (toolClaimed) down.consume()
+                                var swipeDx = 0f; var swipeDy = 0f; var multiSeen = false
                                 if (mode == PhotoMode.TARGET_MIXER) {
                                     val m = session.mapPoint(down.position.x, down.position.y, viewW, viewH)
                                     if (m != null) scope.launch {
@@ -198,6 +211,8 @@ fun EditorScreen(
                                 do {
                                     val ev = awaitPointerEvent()
                                     val multi = ev.changes.size >= 2
+                                    if (multi) multiSeen = true
+                                    if (!multi && !toolClaimed) ev.changes.firstOrNull()?.let { swipeDx += it.position.x - it.previousPosition.x; swipeDy += it.position.y - it.previousPosition.y }
                                     if (toolClaimed && multi) { tool?.onUp(true); toolClaimed = false }
                                     if (toolClaimed) {
                                         ev.changes.firstOrNull()?.let { c -> if (c.pressed) { tool?.onMove(c.position); c.consume() } }
@@ -225,6 +240,8 @@ fun EditorScreen(
                                     }
                                 } while (ev.changes.any { it.pressed })
                                 if (toolClaimed) tool?.onUp(false)
+                                else if (!multiSeen && mode == PhotoMode.NONE && tool == null && zoom <= 1.01f && tab != "geometry" &&
+                                    kotlin.math.abs(swipeDx) > 160f && kotlin.math.abs(swipeDx) > 2.2f * kotlin.math.abs(swipeDy)) onSwipePhoto(if (swipeDx < 0) 1 else -1)
                                 if (mode == PhotoMode.TARGET_MIXER) state.commit("Colour mixer target")
                             }
                         },
@@ -244,60 +261,113 @@ fun EditorScreen(
         }
     }
 
-    val tabs = remember(extraTabs) { listOf(EditorTab("auto", "Auto") {}, EditorTab("light", "Light") {}, EditorTab("curve", "Curve") {}, EditorTab("colour", "Colour") {}, EditorTab("mixer", "Mixer") {},
-        EditorTab("grade", "Grade") {}, EditorTab("effects", "Effects") {}, EditorTab("detail", "Detail") {}, EditorTab("optics", "Optics") {}, EditorTab("geometry", "Geometry") {}) + extraTabs +
-        listOf(EditorTab("presets", "Presets") {}, EditorTab("history", "History") {}) }
+    class Tool(val id: String, val title: String, val icon: LrIcon)
+    val tools = remember(extraTabs) {
+        listOf(Tool("auto", "Auto", LrIcon.AUTO), Tool("presets", "Presets", LrIcon.PRESETS), Tool("geometry", "Crop", LrIcon.CROP), Tool("light", "Light", LrIcon.LIGHT),
+            Tool("colour", "Color", LrIcon.COLOR), Tool("effects", "Effects", LrIcon.EFFECTS), Tool("detail", "Detail", LrIcon.DETAIL), Tool("optics", "Optics", LrIcon.OPTICS)) +
+            extraTabs.map { Tool(it.id, if (it.id == "remove") "Healing" else it.title, if (it.id == "remove") LrIcon.HEALING else LrIcon.MASKING) } +
+            Tool("history", "Versions", LrIcon.VERSIONS)
+    }
+    var lightSub by remember { mutableStateOf("basic") }
+    var colourSub by remember { mutableStateOf("basic") }
+    var menu by remember { mutableStateOf(false) }
 
-    val panel: @Composable (Modifier) -> Unit = { mod ->
-        Column(mod) {
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                tabs.forEach { t -> ChipButton(t.title, tab == t.id, { tab = t.id; mode = PhotoMode.NONE }) }
+    val panelBody: @Composable () -> Unit = {
+        val ctx = TabContext(state, hist)
+        when (tab) {
+            "auto" -> AutoPanel(state, session, photo, placeholder)
+            "light" -> Column {
+                SubTabs(listOf("basic" to "Light", "curve" to "Curve"), lightSub) { lightSub = it }
+                if (lightSub == "curve") CurvePanel(state, AdjustTarget.Global, hist)
+                else LightPanel(state, AdjustTarget.Global, onAuto = { scope.launch { session.baseStats()?.let { s -> state.edit("Auto") { r -> r.copy(adjust = AutoTools.autoLight(s).let { a -> r.adjust.copy(exposure = a.exposure, contrast = a.contrast, highlights = a.highlights, shadows = a.shadows, whites = a.whites, blacks = a.blacks) }) } } } })
             }
-            val ctx = TabContext(state, hist)
-            when (tab) {
-                "auto" -> AutoPanel(state, session, photo, placeholder)
-                "light" -> LightPanel(state, AdjustTarget.Global, onAuto = { scope.launch { session.baseStats()?.let { s -> state.edit("Auto") { r -> r.copy(adjust = AutoTools.autoLight(s).let { a -> r.adjust.copy(exposure = a.exposure, contrast = a.contrast, highlights = a.highlights, shadows = a.shadows, whites = a.whites, blacks = a.blacks) }) } } } })
-                "curve" -> CurvePanel(state, AdjustTarget.Global, hist)
-                "colour" -> PanelColumn {
-                    ColourBasicsPanel(state, AdjustTarget.Global,
-                        onAutoWb = { scope.launch { session.baseStats()?.let { s -> val (t, ti) = AutoTools.autoWb(s); state.edit("Auto white balance") { r -> r.copy(adjust = r.adjust.copy(temp = t, tint = ti)) } } } },
-                        onPickWb = { mode = PhotoMode.PICK_WB })
+            "colour" -> Column {
+                SubTabs(listOf("basic" to "Color", "mix" to "Color Mix", "grade" to "Grading"), colourSub) { colourSub = it }
+                when (colourSub) {
+                    "mix" -> MixerPanel(state, AdjustTarget.Global, mixBand, { mixBand = it }, mixMode, { mixMode = it }, { mode = PhotoMode.TARGET_MIXER })
+                    "grade" -> GradingPanel(state, AdjustTarget.Global)
+                    else -> PanelColumn {
+                        ColourBasicsPanel(state, AdjustTarget.Global,
+                            onAutoWb = { scope.launch { session.baseStats()?.let { s -> val (t, ti) = AutoTools.autoWb(s); state.edit("Auto white balance") { r -> r.copy(adjust = r.adjust.copy(temp = t, tint = ti)) } } } },
+                            onPickWb = { mode = PhotoMode.PICK_WB })
+                    }
                 }
-                "mixer" -> MixerPanel(state, AdjustTarget.Global, mixBand, { mixBand = it }, mixMode, { mixMode = it }, { mode = PhotoMode.TARGET_MIXER })
-                "grade" -> GradingPanel(state, AdjustTarget.Global)
-                "effects" -> EffectsPanel(state, AdjustTarget.Global)
-                "detail" -> DetailPanel(state, onAiDenoiseChanged)
-                "optics" -> OpticsPanel(state, session.lens?.name, photo.lens)
-                "geometry" -> GeometryPanel(state, session.baseAspect(), onAutoLevel = {
-                    placeholder?.let { b -> val a = AutoTools.autoLevel(b); state.edit("Auto level") { it.copy(geometry = it.geometry.copy(angle = a)) } }
-                }, onAutoPerspective = {
-                    placeholder?.let { b -> val (v, h) = AutoTools.autoPerspective(b); state.edit("Auto perspective") { it.copy(geometry = it.geometry.copy(keystoneV = v, keystoneH = h)) } }
-                })
-                "presets" -> PresetsPanel(state, userPresets, onSavePreset, onDeletePreset)
-                "history" -> HistoryPanel(state, onSnapshot)
-                else -> extraTabs.firstOrNull { it.id == tab }?.content?.invoke(ctx)
+            }
+            "effects" -> EffectsPanel(state, AdjustTarget.Global)
+            "detail" -> DetailPanel(state, onAiDenoiseChanged)
+            "optics" -> OpticsPanel(state, session.lens?.name, photo.lens)
+            "geometry" -> GeometryPanel(state, session.baseAspect(), onAutoLevel = {
+                placeholder?.let { b -> val a = AutoTools.autoLevel(b); state.edit("Auto level") { it.copy(geometry = it.geometry.copy(angle = a)) } }
+            }, onAutoPerspective = {
+                placeholder?.let { b -> val (v, h) = AutoTools.autoPerspective(b); state.edit("Auto perspective") { it.copy(geometry = it.geometry.copy(keystoneV = v, keystoneH = h)) } }
+            })
+            "presets" -> PresetsPanel(state, userPresets, onSavePreset, onDeletePreset)
+            "history" -> HistoryPanel(state, onSnapshot)
+            "" -> {}
+            else -> extraTabs.firstOrNull { it.id == tab }?.content?.invoke(ctx)
+        }
+    }
+
+    val toolbar: @Composable () -> Unit = {
+        Row(Modifier.fillMaxWidth().background(Lr.Background).horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            tools.forEach { t ->
+                val on = tab == t.id
+                Column(
+                    Modifier.width(72.dp).height(60.dp).clickable { tab = if (on) "" else t.id; mode = PhotoMode.NONE }.semantics { contentDescription = t.title },
+                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
+                ) {
+                    LrIconView(t.icon, if (on) Lr.Accent else Lr.TextDim, size = 26.dp)
+                    Text(t.title, style = MaterialTheme.typography.labelSmall, color = if (on) Lr.Accent else Lr.TextDim, maxLines = 1)
+                }
             }
         }
     }
 
-    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).safeDrawingPadding()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack) { Text("Back") }
-            Text(photo.name, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f), maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            TextButton(onClick = { state.undo() }, enabled = state.canUndo) { Text("Undo") }
-            TextButton(onClick = { state.redo() }, enabled = state.canRedo) { Text("Redo") }
-            TextButton(onClick = { showHist = !showHist }) { Text(if (showHist) "Hide hist" else "Hist") }
-            TextButton(onClick = onExport) { Text("Export") }
+    Column(Modifier.fillMaxSize().background(Lr.Black).safeDrawingPadding()) {
+        // ---- top bar: back, undo / redo, versions on the left; histogram, share and more on the right ----
+        Row(Modifier.fillMaxWidth().height(52.dp).background(Lr.Background).padding(horizontal = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+            TopIcon(LrIcon.BACK, "Back", true, onClick = onBack)
+            TopIcon(LrIcon.UNDO, "Undo", state.canUndo) { state.undo() }
+            TopIcon(LrIcon.REDO, "Redo", state.canRedo) { state.redo() }
+            Text(photo.name, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f).padding(horizontal = 8.dp), maxLines = 1, color = Lr.TextDim)
+            TopIcon(LrIcon.HISTOGRAM, "Histogram", true, tint = if (showHist) Lr.Accent else Lr.Text) { showHist = !showHist }
+            TopIcon(LrIcon.SHARE, "Add to export queue", true, onClick = onExport)
+            Box {
+                TopIcon(LrIcon.MORE, "More", true) { menu = true }
+                DropdownMenu(menu, { menu = false }) {
+                    DropdownMenuItem(text = { Text("Reset all edits") }, onClick = { menu = false; state.reset() })
+                    DropdownMenuItem(text = { Text("Versions and history") }, onClick = { menu = false; tab = "history" })
+                    DropdownMenuItem(text = { Text("Export settings") }, onClick = { menu = false; onExportSettings() })
+                }
+            }
         }
         if (landscape) {
             Row(Modifier.fillMaxSize()) {
                 photoArea(Modifier.weight(1f).fillMaxHeight())
-                panel(Modifier.width(380.dp).fillMaxHeight())
+                Column(Modifier.width(380.dp).fillMaxHeight().background(Lr.Panel)) {
+                    Box(Modifier.weight(1f)) { panelBody() }
+                    toolbar()
+                }
             }
         } else {
             photoArea(Modifier.fillMaxWidth().weight(1f))
-            panel(Modifier.fillMaxWidth().height(320.dp))
+            if (tab != "") Box(Modifier.fillMaxWidth().height(300.dp).background(Lr.Panel)) { panelBody() }
+            toolbar()
         }
+    }
+}
+
+@Composable
+private fun TopIcon(icon: LrIcon, description: String, enabled: Boolean, tint: Color = Lr.Text, onClick: () -> Unit) {
+    Box(Modifier.size(48.dp).clickable(enabled = enabled, onClick = onClick).semantics { contentDescription = description }, contentAlignment = Alignment.Center) {
+        LrIconView(icon, if (enabled) tint else Lr.TrackOff, size = 24.dp)
+    }
+}
+
+@Composable
+private fun SubTabs(items: List<Pair<String, String>>, selected: String, onSelect: (String) -> Unit) {
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        items.forEach { (id, label) -> ChipButton(label, selected == id, { onSelect(id) }) }
     }
 }
 

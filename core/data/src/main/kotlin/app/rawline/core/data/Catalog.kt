@@ -114,9 +114,9 @@ class Catalog(private val context: Context, private val db: RawlineDb, private v
 
     /** After a re-scan, give new rows their saved ratings and edit marks back. */
     suspend fun reapply(folderKey: String) {
-        val rows = photos.known(folderKey)
-        if (rows.isEmpty()) return
-        val all = photos.all().filter { it.folderUri == folderKey }
+        val like = folderKey.endsWith("%")
+        val all = photos.all().filter { if (like) it.folderUri.startsWith(folderKey.dropLast(1)) else it.folderUri == folderKey }
+        if (all.isEmpty()) return
         val keys = all.map { Photo(it.id, it.folderUri, it.uri, it.name, it.size, it.modified, app.rawline.core.model.Kind.RAW, true).key }
         val meta = HashMap<String, MetaEntity>()
         keys.chunked(500).forEach { c -> edits.metaFor(c).forEach { meta[it.key] = it } }

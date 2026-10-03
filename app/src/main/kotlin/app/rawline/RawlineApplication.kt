@@ -9,6 +9,7 @@ import app.rawline.core.cache.PreviewCache
 import app.rawline.core.cache.ThumbStore
 import app.rawline.core.data.Catalog
 import app.rawline.core.ml.ModelStore
+import app.rawline.core.data.DeviceScanner
 import app.rawline.core.data.Indexer
 import app.rawline.core.data.RawlineDb
 import app.rawline.core.render.RawPrefetch
@@ -22,6 +23,7 @@ class Graph(context: Context) {
     val patchStore = PatchStore(context)
     val catalog = Catalog(context, db, maskStore, patchStore)
     val indexer = Indexer(context, db.photos(), thumbs, catalog)
+    val deviceScanner = DeviceScanner(context, db.photos(), catalog)
     val rawPrefetch = RawPrefetch(context)
     val modelStore = ModelStore(context)
     val exportRunner by lazy { ExportRunner(context, this) }

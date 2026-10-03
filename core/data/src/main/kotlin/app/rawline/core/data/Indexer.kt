@@ -74,8 +74,12 @@ class Indexer(private val context: Context, private val dao: PhotoDao, private v
         indexPending(folderKey)
     }
 
-    private suspend fun indexPending(folderKey: String) {
-        val todo = dao.pending(folderKey)
+    private suspend fun indexPending(folderKey: String) = indexTodo(dao.pending(folderKey))
+
+    /** Fills in EXIF (and RAW previews) for device and imported photos, e.g. prefix "device:%" or "imported". */
+    suspend fun indexPendingLike(prefix: String) = indexTodo(dao.pendingLike(prefix))
+
+    private suspend fun indexTodo(todo: List<PhotoEntity>) {
         if (todo.isEmpty()) { _progress.value = IndexProgress(); return }
         val t0 = System.nanoTime()
         val done = AtomicInteger()
@@ -101,6 +105,13 @@ class Indexer(private val context: Context, private val dao: PhotoDao, private v
 
     private suspend fun indexOne(row: PhotoEntity) {
         val photo = row.toModel()
+        if (!row.isRaw && (row.folderUri.startsWith("device:") || row.folderUri == "imported")) {
+            // Plain pictures from the camera roll: read EXIF only; their thumbnails come from the system when a tile is shown.
+            val e = PreviewDecoder.readExifOnly(context, Uri.parse(row.uri))
+            dao.markIndexed(row.id, e?.takenAt?.takeIf { it > 0 } ?: row.takenAt.takeIf { it > 0 } ?: row.modified, e?.camera, e?.lens, e?.iso ?: 0, e?.shutter ?: 0.0, e?.aperture ?: 0.0,
+                e?.focal ?: 0.0, 1, 0, 0, row.width, row.height)
+            return
+        }
         val r = PreviewDecoder.decode(context, photo, 320, software = true, wantExif = true)
         if (r == null) { dao.markFailed(row.id); PerfLog.error("no preview: ${row.name}"); return }
         thumbs.save(row.id, r.bitmap)

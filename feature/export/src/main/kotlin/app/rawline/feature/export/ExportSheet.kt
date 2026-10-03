@@ -43,12 +43,14 @@ fun ExportSheet(
     onExport: () -> Unit,
     onShare: (() -> Unit)?,
     onDismiss: () -> Unit,
+    title: String? = null,
+    confirmLabel: String = "Export",
 ) {
     var customMode by remember { mutableStateOf(settings.longEdge > 0 && settings.longEdge !in listOf(2048, 4096)) }
     var customEdge by remember { mutableStateOf(if (settings.longEdge > 0 && settings.longEdge !in listOf(2048, 4096)) settings.longEdge.toString() else "3000") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (count == 1) "Export photo" else "Export $count photos") },
+        title = { Text(title ?: if (count == 1) "Export photo" else "Export $count photos") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 SectionTitle("Format")
@@ -90,7 +92,7 @@ fun ExportSheet(
                 OutlinedButton(onClick = onPickFolder) { Text(destinationLabel ?: "Pictures/Rawline (tap to choose a folder)") }
             }
         },
-        confirmButton = { Button(onClick = onExport) { Text("Export") } },
+        confirmButton = { Button(onClick = onExport) { Text(confirmLabel) } },
         dismissButton = {
             Row {
                 if (onShare != null) TextButton(onClick = onShare) { Text("Share") }

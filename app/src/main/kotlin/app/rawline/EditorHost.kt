@@ -34,7 +34,7 @@ import kotlinx.coroutines.withContext
 
 /** Loads the saved edit, runs the editor and writes edits back to the catalogue. */
 @Composable
-fun EditorHost(photo: Photo, graph: Graph, onExport: (Photo) -> Unit, onBack: () -> Unit) {
+fun EditorHost(photo: Photo, graph: Graph, neighbors: List<Photo>, onExport: (Photo) -> Unit, onExportSettings: (Photo) -> Unit, onSwipe: (Int) -> Unit, onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val denoiser = remember { app.rawline.core.ml.Denoiser(context, graph.modelStore) }
@@ -77,6 +77,8 @@ fun EditorHost(photo: Photo, graph: Graph, onExport: (Photo) -> Unit, onBack: ()
     val rm = remove ?: return
     val ss by session.state.collectAsState()
     // Keep the repair overlay in step with the recipe (open, undo, redo, snapshots) once the source is on the GPU.
+    // Once this photo is on screen, decode its neighbours quietly so swiping to them opens fast.
+    LaunchedEffect(ss.stage, neighbors) { if (ss.stage == app.rawline.core.render.Stage.READY) neighbors.forEach { graph.rawPrefetch.prefetch(it) } }
     LaunchedEffect(st.recipe.heals, ss.stage) { if (ss.stage == app.rawline.core.render.Stage.READY) healer?.sync(st.recipe.heals) }
     EditorScreen(
         photo = photo, state = st, placeholder = placeholder, extraTabs = listOf(mk.tab, rm.tab),
@@ -87,6 +89,8 @@ fun EditorHost(photo: Photo, graph: Graph, onExport: (Photo) -> Unit, onBack: ()
         onDeletePreset = { p -> scope.launch { graph.catalog.deletePreset(p.id); userPresets.remove(p) } },
         onSnapshot = { name -> scope.launch { val id = graph.catalog.addSnapshot(photo, name, st.recipe); st.addSnapshot(id, name) } },
         onExport = { saveJob?.cancel(); graph.appScope.launch { graph.catalog.saveRecipe(photo, st.recipe); kotlinx.coroutines.withContext(Dispatchers.Main) { onExport(photo) } } },
+        onExportSettings = { onExportSettings(photo) },
+        onSwipePhoto = { d -> saveJob?.cancel(); graph.appScope.launch { graph.catalog.saveRecipe(photo, st.recipe) }; onSwipe(d) },
         onBack = { saveJob?.cancel(); graph.appScope.launch { graph.catalog.saveRecipe(photo, st.recipe) }; onBack() },
     )
 }

@@ -20,6 +20,7 @@ dependencies {
     implementation(project(":core:ui"))
     implementation(project(":core:model"))
     implementation(project(":core:render"))
+    implementation(project(":core:data"))
     implementation(project(":core:cache"))
     implementation(libs.kotlinx.coroutines.android)
     testImplementation(libs.junit)

@@ -58,6 +58,32 @@ data class EditEntity(@PrimaryKey val key: String, val json: String, val updated
 @Entity(tableName = "meta")
 data class MetaEntity(@PrimaryKey val key: String, val rating: Int, val flag: Int, val label: Int)
 
+/** One entry of the export queue. status: 0 waiting, 1 running, 2 done, 3 failed, 4 cancelled. */
+@Entity(tableName = "export_jobs")
+data class ExportJobEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val photoKey: String, val photoUri: String, val photoName: String, val settingsJson: String,
+    val status: Int = 0, val progress: Float = 0f, val message: String? = null, val outputUri: String? = null, val createdAt: Long = 0,
+)
+
+@Dao
+interface ExportDao {
+    @Query("SELECT * FROM export_jobs ORDER BY id DESC") fun observe(): Flow<List<ExportJobEntity>>
+    @Insert suspend fun add(jobs: List<ExportJobEntity>)
+    @Query("SELECT * FROM export_jobs WHERE status = 0 ORDER BY id ASC LIMIT 1") suspend fun nextWaiting(): ExportJobEntity?
+    @Query("SELECT COUNT(*) FROM export_jobs WHERE status IN (0, 1)") suspend fun activeCount(): Int
+    @Query("UPDATE export_jobs SET status = :status, message = :message, outputUri = :out, progress = :progress WHERE id = :id")
+    suspend fun finish(id: Long, status: Int, message: String?, out: String?, progress: Float)
+    @Query("UPDATE export_jobs SET status = 1, progress = 0 WHERE id = :id") suspend fun start(id: Long)
+    @Query("UPDATE export_jobs SET progress = :p WHERE id = :id") suspend fun progress(id: Long, p: Float)
+    @Query("UPDATE export_jobs SET status = 0, progress = 0, message = NULL WHERE status IN (1, 3, 4) AND id = :id") suspend fun retry(id: Long)
+    @Query("UPDATE export_jobs SET status = 0 WHERE status = 1") suspend fun resetRunning()
+    @Query("UPDATE export_jobs SET status = 4, message = 'Cancelled' WHERE status = 0") suspend fun cancelWaiting()
+    @Query("UPDATE export_jobs SET status = 4, message = 'Cancelled' WHERE id = :id AND status = 0") suspend fun cancel(id: Long)
+    @Query("DELETE FROM export_jobs WHERE status IN (2, 3, 4)") suspend fun clearFinished()
+    @Query("DELETE FROM export_jobs WHERE id = :id") suspend fun delete(id: Long)
+}
+
 @Entity(tableName = "snapshots", indices = [Index("key")])
 data class SnapshotEntity(@PrimaryKey(autoGenerate = true) val id: Long = 0, val key: String, val name: String, val json: String, val createdAt: Long)
 
@@ -65,11 +91,24 @@ data class SnapshotEntity(@PrimaryKey(autoGenerate = true) val id: Long = 0, val
 data class PresetEntity(@PrimaryKey(autoGenerate = true) val id: Long = 0, val name: String, val json: String, val createdAt: Long)
 
 data class KnownRow(val id: Long, val uri: String, val modified: Long, val size: Long)
+data class SourceCount(val source: String, val n: Int)
 
 @Dao
 interface PhotoDao {
     @Query("SELECT * FROM photos WHERE folderUri = :folder ORDER BY modified DESC, id DESC")
     fun observe(folder: String): Flow<List<PhotoEntity>>
+
+    @Query("SELECT * FROM photos WHERE folderUri LIKE :prefix ORDER BY modified DESC, id DESC")
+    fun observeLike(prefix: String): Flow<List<PhotoEntity>>
+
+    @Query("SELECT folderUri AS source, COUNT(*) AS n FROM photos GROUP BY folderUri")
+    fun sources(): Flow<List<SourceCount>>
+
+    @Query("SELECT * FROM photos WHERE folderUri LIKE :prefix AND indexed = 0 ORDER BY modified DESC")
+    suspend fun pendingLike(prefix: String): List<PhotoEntity>
+
+    @Query("SELECT id, uri, modified, size FROM photos WHERE folderUri LIKE :prefix")
+    suspend fun knownLike(prefix: String): List<KnownRow>
 
     @Query("SELECT id, uri, modified, size FROM photos WHERE folderUri = :folder")
     suspend fun known(folder: String): List<KnownRow>
@@ -109,6 +148,9 @@ interface PhotoDao {
     @Query("UPDATE photos SET rating = :rating, label = :label WHERE uri = :uri AND rating = 0 AND label = 0")
     suspend fun setRatingLabelIfUnset(uri: String, rating: Int, label: Int)
 
+    @Query("SELECT * FROM photos WHERE uri = :uri LIMIT 1")
+    suspend fun byUri(uri: String): PhotoEntity?
+
     @Query("SELECT * FROM photos")
     suspend fun all(): List<PhotoEntity>
 
@@ -140,13 +182,18 @@ interface EditDao {
     @Query("DELETE FROM presets WHERE id = :id") suspend fun deletePreset(id: Long)
 }
 
-@Database(entities = [PhotoEntity::class, EditEntity::class, SnapshotEntity::class, PresetEntity::class, MetaEntity::class], version = 2, exportSchema = false)
+@Database(entities = [PhotoEntity::class, EditEntity::class, SnapshotEntity::class, PresetEntity::class, MetaEntity::class, ExportJobEntity::class], version = 3, exportSchema = false)
 abstract class RawlineDb : RoomDatabase() {
     abstract fun photos(): PhotoDao
     abstract fun edits(): EditDao
+    abstract fun exports(): ExportDao
 
     companion object {
         fun create(context: Context): RawlineDb =
-            Room.databaseBuilder(context, RawlineDb::class.java, "rawline.db").fallbackToDestructiveMigrationFrom(true, 1).build()
+            Room.databaseBuilder(context, RawlineDb::class.java, "rawline.db").addMigrations(object : androidx.room.migration.Migration(2, 3) {
+                override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                    db.execSQL("CREATE TABLE IF NOT EXISTS `export_jobs` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `photoKey` TEXT NOT NULL, `photoUri` TEXT NOT NULL, `photoName` TEXT NOT NULL, `settingsJson` TEXT NOT NULL, `status` INTEGER NOT NULL, `progress` REAL NOT NULL, `message` TEXT, `outputUri` TEXT, `createdAt` INTEGER NOT NULL)")
+                }
+            }).fallbackToDestructiveMigrationFrom(true, 1).build()
     }
 }

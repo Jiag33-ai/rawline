@@ -7,14 +7,14 @@ import androidx.compose.ui.graphics.Color
 
 // Neutral grey surfaces so colour judgement is not skewed; one restrained accent.
 private val Scheme = darkColorScheme(
-    primary = Color(0xFF8AB4F8),
-    onPrimary = Color(0xFF0B1B33),
-    background = Color(0xFF2A2A2A),
-    onBackground = Color(0xFFE6E6E6),
-    surface = Color(0xFF333333),
-    onSurface = Color(0xFFE6E6E6),
-    surfaceVariant = Color(0xFF3D3D3D),
-    onSurfaceVariant = Color(0xFFB8B8B8),
+    primary = Lr.Accent,
+    onPrimary = Color(0xFF00121F),
+    background = Lr.Background,
+    onBackground = Lr.Text,
+    surface = Lr.Panel,
+    onSurface = Lr.Text,
+    surfaceVariant = Lr.Surface,
+    onSurfaceVariant = Lr.TextDim,
     error = Color(0xFFF28B82),
 )
 

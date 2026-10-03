@@ -7,38 +7,35 @@ import app.rawline.core.model.Photo
 import app.rawline.core.nativelib.Native
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
-/** Decodes the half size raw ahead of time when the user lingers on a photo, so Edit opens fast. Keeps one result. */
-class RawPrefetch(private val context: Context) {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var job: Job? = null
-    private var handle = 0L
-    private var photoId = -1L
+/**
+ * Decodes half size raws ahead of time (when the user lingers on a photo, and for the neighbours of the photo being edited)
+ * so Edit and swiping between edited photos open quickly. Holds at most [capacity] results (about 100 MB each).
+ */
+class RawPrefetch(private val context: Context, private val capacity: Int = 2) {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
     private val lock = Any()
-
-    private var wanted = -1L
+    private val ready = LinkedHashMap<Long, Long>()   // photo id -> native handle, oldest first
+    private val wanted = HashSet<Long>()
 
     fun prefetch(p: Photo) {
         if (p.kind != Kind.RAW) return
-        synchronized(lock) { if (photoId == p.id || wanted == p.id) return; wanted = p.id }
-        job?.cancel()
-        job = scope.launch {
+        synchronized(lock) { if (ready.containsKey(p.id) || !wanted.add(p.id)) return }
+        scope.launch {
             val h = context.contentResolver.openFileDescriptor(Uri.parse(p.uri), "r")?.use { Native.decodeRaw(it.fd, true) } ?: 0L
             synchronized(lock) {
-                if (wanted != p.id) { if (h != 0L) Native.freeRaw(h); return@synchronized }
-                if (handle != 0L) Native.freeRaw(handle)
-                handle = h; photoId = if (h != 0L) p.id else -1L
+                wanted.remove(p.id)
+                if (h == 0L) return@synchronized
+                ready[p.id] = h
+                while (ready.size > capacity) { val oldest = ready.keys.first(); Native.freeRaw(ready.remove(oldest)!!) }
             }
         }
     }
 
     /** Hands over a ready decode for this photo, or 0. The caller owns the handle afterwards. */
-    fun take(p: Photo): Long = synchronized(lock) {
-        if (photoId == p.id && handle != 0L) { val h = handle; handle = 0; photoId = -1; h } else 0L
-    }
+    fun take(p: Photo): Long = synchronized(lock) { ready.remove(p.id) ?: 0L }
 
-    fun cancel() { job?.cancel(); synchronized(lock) { wanted = -1L; if (handle != 0L) Native.freeRaw(handle); handle = 0; photoId = -1 } }
+    fun cancel() = synchronized(lock) { ready.values.forEach { Native.freeRaw(it) }; ready.clear(); wanted.clear() }
 }
