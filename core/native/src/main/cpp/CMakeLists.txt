@@ -22,5 +22,5 @@ target_compile_definitions(raw PRIVATE LIBRAW_BUILDLIB)
 target_compile_options(raw PRIVATE -O2 -w)
 set_target_properties(raw PROPERTIES OUTPUT_NAME "raw")
 
-add_library(rawline_jni SHARED jni_bridge.cpp)
+add_library(rawline_jni SHARED jni_bridge.cpp rw2_preview.cpp)
 target_link_libraries(rawline_jni PRIVATE raw log)
