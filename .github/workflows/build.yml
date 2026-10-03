@@ -1,0 +1,61 @@
+name: build
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_RUN_NUMBER: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Android SDK and NDK
+        run: ./tools/setup-sdk.sh
+      - name: Unit tests
+        run: |
+          source tools/env.sh
+          ./gradlew testDebugUnitTest --no-daemon
+      - name: Decode signing key
+        id: key
+        env:
+          KS_B64: ${{ secrets.RAWLINE_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/rawline.jks"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build signed release APK
+        if: steps.key.outputs.signed == 'true'
+        env:
+          RAWLINE_KEYSTORE: ${{ runner.temp }}/rawline.jks
+          RAWLINE_KEYSTORE_PASSWORD: ${{ secrets.RAWLINE_KEYSTORE_PASSWORD }}
+          RAWLINE_KEY_ALIAS: ${{ secrets.RAWLINE_KEY_ALIAS }}
+          RAWLINE_KEY_PASSWORD: ${{ secrets.RAWLINE_KEY_PASSWORD }}
+        run: |
+          source tools/env.sh
+          ./gradlew assembleRelease --no-daemon
+          cp app/build/outputs/apk/release/app-release.apk rawline.apk
+      - name: Build debug APK (no signing key set yet)
+        if: steps.key.outputs.signed != 'true'
+        run: |
+          source tools/env.sh
+          ./gradlew assembleDebug --no-daemon
+          cp app/build/outputs/apk/debug/app-debug.apk rawline.apk
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v0.1.${{ github.run_number }}"
+          NOTE="Build ${{ github.run_number }}, commit ${GITHUB_SHA::7}. Signed: ${{ steps.key.outputs.signed }}"
+          gh release create "$TAG" rawline.apk --title "Rawline $TAG" --notes "$NOTE"

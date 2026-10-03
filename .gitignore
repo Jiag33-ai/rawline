@@ -1,0 +1,11 @@
+testdata/
+*.rw2
+*.RW2
+.gradle/
+build/
+local.properties
+*.jks
+*.keystore
+.idea/
+.cxx/
+.android-sdk/
