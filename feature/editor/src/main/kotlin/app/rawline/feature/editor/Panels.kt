@@ -2,6 +2,9 @@ package app.rawline.feature.editor
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -33,6 +36,7 @@ import app.rawline.core.model.Optics
 import app.rawline.core.ui.ChipButton
 import app.rawline.core.ui.RawSlider
 import app.rawline.core.ui.SectionTitle
+import app.rawline.core.ui.LrTabs
 import kotlin.math.log2
 import kotlin.math.pow
 
@@ -65,14 +69,6 @@ fun PanelColumn(content: @Composable () -> Unit) {
 
 @Composable
 fun LightPanel(state: EditorState, target: AdjustTarget = AdjustTarget.Global, onAuto: (() -> Unit)? = null) = PanelColumn {
-    if (onAuto != null && !target.isMask) {
-        Row(Modifier.padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = onAuto) { Text("Auto") }
-            TextButton(onClick = {
-                state.edit("Reset light") { r -> target.set(r, target.get(r).copy(exposure = 0f, contrast = 0f, highlights = 0f, shadows = 0f, whites = 0f, blacks = 0f)) }
-            }) { Text("Reset light") }
-        }
-    }
     AdjSlider(state, target, "Exposure", -5f..5f, { it.exposure }, { a, v -> a.copy(exposure = v) }, decimals = 2)
     AdjSlider(state, target, "Contrast", -100f..100f, { it.contrast }, { a, v -> a.copy(contrast = v) })
     AdjSlider(state, target, "Highlights", -100f..100f, { it.highlights }, { a, v -> a.copy(highlights = v) })
@@ -84,21 +80,26 @@ fun LightPanel(state: EditorState, target: AdjustTarget = AdjustTarget.Global, o
 // ---------------- Effects ----------------
 
 @Composable
-fun EffectsPanel(state: EditorState, target: AdjustTarget = AdjustTarget.Global) = PanelColumn {
-    SectionTitle("Presence")
-    AdjSlider(state, target, "Texture", -100f..100f, { it.texture }, { a, v -> a.copy(texture = v) })
-    AdjSlider(state, target, "Clarity", -100f..100f, { it.clarity }, { a, v -> a.copy(clarity = v) })
-    AdjSlider(state, target, "Dehaze", -100f..100f, { it.dehaze }, { a, v -> a.copy(dehaze = v) })
-    if (!target.isMask) {
-        SectionTitle("Vignette")
-        EffectSlider(state, "Amount", -100f..100f, 0f, { it.vignetteAmount }, { e, v -> e.copy(vignetteAmount = v) })
-        EffectSlider(state, "Midpoint", 0f..100f, 50f, { it.vignetteMidpoint }, { e, v -> e.copy(vignetteMidpoint = v) })
-        EffectSlider(state, "Roundness", -100f..100f, 0f, { it.vignetteRoundness }, { e, v -> e.copy(vignetteRoundness = v) })
-        EffectSlider(state, "Feather", 0f..100f, 50f, { it.vignetteFeather }, { e, v -> e.copy(vignetteFeather = v) })
-        SectionTitle("Grain")
-        EffectSlider(state, "Amount ", 0f..100f, 0f, { it.grainAmount }, { e, v -> e.copy(grainAmount = v) })
-        EffectSlider(state, "Size", 0f..100f, 25f, { it.grainSize }, { e, v -> e.copy(grainSize = v) })
-        EffectSlider(state, "Roughness", 0f..100f, 50f, { it.grainRoughness }, { e, v -> e.copy(grainRoughness = v) })
+fun EffectsPanel(state: EditorState, target: AdjustTarget = AdjustTarget.Global) {
+    var sub by remember { mutableStateOf("effects") }
+    Column {
+        if (!target.isMask) LrTabs(listOf("effects" to "Effects", "vignette" to "Vignette", "grain" to "Grain"), sub, { sub = it })
+        PanelColumn {
+            if (target.isMask || sub == "effects") {
+                AdjSlider(state, target, "Texture", -100f..100f, { it.texture }, { a, v -> a.copy(texture = v) })
+                AdjSlider(state, target, "Clarity", -100f..100f, { it.clarity }, { a, v -> a.copy(clarity = v) })
+                AdjSlider(state, target, "Dehaze", -100f..100f, { it.dehaze }, { a, v -> a.copy(dehaze = v) })
+            } else if (sub == "vignette") {
+                EffectSlider(state, "Amount", -100f..100f, 0f, { it.vignetteAmount }, { e, v -> e.copy(vignetteAmount = v) })
+                EffectSlider(state, "Midpoint", 0f..100f, 50f, { it.vignetteMidpoint }, { e, v -> e.copy(vignetteMidpoint = v) })
+                EffectSlider(state, "Roundness", -100f..100f, 0f, { it.vignetteRoundness }, { e, v -> e.copy(vignetteRoundness = v) })
+                EffectSlider(state, "Feather", 0f..100f, 50f, { it.vignetteFeather }, { e, v -> e.copy(vignetteFeather = v) })
+            } else {
+                EffectSlider(state, "Amount ", 0f..100f, 0f, { it.grainAmount }, { e, v -> e.copy(grainAmount = v) })
+                EffectSlider(state, "Size", 0f..100f, 25f, { it.grainSize }, { e, v -> e.copy(grainSize = v) })
+                EffectSlider(state, "Roughness", 0f..100f, 50f, { it.grainRoughness }, { e, v -> e.copy(grainRoughness = v) })
+            }
+        }
     }
 }
 
@@ -111,25 +112,34 @@ private fun EffectSlider(state: EditorState, label: String, range: ClosedFloatin
 // ---------------- Detail ----------------
 
 @Composable
-fun DetailPanel(state: EditorState, onAiDenoiseChanged: (Boolean) -> Unit = {}) = PanelColumn {
-    SectionTitle("Sharpening")
-    DetailSlider(state, "Amount", 0f..150f, 0f, { it.sharpen }, { d, v -> d.copy(sharpen = v) })
-    DetailSlider(state, "Radius", 0.5f..3f, 1f, { it.radius }, { d, v -> d.copy(radius = v) }, decimals = 1)
-    DetailSlider(state, "Detail", 0f..100f, 25f, { it.detail }, { d, v -> d.copy(detail = v) })
-    DetailSlider(state, "Masking", 0f..100f, 0f, { it.masking }, { d, v -> d.copy(masking = v) })
-    SectionTitle("Noise reduction")
-    DetailSlider(state, "Luminance", 0f..100f, 0f, { it.nrLuminance }, { d, v -> d.copy(nrLuminance = v) })
-    DetailSlider(state, "Colour", 0f..100f, 0f, { it.nrColor }, { d, v -> d.copy(nrColor = v) })
-    SectionTitle("AI denoise")
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-        Text("Denoise with on-device AI", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-        Switch(state.recipe.detail.aiDenoise, { on ->
-            state.edit(if (on) "AI denoise on" else "AI denoise off") { it.copy(detail = it.detail.copy(aiDenoise = on)) }
-            onAiDenoiseChanged(on)
-        })
+fun DetailPanel(state: EditorState, onAiDenoiseChanged: (Boolean) -> Unit = {}) {
+    var sub by remember { mutableStateOf("sharpen") }
+    Column {
+        LrTabs(listOf("sharpen" to "Sharpening", "noise" to "Noise", "colour" to "Color noise"), sub, { sub = it })
+        PanelColumn {
+            when (sub) {
+                "sharpen" -> {
+                    DetailSlider(state, "Amount", 0f..150f, 0f, { it.sharpen }, { d, v -> d.copy(sharpen = v) })
+                    DetailSlider(state, "Radius", 0.5f..3f, 1f, { it.radius }, { d, v -> d.copy(radius = v) }, decimals = 1)
+                    DetailSlider(state, "Detail", 0f..100f, 25f, { it.detail }, { d, v -> d.copy(detail = v) })
+                    DetailSlider(state, "Masking", 0f..100f, 0f, { it.masking }, { d, v -> d.copy(masking = v) })
+                }
+                "noise" -> {
+                    DetailSlider(state, "Luminance", 0f..100f, 0f, { it.nrLuminance }, { d, v -> d.copy(nrLuminance = v) })
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Denoise with on-device AI", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                        Switch(state.recipe.detail.aiDenoise, { on ->
+                            state.edit(if (on) "AI denoise on" else "AI denoise off") { it.copy(detail = it.detail.copy(aiDenoise = on)) }
+                            onAiDenoiseChanged(on)
+                        })
+                    }
+                    if (state.recipe.detail.aiDenoise)
+                        DetailSlider(state, "AI amount", 0f..100f, 50f, { it.aiDenoiseAmount }, { d, v -> d.copy(aiDenoiseAmount = v) })
+                }
+                else -> DetailSlider(state, "Color", 0f..100f, 0f, { it.nrColor }, { d, v -> d.copy(nrColor = v) })
+            }
+        }
     }
-    if (state.recipe.detail.aiDenoise)
-        DetailSlider(state, "AI amount", 0f..100f, 50f, { it.aiDenoiseAmount }, { d, v -> d.copy(aiDenoiseAmount = v) })
 }
 
 @Composable
@@ -176,14 +186,29 @@ fun kelvinToTemp(k: Float): Float = 50f * log2(k / 5500f)
 @Composable
 fun ColourBasicsPanel(state: EditorState, target: AdjustTarget, onAutoWb: (() -> Unit)?, onPickWb: (() -> Unit)?) {
     if (!target.isMask) {
-        SectionTitle("White balance")
-        Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            val presets = listOf("As shot" to 5500f, "Daylight" to 5500f, "Cloudy" to 6500f, "Shade" to 7500f, "Tungsten" to 3200f, "Fluorescent" to 4000f, "Flash" to 5500f)
-            presets.forEach { (name, k) ->
-                ChipButton(name, false, { state.edit("WB $name") { r -> target.set(r, target.get(r).copy(temp = kelvinToTemp(k), tint = if (name == "Fluorescent") 8f else 0f)) } })
+        var wbName by remember { mutableStateOf("As Shot") }
+        var open by remember { mutableStateOf(false) }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("White balance", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            Box(Modifier.weight(1f)) {
+                Row(Modifier.clickable { open = true }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(wbName, style = MaterialTheme.typography.titleMedium)
+                    app.rawline.core.ui.LrIconView(app.rawline.core.ui.LrIcon.CHEVRON_DOWN, app.rawline.core.ui.Lr.Text, size = 20.dp)
+                }
+                androidx.compose.material3.DropdownMenu(open, { open = false }) {
+                    val presets = listOf("As Shot" to 5500f, "Daylight" to 5500f, "Cloudy" to 6500f, "Shade" to 7500f, "Tungsten" to 3200f, "Fluorescent" to 4000f, "Flash" to 5500f)
+                    presets.forEach { (name, k) ->
+                        androidx.compose.material3.DropdownMenuItem(text = { Text(name) }, onClick = {
+                            open = false; wbName = name
+                            state.edit("WB $name") { r -> target.set(r, target.get(r).copy(temp = kelvinToTemp(k), tint = if (name == "Fluorescent") 8f else 0f)) }
+                        })
+                    }
+                    if (onAutoWb != null) androidx.compose.material3.DropdownMenuItem(text = { Text("Auto") }, onClick = { open = false; wbName = "Auto"; onAutoWb() })
+                }
             }
-            if (onAutoWb != null) ChipButton("Auto", false, onAutoWb)
-            if (onPickWb != null) ChipButton("Pick grey", false, onPickWb)
+            if (onPickWb != null) Box(Modifier.size(48.dp).clickable { onPickWb() }, contentAlignment = Alignment.Center) {
+                app.rawline.core.ui.LrIconView(app.rawline.core.ui.LrIcon.SELECT, app.rawline.core.ui.Lr.Text, size = 24.dp)
+            }
         }
     }
     AdjSlider(state, target, "Temperature", -100f..100f, { it.temp }, { a, v -> a.copy(temp = v) }, trackColors = listOf(Color(0xFF3B7DDD), Color(0xFFDDDDDD), Color(0xFFE8A33D)), format = { "${(tempToKelvin(it) / 10).toInt() * 10} K" })

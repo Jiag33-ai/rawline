@@ -22,7 +22,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -58,6 +59,7 @@ import app.rawline.core.cache.ThumbStore
 import app.rawline.core.data.IndexProgress
 import app.rawline.core.model.EditedFilter
 import app.rawline.core.model.FlagFilter
+import app.rawline.core.model.Kind
 import app.rawline.core.model.LibraryFilter
 import app.rawline.core.model.PasteScope
 import app.rawline.core.model.Photo
@@ -103,7 +105,7 @@ fun LibraryScreen(
     permissionGranted: Boolean,
     actions: LibraryActions,
 ) {
-    var columns by remember { mutableIntStateOf(3) }
+    var columns by remember { mutableIntStateOf(5) }
     val gridState = rememberLazyGridState()
     val selected = remember { mutableStateOf(setOf<Long>()) }
     var showFilters by remember { mutableStateOf(false) }
@@ -167,21 +169,33 @@ fun LibraryScreen(
                 photos.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(if (filter.isActive) "No photos match this filter." else "Nothing here yet. Tap + to import photos.", color = Lr.TextDim, modifier = Modifier.padding(32.dp))
                 }
-                else -> LazyVerticalGrid(
+                else -> {
+                val rows = remember(photos, filter.sort) { gridRows(photos, filter.sort) }
+                LazyVerticalGrid(
                     columns = GridCells.Fixed(columns), state = gridState,
                     horizontalArrangement = Arrangement.spacedBy(1.dp), verticalArrangement = Arrangement.spacedBy(1.dp),
                     modifier = Modifier.fillMaxSize().pinchColumns(columns) { columns = it },
                 ) {
-                    itemsIndexed(photos, key = { _, p -> p.id }, contentType = { _, _ -> "photo" }) { _, p ->
-                        val isSel = p.id in selected.value
-                        Thumb(
-                            p, thumbs, isSel, selecting,
-                            Modifier.aspectRatio(1f).combinedClickable(
-                                onClick = { if (selecting) selected.value = if (isSel) selected.value - p.id else selected.value + p.id else actions.onOpen(p) },
-                                onLongClick = { selected.value = if (isSel) selected.value - p.id else selected.value + p.id },
-                            ),
-                        )
+                    items(rows, key = { r -> if (r is GridRow.Head) "h${r.label}" else (r as GridRow.Pic).p.id }, span = { r -> if (r is GridRow.Head) GridItemSpan(maxLineSpan) else GridItemSpan(1) },
+                        contentType = { r -> if (r is GridRow.Head) "head" else "photo" }) { r ->
+                        if (r is GridRow.Head) {
+                            Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 18.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(r.label, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                                Text(r.count.toString(), style = MaterialTheme.typography.titleMedium, color = Lr.TextDim)
+                            }
+                        } else {
+                            val p = (r as GridRow.Pic).p
+                            val isSel = p.id in selected.value
+                            Thumb(
+                                p, thumbs, isSel, selecting,
+                                Modifier.aspectRatio(1f).combinedClickable(
+                                    onClick = { if (selecting) selected.value = if (isSel) selected.value - p.id else selected.value + p.id else actions.onOpen(p) },
+                                    onLongClick = { selected.value = if (isSel) selected.value - p.id else selected.value + p.id },
+                                ),
+                            )
+                        }
                     }
+                }
                 }
             }
             if (!selecting) {
@@ -286,7 +300,9 @@ private fun Thumb(p: Photo, thumbs: ThumbStore, selected: Boolean, selecting: Bo
         if (p.rating > 0) Text("★".repeat(p.rating), color = Lr.Star, style = MaterialTheme.typography.labelSmall, modifier = Modifier.align(Alignment.BottomStart).padding(3.dp))
         if (p.flag == 1) Box(Modifier.align(Alignment.TopStart).padding(4.dp)) { LrIconView(LrIcon.FLAG_FILLED, Color.White, size = 14.dp) }
         if (p.flag == -1) Box(Modifier.align(Alignment.TopStart).padding(4.dp)) { LrIconView(LrIcon.REJECT, Color(0xFFE57373), size = 14.dp) }
-        if (p.label in 1..5) Box(Modifier.align(Alignment.TopEnd).padding(4.dp).size(9.dp).background(LabelColors[p.label], CircleShape))
+        if (p.label in 1..5) Box(Modifier.align(Alignment.BottomEnd).padding(end = 24.dp, bottom = 7.dp).size(9.dp).background(LabelColors[p.label], CircleShape))
+        if (p.kind == Kind.RAW && !selecting) Text("RAW", color = Color.Black, style = MaterialTheme.typography.labelSmall, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+            modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).background(Color(0xE6FFFFFF), androidx.compose.foundation.shape.RoundedCornerShape(3.dp)).padding(horizontal = 4.dp))
         if (p.edited) Box(Modifier.align(Alignment.BottomEnd).padding(4.dp)) { LrIconView(LrIcon.EDIT, Color.White, size = 14.dp) }
         if (selecting) Box(Modifier.align(Alignment.TopEnd).padding(6.dp).size(20.dp).clip(CircleShape).background(if (selected) Lr.Accent else Color(0x66000000))) {
             if (selected) LrIconView(LrIcon.CHECK, Color.White, size = 20.dp)
@@ -311,4 +327,27 @@ private fun Modifier.pinchColumns(current: Int, set: (Int) -> Unit): Modifier = 
             }
         } while (ev.changes.any { it.pressed })
     }
+}
+
+private sealed interface GridRow {
+    class Head(val label: String, val count: Int) : GridRow
+    class Pic(val p: Photo) : GridRow
+}
+
+/** Date headers like Lightroom ("October 3, 2026" and a count) when sorted by date; a plain grid otherwise. */
+private fun gridRows(photos: List<Photo>, sort: SortOrder): List<GridRow> {
+    if (sort != SortOrder.NEWEST && sort != SortOrder.OLDEST) return photos.map { GridRow.Pic(it) }
+    val fmt = java.time.format.DateTimeFormatter.ofPattern("MMMM d, yyyy", java.util.Locale.ENGLISH)
+    val zone = java.time.ZoneId.systemDefault()
+    fun day(p: Photo) = java.time.Instant.ofEpochMilli(if (p.takenAt > 0) p.takenAt else p.modified).atZone(zone).toLocalDate()
+    val out = ArrayList<GridRow>(photos.size + 32)
+    var i = 0
+    while (i < photos.size) {
+        val d = day(photos[i]); var j = i
+        while (j < photos.size && day(photos[j]) == d) j++
+        out.add(GridRow.Head(d.format(fmt), j - i))
+        for (k in i until j) out.add(GridRow.Pic(photos[k]))
+        i = j
+    }
+    return out
 }

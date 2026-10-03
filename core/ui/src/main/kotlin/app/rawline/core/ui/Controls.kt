@@ -1,6 +1,9 @@
 package app.rawline.core.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -131,8 +134,40 @@ private fun LrTrack(
             drawLine(Lr.Text, Offset(px(default), cy), Offset(px(value), cy), 2.5.dp.toPx(), StrokeCap.Round)
         }
         if (default > range.start && default < range.endInclusive) drawLine(Lr.TextDim, Offset(px(default), cy - 6.dp.toPx()), Offset(px(default), cy - 3.dp.toPx()), 1.5.dp.toPx())
-        drawCircle(Color(0x55000000), (if (dragging) 13 else 10).dp.toPx(), Offset(px(value), cy + 1.dp.toPx()))
-        drawCircle(Color.White, (if (dragging) 11 else 9).dp.toPx(), Offset(px(value), cy))
+        // hollow ring thumb as in Lightroom mobile
+        val r = (if (dragging) 13 else 11).dp.toPx()
+        drawCircle(Lr.Panel, r, Offset(px(value), cy))
+        drawCircle(Color.White, r - 1.dp.toPx(), Offset(px(value), cy), style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
+    }
+}
+
+/** Lightroom style section tabs: large text, the selected one white with an underline. */
+@Composable
+fun LrTabs(items: List<Pair<String, String>>, selected: String, onSelect: (String) -> Unit, modifier: Modifier = Modifier) {
+    Row(modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+        items.forEach { (id, label) ->
+            val on = id == selected
+            Column(
+                Modifier.height(48.dp).clickable { onSelect(id) }.semantics { contentDescription = label },
+                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
+            ) {
+                Text(label, color = if (on) Lr.Text else Lr.TextDim, style = MaterialTheme.typography.titleMedium)
+                Box(Modifier.padding(top = 4.dp).height(2.dp).width(IntrinsicSize.Max).fillMaxWidth().background(if (on) Lr.Text else Color.Transparent))
+            }
+        }
+    }
+}
+
+/** Outlined rounded button used for Curve, B and W, Grading and Mix. */
+@Composable
+fun LrOutlineButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifier, icon: LrIcon? = null, active: Boolean = false) {
+    Row(
+        modifier.height(48.dp).clip(RoundedCornerShape(10.dp)).background(Lr.Black).border(1.dp, if (active) Lr.Accent else Lr.TrackOff, RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick).padding(horizontal = 18.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center,
+    ) {
+        if (icon != null) { LrIconView(icon, Lr.Text, size = 22.dp); Spacer(Modifier.width(10.dp)) }
+        Text(label, color = if (active) Lr.Accent else Lr.Text, style = MaterialTheme.typography.titleMedium)
     }
 }
 

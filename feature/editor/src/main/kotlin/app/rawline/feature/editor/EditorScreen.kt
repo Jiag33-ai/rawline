@@ -62,6 +62,11 @@ import app.rawline.core.model.Photo
 import app.rawline.core.render.EditorGlView
 import app.rawline.core.render.Stage
 import app.rawline.core.ui.ChipButton
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import app.rawline.core.ui.LrTabs
+import app.rawline.core.ui.LrOutlineButton
 import app.rawline.core.ui.Histogram
 import kotlinx.coroutines.launch
 import kotlin.math.abs
@@ -262,12 +267,16 @@ fun EditorScreen(
     }
 
     class Tool(val id: String, val title: String, val icon: LrIcon)
-    val tools = remember(extraTabs) {
-        listOf(Tool("auto", "Auto", LrIcon.AUTO), Tool("presets", "Presets", LrIcon.PRESETS), Tool("geometry", "Crop", LrIcon.CROP), Tool("light", "Light", LrIcon.LIGHT),
-            Tool("colour", "Color", LrIcon.COLOR), Tool("effects", "Effects", LrIcon.EFFECTS), Tool("detail", "Detail", LrIcon.DETAIL), Tool("optics", "Optics", LrIcon.OPTICS)) +
-            extraTabs.map { Tool(it.id, if (it.id == "remove") "Healing" else it.title, if (it.id == "remove") LrIcon.HEALING else LrIcon.MASKING) } +
-            Tool("history", "Versions", LrIcon.VERSIONS)
+    // top level modes (bottom row) and the Edit sections (row above it), as in Lightroom mobile
+    val maskTab = extraTabs.firstOrNull { it.id != "remove" }
+    val modes = remember(extraTabs) {
+        buildList {
+            add(Tool("auto", "Actions", LrIcon.AUTO)); add(Tool("presets", "Presets", LrIcon.PRESETS)); add(Tool("geometry", "Crop", LrIcon.CROP)); add(Tool("edit", "Edit", LrIcon.EDIT))
+            extraTabs.forEach { add(Tool(it.id, it.title, if (it.id == "remove") LrIcon.HEALING else LrIcon.MASKING)) }
+        }
     }
+    val sections = listOf(Tool("light", "Light", LrIcon.LIGHT), Tool("colour", "Color", LrIcon.COLOR), Tool("effects", "Effects", LrIcon.EFFECTS), Tool("detail", "Detail", LrIcon.DETAIL), Tool("optics", "Optics", LrIcon.OPTICS))
+    val sectionIds = sections.map { it.id }
     var lightSub by remember { mutableStateOf("basic") }
     var colourSub by remember { mutableStateOf("basic") }
     var menu by remember { mutableStateOf(false) }
@@ -277,12 +286,19 @@ fun EditorScreen(
         when (tab) {
             "auto" -> AutoPanel(state, session, photo, placeholder)
             "light" -> Column {
-                SubTabs(listOf("basic" to "Light", "curve" to "Curve"), lightSub) { lightSub = it }
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.End) {
+                    LrOutlineButton("Curve", { lightSub = if (lightSub == "curve") "basic" else "curve" }, icon = LrIcon.CURVE, active = lightSub == "curve")
+                }
                 if (lightSub == "curve") CurvePanel(state, AdjustTarget.Global, hist)
-                else LightPanel(state, AdjustTarget.Global, onAuto = { scope.launch { session.baseStats()?.let { s -> state.edit("Auto") { r -> r.copy(adjust = AutoTools.autoLight(s).let { a -> r.adjust.copy(exposure = a.exposure, contrast = a.contrast, highlights = a.highlights, shadows = a.shadows, whites = a.whites, blacks = a.blacks) }) } } } })
+                else LightPanel(state, AdjustTarget.Global)
             }
             "colour" -> Column {
-                SubTabs(listOf("basic" to "Color", "mix" to "Color Mix", "grade" to "Grading"), colourSub) { colourSub = it }
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    LrOutlineButton("B & W", { val on = state.recipe.adjust.saturation <= -99f; state.edit("Black and white") { r -> r.copy(adjust = r.adjust.copy(saturation = if (on) 0f else -100f, vibrance = if (on) r.adjust.vibrance else 0f)) } }, active = state.recipe.adjust.saturation <= -99f)
+                    Spacer(Modifier.weight(1f))
+                    LrOutlineButton("Grading", { colourSub = if (colourSub == "grade") "basic" else "grade" }, active = colourSub == "grade")
+                    LrOutlineButton("Mix", { colourSub = if (colourSub == "mix") "basic" else "mix" }, active = colourSub == "mix")
+                }
                 when (colourSub) {
                     "mix" -> MixerPanel(state, AdjustTarget.Global, mixBand, { mixBand = it }, mixMode, { mixMode = it }, { mode = PhotoMode.TARGET_MIXER })
                     "grade" -> GradingPanel(state, AdjustTarget.Global)
@@ -308,16 +324,39 @@ fun EditorScreen(
         }
     }
 
+    val autoLight = { scope.launch { session.baseStats()?.let { st -> val a = AutoTools.autoLight(st)
+        state.edit("Auto") { r -> r.copy(adjust = r.adjust.copy(exposure = a.exposure, contrast = a.contrast, highlights = a.highlights, shadows = a.shadows, whites = a.whites, blacks = a.blacks)) } } }; Unit }
     val toolbar: @Composable () -> Unit = {
-        Row(Modifier.fillMaxWidth().background(Lr.Background).horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            tools.forEach { t ->
-                val on = tab == t.id
-                Column(
-                    Modifier.width(72.dp).height(60.dp).clickable { tab = if (on) "" else t.id; mode = PhotoMode.NONE }.semantics { contentDescription = t.title },
-                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
-                ) {
-                    LrIconView(t.icon, if (on) Lr.Accent else Lr.TextDim, size = 26.dp)
-                    Text(t.title, style = MaterialTheme.typography.labelSmall, color = if (on) Lr.Accent else Lr.TextDim, maxLines = 1)
+        val inEdit = tab in sectionIds
+        Column(Modifier.fillMaxWidth().background(Lr.Background)) {
+            if (inEdit) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.width(72.dp).height(64.dp).clip(RoundedCornerShape(10.dp)).clickable { autoLight() }.semantics { contentDescription = "Auto" }, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                        LrIconView(LrIcon.AUTO, Lr.TextDim, size = 26.dp); Text("Auto", style = MaterialTheme.typography.labelMedium, color = Lr.TextDim)
+                    }
+                    Box(Modifier.width(1.dp).height(36.dp).background(Lr.Separator))
+                    sections.forEach { t ->
+                        val on = tab == t.id
+                        Column(
+                            Modifier.width(76.dp).height(64.dp).clip(RoundedCornerShape(10.dp)).background(if (on) Lr.Surface else Color.Transparent)
+                                .clickable { tab = t.id; mode = PhotoMode.NONE }.semantics { contentDescription = t.title },
+                            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
+                        ) {
+                            LrIconView(t.icon, if (on) Lr.Text else Lr.TextDim, size = 26.dp)
+                            Text(t.title, style = MaterialTheme.typography.labelMedium, color = if (on) Lr.Text else Lr.TextDim, maxLines = 1)
+                        }
+                    }
+                }
+                Box(Modifier.fillMaxWidth().height(1.dp).background(Lr.Separator))
+            }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+                modes.forEach { t ->
+                    val on = if (t.id == "edit") inEdit else tab == t.id
+                    Box(
+                        Modifier.weight(1f).height(52.dp).padding(horizontal = 4.dp).clip(RoundedCornerShape(10.dp)).background(if (on) Lr.Accent else Color.Transparent)
+                            .clickable { tab = if (t.id == "edit") (if (inEdit) tab else "light") else t.id; mode = PhotoMode.NONE }.semantics { contentDescription = t.title },
+                        contentAlignment = Alignment.Center,
+                    ) { LrIconView(t.icon, if (on) Color.White else Lr.TextDim, size = 26.dp) }
                 }
             }
         }
