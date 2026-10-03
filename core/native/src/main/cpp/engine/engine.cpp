@@ -205,6 +205,13 @@ void Engine::setOverlay(const uint8_t *rgbaHalfBytes, int w, int h) {
     overlayW_ = w;
 }
 
+void Engine::updateOverlayRegion(int x, int y, int w, int h, const uint8_t *data) {
+    if (overlayW_ <= 0) return;
+    glBindTexture(GL_TEXTURE_2D, overlayTex_);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, x, y, w, h, GL_RGBA, GL_HALF_FLOAT, data);
+}
+
 void Engine::setBaseCurve(const float *lut) {
     std::vector<uint16_t> h(kCurveSize);
     for (int i = 0; i < kCurveSize; i++) h[i] = floatToHalf(lut[i]);
@@ -336,7 +343,7 @@ void Engine::runMain(const float *p, Rect vis, int pw, int ph, Target &e, int ma
     draw();
 }
 
-static void setOutUniforms(GLuint pr, const float *p, int pw, int ph, Rect vis, float aspect, float flip, float outLinear, int margin) {
+static void setOutUniforms(GLuint pr, const float *p, int pw, int ph, Rect vis, float aspect, float flip, float outLinear, int margin, int space) {
     glUniform1i(glGetUniformLocation(pr, "uE"), 0);
     glUniform1i(glGetUniformLocation(pr, "uBase"), 1);
     glUniform2i(glGetUniformLocation(pr, "uMargin"), margin, margin);
@@ -349,10 +356,16 @@ static void setOutUniforms(GLuint pr, const float *p, int pw, int ph, Rect vis, 
     glUniform1f(glGetUniformLocation(pr, "uAspect"), aspect);
     float fullPx = pw / std::max(vis.w, 1e-6f);
     glUniform1f(glGetUniformLocation(pr, "uPxScale"), fullPx / 1920.f);
-    static float m[9];
+    static float msrgb[9], mp3[9];
     static bool init = false;
-    if (!init) { proPhotoToSrgb(m); init = true; }
-    glUniformMatrix3fv(glGetUniformLocation(pr, "uToSrgb"), 1, GL_FALSE, m);
+    if (!init) {
+        proPhotoToSrgb(msrgb);
+        // ProPhoto (D50) -> linear Display P3, column major
+        const double r[9] = {1.63277, -0.37961, -0.252809, -0.153699, 1.166619, -0.013002, 0.010388, -0.062789, 1.052053};
+        for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) mp3[j * 3 + i] = float(r[i * 3 + j]);
+        init = true;
+    }
+    glUniformMatrix3fv(glGetUniformLocation(pr, "uToSrgb"), 1, GL_FALSE, space == 1 ? mp3 : msrgb);
     glUniform1f(glGetUniformLocation(pr, "uOutLinear"), outLinear);
     glUniform1f(glGetUniformLocation(pr, "uChecker"), 1.f);
     glUniform1f(glGetUniformLocation(pr, "uFlipY"), flip);
@@ -374,7 +387,7 @@ void Engine::renderToScreen(const float *p, int vx, int vy, int vw, int vh, Rect
     glBindTexture(GL_TEXTURE_2D, baseTex_);
     int ow, oh;
     outputSize(p, ow, oh);
-    setOutUniforms(out_.id, p, vw, vh, vis, float(ow) / oh, 1.f, 0.f, kMargin);
+    setOutUniforms(out_.id, p, vw, vh, vis, float(ow) / oh, 1.f, 0.f, kMargin, 0);
     draw();
 }
 
@@ -393,10 +406,15 @@ bool Engine::renderRegion(const float *p, int pw, int ph, Rect vis, uint8_t *rgb
     glBindTexture(GL_TEXTURE_2D, baseTex_);
     int ow, oh;
     outputSize(p, ow, oh);
-    setOutUniforms(out_.id, p, pw, ph, vis, float(ow) / oh, 0.f, linearHalfOut ? 1.f : 0.f, kMargin);
+    setOutUniforms(out_.id, p, pw, ph, vis, float(ow) / oh, 0.f, linearHalfOut ? 1.f : 0.f, kMargin, outputSpace_);
     draw();
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    if (linearHalfOut) glReadPixels(0, 0, pw, ph, GL_RGBA, GL_HALF_FLOAT, halfOut);
+    if (linearHalfOut) {
+        // read as float (always valid for a float attachment) and pack to half for the caller
+        std::vector<float> f(size_t(pw) * ph * 4);
+        glReadPixels(0, 0, pw, ph, GL_RGBA, GL_FLOAT, f.data());
+        for (size_t i = 0; i < f.size(); i++) halfOut[i] = floatToHalf(f[i]);
+    }
     else glReadPixels(0, 0, pw, ph, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
     return glGetError() == GL_NO_ERROR;
 }

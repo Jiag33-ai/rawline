@@ -71,6 +71,7 @@ class LibraryActions(
     val onCopyEdits: (Photo) -> Unit,
     val onPasteEdits: (List<Photo>, Set<PasteScope>) -> Unit,
     val onSyncEdits: (Photo, List<Photo>) -> Unit,
+    val onExport: (List<Photo>) -> Unit,
     val hasCopied: Boolean,
 )
 
@@ -180,6 +181,7 @@ private fun SelectionBar(sel: List<Photo>, a: LibraryActions, onPaste: () -> Uni
             listOf("No label", "Red", "Yellow", "Green", "Blue", "Purple").forEachIndexed { i, n -> ChipButton(n, false, { a.onLabel(sel, i) }) }
         }
         Row(Modifier.horizontalScroll(rememberScrollState()).padding(bottom = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            ChipButton("Export...", false, { a.onExport(sel) })
             ChipButton("Select all", false, onSelectAll)
             if (sel.size == 1) ChipButton("Copy edits", false, { a.onCopyEdits(sel[0]) })
             if (a.hasCopied) ChipButton("Paste edits...", false, onPaste)

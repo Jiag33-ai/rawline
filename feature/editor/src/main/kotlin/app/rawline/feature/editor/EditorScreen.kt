@@ -101,6 +101,7 @@ fun EditorScreen(
     val session = state.session
     val ss by session.state.collectAsState()
     val hist by session.histogram.collectAsState()
+    val status by session.status.collectAsState()
     val scope = rememberCoroutineScope()
     var tab by remember { mutableStateOf("light") }
     var mode by remember { mutableStateOf(PhotoMode.NONE) }
@@ -224,6 +225,7 @@ fun EditorScreen(
             val fit = session.fitRect(viewW, viewH)
             if (tab == "geometry") CropOverlay(state, fit, ow / oh)
             tabOverlay(tab, PhotoMapper(session, viewW, viewH))
+            status?.let { Text(it, color = Color.White, style = MaterialTheme.typography.labelMedium, modifier = Modifier.align(Alignment.TopStart).padding(8.dp).background(Color(0xAA000000), androidx.compose.foundation.shape.RoundedCornerShape(12.dp)).padding(horizontal = 10.dp, vertical = 4.dp)) }
             if (showHist) Histogram(hist, Modifier.align(Alignment.TopEnd).padding(8.dp).width(120.dp).height(54.dp))
             if (mode != PhotoMode.NONE) {
                 Text(

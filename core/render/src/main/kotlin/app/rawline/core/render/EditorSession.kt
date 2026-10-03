@@ -37,7 +37,18 @@ data class SessionState(
  * Owns the GL engine for one open photo. Public setters are safe to call from any thread;
  * everything that touches the engine runs on the GL thread via queueEvent.
  */
-class EditorSession(private val context: Context, private val prefetch: RawPrefetch? = null, private val onTiming: (String, Long) -> Unit = { _, _ -> }) {
+/** Optional heavy step run on a decoded raw before it is uploaded (AI denoise). Returns false if it could not run. */
+typealias SourceHook = suspend (handle: Long, amountPercent: Float, onProgress: (Float) -> Unit) -> Boolean
+
+class EditorSession(
+    private val context: Context,
+    private val prefetch: RawPrefetch? = null,
+    private val onTiming: (String, Long) -> Unit = { _, _ -> },
+    private val denoise: SourceHook? = null,
+) : OverlaySink {
+    private val _status = MutableStateFlow<String?>(null)
+    /** Inline progress text for long tasks (never a blocking dialog). */
+    val status: StateFlow<String?> = _status
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _state = MutableStateFlow(SessionState())
     val state: StateFlow<SessionState> = _state
@@ -96,6 +107,7 @@ class EditorSession(private val context: Context, private val prefetch: RawPrefe
                 val info = Native.rawInfo(handle)
                 val decodeMs = (System.nanoTime() - t0) / 1_000_000
                 onTiming("edit_decode_ms", decodeMs)
+                maybeDenoise(handle)
                 post {
                     if (gen != generation) { Native.freeRaw(handle); return@post }
                     val u0 = System.nanoTime()
@@ -133,8 +145,36 @@ class EditorSession(private val context: Context, private val prefetch: RawPrefe
 
     fun removeLayer(key: String) { synchronized(layers) { layers.remove(key) } }
 
+    override fun updateOverlay(x: Int, y: Int, w: Int, h: Int, rgbaHalf: ShortArray) {
+        post { Native.engineUpdateOverlay(engine, x, y, w, h, rgbaHalf); requestRender() }
+    }
+
+    fun setOverlayActive(on: Boolean) { overlayOn = on; post { rebuild(); requestRender() } }
+
+    val sourceWidth get() = srcW
+    val sourceHeight get() = srcH
+    val orientationValue get() = orientation
+    val currentRecipe get() = recipe
+
+    /**
+     * A rectangle of the source picture in its stored orientation (no crop, rotation or edits; camera look only), as a
+     * software bitmap of the given pixel size. [x], [y], [w], [h] are normalised source coordinates.
+     */
+    suspend fun renderSource(x: Float, y: Float, w: Float, h: Float, pw: Int, ph: Int): android.graphics.Bitmap? {
+        val d = CompletableDeferred<android.graphics.Bitmap?>()
+        post {
+            val arr = RenderParams.build(EditRecipe(), 1, emptyMap(), overlayOn = false)
+            val buf = ByteArray(pw * ph * 4)
+            if (!Native.engineRenderRegion(engine, arr, pw, ph, x, y, w, h, buf)) { d.complete(null); return@post }
+            val px = IntArray(pw * ph) { i -> (0xFF shl 24) or ((buf[i * 4].toInt() and 0xFF) shl 16) or ((buf[i * 4 + 1].toInt() and 0xFF) shl 8) or (buf[i * 4 + 2].toInt() and 0xFF) }
+            d.complete(android.graphics.Bitmap.createBitmap(px, pw, ph, android.graphics.Bitmap.Config.ARGB_8888))
+            requestRender()
+        }
+        return d.await()
+    }
+
     /** Overlay of healed / removed areas: premultiplied linear working space, same orientation as the source. */
-    fun setOverlay(rgbaHalf: ShortArray?, w: Int, h: Int) {
+    override fun setOverlay(rgbaHalf: ShortArray?, w: Int, h: Int) {
         overlayOn = rgbaHalf != null
         post { Native.engineSetOverlay(engine, rgbaHalf, w, h); rebuild(); requestRender() }
     }
@@ -150,6 +190,7 @@ class EditorSession(private val context: Context, private val prefetch: RawPrefe
             val handle = decodeFor(p, half = false)
             if (handle == 0L) return@launch
             onTiming("full_decode_ms", (System.nanoTime() - t0) / 1_000_000)
+            maybeDenoise(handle)
             post {
                 if (gen != generation) { Native.freeRaw(handle); return@post }
                 Native.engineSetSource(engine, handle)
@@ -269,6 +310,45 @@ class EditorSession(private val context: Context, private val prefetch: RawPrefe
     private fun orientationRot() = when (orientation) { 5, 6 -> 1; 3, 4 -> 2; 7, 8 -> 3; else -> 0 }
 
     val outputSize: IntArray get() = geometryOutSize
+
+    private suspend fun maybeDenoise(handle: Long) {
+        val d = recipe.detail
+        val hook = denoise ?: return
+        if (!d.aiDenoise) return
+        val ok = try {
+            hook(handle, d.aiDenoiseAmount) { _status.value = "AI denoise ${(it * 100).toInt()}%" }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Throwable) { false }
+        _status.value = if (ok) null else "AI denoise could not run"
+        if (ok) appliedDenoise = d.aiDenoiseAmount
+    }
+    private var appliedDenoise = -1f
+
+    /** Call after the AI denoise setting was committed: decodes again with the new setting and swaps the source. */
+    fun reloadSource() {
+        val p = photo ?: return
+        val d = recipe.detail
+        val wanted = if (d.aiDenoise) d.aiDenoiseAmount else -1f
+        if (wanted == appliedDenoise) return
+        val gen = ++generation
+        fullRequested = false
+        _status.value = if (d.aiDenoise) "AI denoise" else "Updating"
+        scope.launch {
+            try {
+                val handle = decodeFor(p, half = true)
+                if (handle == 0L) return@launch
+                val info = Native.rawInfo(handle)
+                appliedDenoise = -1f
+                maybeDenoise(handle)
+                if (!d.aiDenoise) { _status.value = null }
+                post {
+                    if (gen != generation) { Native.freeRaw(handle); return@post }
+                    Native.engineSetSource(engine, handle)
+                    srcW = info[0]; srcH = info[1]
+                    rebuild(); requestRender()
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Throwable) { _status.value = "Update failed" }
+        }
+    }
 
     fun release() {
         scope.cancel()

@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import app.rawline.core.cache.CrashStore
 import app.rawline.core.cache.MaskStore
+import app.rawline.core.cache.PatchStore
 import app.rawline.core.cache.PreviewCache
 import app.rawline.core.cache.ThumbStore
 import app.rawline.core.data.Catalog
@@ -22,6 +23,8 @@ class Graph(context: Context) {
     val rawPrefetch = RawPrefetch(context)
     val maskStore = MaskStore(context)
     val modelStore = ModelStore(context)
+    val patchStore = PatchStore(context)
+    val exportRunner by lazy { ExportRunner(context, this) }
     val prefs = context.getSharedPreferences("rawline", Context.MODE_PRIVATE)
 }
 

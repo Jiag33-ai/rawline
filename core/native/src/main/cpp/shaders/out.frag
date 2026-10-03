@@ -16,7 +16,7 @@ uniform vec4 uView;          // visible region in image-normalised coords (for v
 uniform float uAspect;
 uniform float uPxScale;      // output pixels per reference pixel (keeps radii consistent between preview and export)
 uniform mat3 uToSrgb;        // working space (ProPhoto, D50) to linear sRGB
-uniform float uOutLinear;    // 1 = write linear half float values (for 16 bit export)
+uniform float uOutLinear;    // 1 = target is a float buffer (16 bit export): same encoding, no 8 bit rounding
 uniform float uChecker;      // 1 = draw a mid grey where the image is empty
 
 const vec3 Y = vec3(0.28807, 0.71184, 0.0000857);
@@ -100,7 +100,6 @@ void main() {
     }
 
     vec3 lin = max(uToSrgb * c, 0.0);
-    if (uOutLinear > 0.5) { oColor = vec4(lin, 1.0); return; }
     vec3 v = clamp(srgbOetf3(lin), 0.0, 1.0);
     // Base tone curve (calibrated against the camera JPEG look); identity is plain sRGB.
     v = vec3(texture(uBase, vec2((v.r * 255.0 + 0.5) / 256.0, 0.5)).r,

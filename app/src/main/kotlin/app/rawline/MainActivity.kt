@@ -14,6 +14,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import app.rawline.core.model.Photo
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -55,11 +59,20 @@ private fun RawlineRoot() {
     val copied by vm.copied.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
     val nav = rememberNavController()
+    var exportTargets by remember { mutableStateOf<List<Photo>?>(null) }
+    val notifPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> if (uri != null) vm.chooseFolder(uri) }
     val backupOut = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri -> if (uri != null) vm.backupTo(uri) }
     val backupIn = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.restoreFrom(uri) }
 
     LaunchedEffect(message) { message?.let { if (it.isNotEmpty() && nav.currentDestination?.route != "settings") Toast.makeText(context, it, Toast.LENGTH_SHORT).show() } }
+
+    exportTargets?.let { targets ->
+        ExportDialog(targets, graph, onDismiss = { exportTargets = null }, onStart = {
+            if (android.os.Build.VERSION.SDK_INT >= 33) notifPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        })
+    }
+    ExportStatusBar(graph)
 
     NavHost(nav, startDestination = "library") {
         composable("library") {
@@ -73,6 +86,7 @@ private fun RawlineRoot() {
                     onFilter = { vm.filter.value = it },
                     onRate = { l, r -> vm.rate(l, r) }, onFlag = { l, f -> vm.flag(l, f) }, onLabel = { l, c -> vm.label(l, c) },
                     onCopyEdits = { vm.copyEdits(it) }, onPasteEdits = { l, s -> vm.pasteEdits(l, s) }, onSyncEdits = { f, t -> vm.syncEdits(f, t) },
+                    onExport = { exportTargets = it },
                     hasCopied = copied != null,
                 ),
             )
@@ -90,7 +104,7 @@ private fun RawlineRoot() {
         composable("edit/{id}", arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
             val id = entry.arguments?.getLong("id") ?: 0L
             val photo = allPhotos.firstOrNull { it.id == id }
-            if (photo != null) EditorHost(photo, graph, onBack = { nav.popBackStack() })
+            if (photo != null) EditorHost(photo, graph, onExport = { exportTargets = listOf(it) }, onBack = { nav.popBackStack() })
         }
         composable("settings") {
             SettingsScreen(

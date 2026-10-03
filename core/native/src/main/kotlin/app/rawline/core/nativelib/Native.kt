@@ -32,5 +32,11 @@ object Native {
     external fun engineRenderRegion(h: Long, params: FloatArray, pw: Int, ph: Int, x: Float, y: Float, w: Float, hgt: Float, out: ByteArray): Boolean
     external fun engineRenderRegionHalf(h: Long, params: FloatArray, pw: Int, ph: Int, x: Float, y: Float, w: Float, hgt: Float, out: ShortArray): Boolean
     external fun engineInvalidate(h: Long)
+    external fun engineSetOutputSpace(h: Long, space: Int)   // 0 sRGB, 1 Display P3
+    external fun engineUpdateOverlay(h: Long, x: Int, y: Int, w: Int, hgt: Int, rgbaHalf: ShortArray)
+    external fun baseCurve(): FloatArray
+    /** Linear working-space rgb of a rectangle of a decoded raw (3 floats per pixel, edges clamped). */
+    external fun rawRead(handle: Long, x: Int, y: Int, w: Int, h: Int): FloatArray
+    external fun rawWrite(handle: Long, x: Int, y: Int, w: Int, h: Int, rgb: FloatArray)
     external fun paramFloats(): Int
 }

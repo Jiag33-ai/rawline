@@ -4,7 +4,9 @@
 #include <EGL/eglext.h>
 #include <GLES3/gl32.h>
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -12,6 +14,7 @@
 #include <string>
 
 #include "engine/engine.h"
+#include "engine/halfs.h"
 #include "engine/params.h"
 #include "raw_decode.h"
 
@@ -110,6 +113,13 @@ int main(int argc, char **argv) {
         double a = now();
         if (!eng.renderRegion(p.data(), W, H, {0, 0, 1, 1}, rgba.data())) { fprintf(stderr, "render gl error\n"); return 7; }
         fprintf(stderr, "render %dx%d: %.1f ms (llvmpipe, CPU)\n", W, H, now() - a);
+    }
+    if (getenv("GOLDEN_HALF")) {   // float render target: values must match the 8 bit render within rounding
+        std::vector<uint16_t> hf(size_t(W) * H * 4);
+        if (!eng.renderRegion(p.data(), W, H, {0, 0, 1, 1}, nullptr, true, hf.data())) { fprintf(stderr, "half render failed\n"); return 8; }
+        double maxd = 0;
+        for (size_t i = 0; i < size_t(W) * H; i++) for (int c = 0; c < 3; c++) maxd = std::max(maxd, std::abs(rl::halfToFloat(hf[i * 4 + c]) * 255.0 - rgba[i * 4 + c]));
+        fprintf(stderr, "float target max diff vs 8 bit: %.2f levels\n", maxd);
     }
     FILE *f = fopen(argv[2], "wb");
     fprintf(f, "P6\n%d %d\n255\n", W, H);

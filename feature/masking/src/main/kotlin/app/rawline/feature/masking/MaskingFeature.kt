@@ -98,6 +98,27 @@ class MaskingFeature(
         }
     }
 
+    private val savedHash = HashMap<String, Int>()
+
+    /**
+     * Keeps the saved alpha images of brush masks in step with the recipe (after commits, undo, redo). Export reads these,
+     * so the exported mask is the very image the screen used.
+     */
+    fun persist(recipe: EditRecipe) {
+        scope.launch(Dispatchers.Default) {
+            recipe.masks.flatMap { it.components }.filter { it.type == MaskType.BITMAP && it.layerKey?.startsWith("brush_") == true }.forEach { c ->
+                val key = c.layerKey ?: return@forEach
+                val hash = c.strokes.hashCode()
+                if (savedHash[key] == hash) return@forEach
+                val l = brushLayer(key)
+                l.renderAll(c.strokes)
+                store.save(key, l.alpha, l.w, l.h)
+                upload(key, l.alpha, l.w, l.h)
+                savedHash[key] = hash
+            }
+        }
+    }
+
     private fun upload(key: String, bytes: ByteArray, w: Int, h: Int) = session.setLayer(key, bytes.copyOf(), w, h)
 
     /** Re-creates GPU layers for every bitmap mask after opening a photo. */
@@ -422,6 +443,9 @@ class MaskingFeature(
                 if (s != null && !cancelled) {
                     upload(key, l.alpha, l.w, l.h)
                     state.edit("Brush stroke") { it.withComponent(mi, ci) { cc -> cc.copy(strokes = cc.strokes + s) } }
+                    savedHash[key] = state.recipe.masks[mi].components[ci].strokes.hashCode()
+                    val snapshot = l.alpha.copyOf()
+                    scope.launch(Dispatchers.IO) { store.save(key, snapshot, l.w, l.h) }
                 } else if (s != null) { l.renderAll(state.recipe.masks[mi].components[ci].strokes); upload(key, l.alpha, l.w, l.h) }
             },
         )

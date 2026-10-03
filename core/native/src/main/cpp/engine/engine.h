@@ -22,7 +22,8 @@ public:
     int sourceH() const { return srcH_; }
 
     void setLayer(int index, const uint8_t *alpha, int w, int h);
-    void setOverlay(const uint8_t *rgbaPremul, int w, int h);   // null clears
+    void setOverlay(const uint8_t *rgbaHalf, int w, int h);   // whole overlay, null clears
+    void updateOverlayRegion(int x, int y, int w, int h, const uint8_t *rgbaHalf);   // premultiplied RGBA half float
     void setBaseCurve(const float *lut256);
 
     /** Size in pixels of the final image for these params at full source resolution. */
@@ -33,6 +34,9 @@ public:
 
     /** Renders a region into an RGBA8 buffer (top row first). Used for exports and tests. */
     bool renderRegion(const float *params, int pw, int ph, Rect vis, uint8_t *rgba, bool linearHalfOut = false, uint16_t *halfOut = nullptr);
+
+    /** 0 = sRGB, 1 = Display P3. */
+    void setOutputSpace(int space) { outputSpace_ = space; }
 
     void invalidateAnalysis() { analysisKey_ = ~0ull; }
 
@@ -58,6 +62,7 @@ private:
     uint64_t analysisKey_ = ~0ull;
     std::vector<float> lastCurves_;
     bool ready_ = false;
+    int outputSpace_ = 0;
 };
 
 }  // namespace rl

@@ -77,7 +77,8 @@ data class Mask(
 )
 
 /** Heal, clone and AI remove results are kept as a list of patches rendered into an overlay. */
-data class HealOp(val kind: String, val stroke: BrushStroke, val sourceX: Float = 0f, val sourceY: Float = 0f, val patchKey: String? = null)
+/** [region] is x, y, w, h of the patch in the source image, normalised. Strokes are in the masks' frame. */
+data class HealOp(val kind: String, val stroke: BrushStroke, val sourceX: Float = 0f, val sourceY: Float = 0f, val patchKey: String? = null, val region: List<Float> = emptyList())
 
 data class EditRecipe(
     val schemaVersion: Int = 1,
@@ -196,7 +197,7 @@ object RecipeJson {
         put("heals", JSONArray().also { arr ->
             r.heals.forEach { h ->
                 arr.put(JSONObject().put("kind", h.kind).put("stroke", stroke(h.stroke)).put("sx", h.sourceX.toDouble()).put("sy", h.sourceY.toDouble())
-                    .put("patch", h.patchKey ?: JSONObject.NULL))
+                    .put("patch", h.patchKey ?: JSONObject.NULL).put("region", fl(h.region)))
             }
         })
     }.toString()
@@ -248,7 +249,7 @@ object RecipeJson {
             if (heals == null) emptyList() else List(heals.length()) { i ->
                 val h = heals.getJSONObject(i)
                 HealOp(h.getString("kind"), readStroke(h.getJSONObject("stroke")), h.optDouble("sx", 0.0).toFloat(), h.optDouble("sy", 0.0).toFloat(),
-                    if (h.isNull("patch")) null else h.getString("patch"))
+                    if (h.isNull("patch")) null else h.getString("patch"), floats(h.optJSONArray("region")))
             },
         )
     }
