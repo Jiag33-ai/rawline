@@ -1,0 +1,10 @@
+{
+  "note": "Official TFLite releases used as published (no conversion). Sizes are approximate.",
+  "models": [
+    {"id": "sky", "url": "https://qaihub-public-assets.s3.us-west-2.amazonaws.com/qai-hub-models/models/segformer_base/releases/v0.63.0/segformer_base-tflite-float.zip", "entry": "segformer_base-tflite-float/segformer_base.tflite"},
+    {"id": "people", "url": "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite"},
+    {"id": "sam", "url": "https://qaihub-public-assets.s3.us-west-2.amazonaws.com/qai-hub-models/models/mobilesam/releases/v0.63.0/mobilesam-tflite-float.zip", "entries": ["mobilesam-tflite-float/encoder.tflite", "mobilesam-tflite-float/decoder.tflite"]},
+    {"id": "lama", "url": "https://qaihub-public-assets.s3.us-west-2.amazonaws.com/qai-hub-models/models/lama_dilated/releases/v0.63.0/lama_dilated-tflite-float.zip", "entry": "lama_dilated-tflite-float/lama_dilated.tflite"},
+    {"id": "denoise", "url": "https://qaihub-public-assets.s3.us-west-2.amazonaws.com/qai-hub-models/models/nafnet_denoise/releases/v0.63.0/nafnet_denoise-tflite-float.zip", "entry": "nafnet_denoise-tflite-float/nafnet_denoise.tflite"}
+  ]
+}

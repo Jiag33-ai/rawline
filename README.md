@@ -10,5 +10,11 @@ Spec: docs/SPEC.md. Working notes: CLAUDE.md. Timings: docs/PERF.md.
 
 Release signing uses Actions secrets `RAWLINE_KEYSTORE_B64`, `RAWLINE_KEYSTORE_PASSWORD`, `RAWLINE_KEY_ALIAS`, `RAWLINE_KEY_PASSWORD`. Without them CI builds a debug APK instead.
 
+## What is in it
+Library (grid, filters, ratings, flags, labels, copy/paste/sync edits, backup), viewer (fast embedded preview, prefetch, zoom, info), RAW editor (light, curves, colour, mixer, grading, effects, detail, optics with lens profiles, geometry, masks, AI masks, remove/heal/clone, AI denoise, presets, history, snapshots) and export (JPEG, PNG, 16-bit TIFF, sizes, sharpening, Display P3, metadata, batch service, share).
+
+## Tests
+`./gradlew testDebugUnitTest` (JVM unit tests), `./tools/golden/run-golden.sh` (shaders on Mesa vs reference images; needs `libgles2-mesa-dev libegl1-mesa-dev` and Pillow), `./tools/test-preview-parser.sh` (embedded preview parser on `testdata/*.RW2`), `./tools/models/fetch.sh` (model URLs still live).
+
 ## Local build (cloud sandbox)
 `./tools/setup-sdk.sh && source tools/env.sh && ./gradlew assembleDebug testDebugUnitTest`

@@ -19,6 +19,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends libgles2-mesa-dev libegl1-mesa-dev libgl1-mesa-dri libegl-mesa0 cmake python3-pil
       - name: Golden render tests
         run: ./tools/golden/run-golden.sh
+      - name: Model download links are alive
+        run: ./tools/models/fetch.sh
       - name: Preview parser test on real S5IIX files
         run: |
           mkdir -p testdata
