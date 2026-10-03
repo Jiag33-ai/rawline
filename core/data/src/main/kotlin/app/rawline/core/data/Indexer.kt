@@ -26,17 +26,18 @@ data class IndexProgress(val total: Int = 0, val done: Int = 0, val running: Boo
  * thumbnails and EXIF newest first. Headers only: no raw data is ever decoded here.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
-class Indexer(private val context: Context, private val dao: PhotoDao, private val thumbs: ThumbStore) {
+class Indexer(private val context: Context, private val dao: PhotoDao, private val thumbs: ThumbStore, private val catalog: Catalog? = null) {
     private val _progress = MutableStateFlow(IndexProgress())
     val progress: StateFlow<IndexProgress> = _progress
 
-    private class Doc(val uri: String, val name: String, val size: Long, val modified: Long, val raw: Boolean)
+    private class Doc(val uri: String, val name: String, val size: Long, val modified: Long, val raw: Boolean, val dir: String)
 
     suspend fun scan(folder: Uri) = withContext(Dispatchers.IO) {
         val t0 = System.nanoTime()
         val folderKey = folder.toString()
         val docs = ArrayList<Doc>()
-        walk(folder, DocumentsContract.getTreeDocumentId(folder), docs)
+        val xmp = HashMap<String, String>()
+        walk(folder, DocumentsContract.getTreeDocumentId(folder), docs, xmp)
         val known = dao.known(folderKey)
         val byUri = known.associateBy { it.uri }
         val seen = HashSet<String>(docs.size)
@@ -51,6 +52,22 @@ class Indexer(private val context: Context, private val dao: PhotoDao, private v
         known.filter { it.uri !in seen }.forEach { stale.add(it.id) }
         stale.chunked(500).forEach { dao.delete(it) }
         fresh.chunked(200).forEach { dao.insertAll(it) }
+        catalog?.reapply(folderKey)
+        // Ratings and labels from existing XMP sidecars (only for photos without saved ratings)
+        if (xmp.isNotEmpty()) {
+            val byUri = docs.associateBy { it.uri }
+            dao.known(folderKey).forEach { k ->
+                val d = byUri[k.uri] ?: return@forEach
+                val sidecar = xmp[d.dir + "/" + d.name.substringBeforeLast('.').lowercase()] ?: return@forEach
+                if (k.id in freshIds(fresh, folderKey)) {
+                    runCatching {
+                        context.contentResolver.openInputStream(Uri.parse(sidecar))?.use { st ->
+                            Xmp.parse(st.readBytes().toString(Charsets.UTF_8))?.let { (r, l) -> if (r > 0 || l > 0) dao.restoreMeta(k.uri, r, 0, l, false) }
+                        }
+                    }
+                }
+            }
+        }
         PerfLog.record("scan_list_ms", (System.nanoTime() - t0) / 1_000_000)
         indexPending(folderKey)
     }
@@ -92,7 +109,13 @@ class Indexer(private val context: Context, private val dao: PhotoDao, private v
         )
     }
 
-    private fun walk(tree: Uri, docId: String, out: MutableList<Doc>) {
+    private val freshUris = HashSet<String>()
+    private suspend fun freshIds(fresh: List<PhotoEntity>, folder: String): Set<Long> {
+        freshUris.clear(); fresh.forEach { freshUris.add(it.uri) }
+        return dao.known(folder).filter { it.uri in freshUris }.map { it.id }.toSet()
+    }
+
+    private fun walk(tree: Uri, docId: String, out: MutableList<Doc>, xmp: MutableMap<String, String>) {
         val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, docId)
         val cols = arrayOf(
             DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME,
@@ -104,11 +127,12 @@ class Indexer(private val context: Context, private val dao: PhotoDao, private v
             while (c.moveToNext()) {
                 val id = c.getString(0); val name = c.getString(1) ?: continue; val mime = c.getString(2)
                 if (mime == DocumentsContract.Document.MIME_TYPE_DIR) { dirs.add(id); continue }
+                if (name.endsWith(".xmp", true)) { xmp[docId + "/" + name.substringBeforeLast('.').lowercase()] = DocumentsContract.buildDocumentUriUsingTree(tree, id).toString(); continue }
                 val kind = FileTypes.kindOf(name) ?: continue
-                out.add(Doc(DocumentsContract.buildDocumentUriUsingTree(tree, id).toString(), name, c.getLong(3), c.getLong(4), kind == Kind.RAW))
+                out.add(Doc(DocumentsContract.buildDocumentUriUsingTree(tree, id).toString(), name, c.getLong(3), c.getLong(4), kind == Kind.RAW, docId))
             }
         }
-        dirs.forEach { walk(tree, it, out) }
+        dirs.forEach { walk(tree, it, out, xmp) }
     }
 
 }

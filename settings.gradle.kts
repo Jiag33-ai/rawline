@@ -14,6 +14,6 @@ dependencyResolutionManagement {
 }
 rootProject.name = "rawline"
 include(
-    ":app", ":core:model", ":core:native", ":core:data", ":core:cache", ":core:ui",
-    ":feature:library", ":feature:loupe", ":feature:settings",
+    ":app", ":core:model", ":core:native", ":core:render", ":core:ml", ":core:data", ":core:cache", ":core:ui",
+    ":feature:library", ":feature:loupe", ":feature:editor", ":feature:masking", ":feature:settings",
 )

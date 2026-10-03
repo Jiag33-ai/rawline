@@ -22,5 +22,14 @@ target_compile_definitions(raw PRIVATE LIBRAW_BUILDLIB)
 target_compile_options(raw PRIVATE -O2 -w)
 set_target_properties(raw PROPERTIES OUTPUT_NAME "raw")
 
-add_library(rawline_jni SHARED jni_bridge.cpp rw2_preview.cpp)
-target_link_libraries(rawline_jni PRIVATE raw log)
+# Shader sources are embedded at configure time.
+set(SHADER_HEADER ${CMAKE_CURRENT_BINARY_DIR}/shader_sources.h)
+file(GLOB SHADER_FILES ${CMAKE_CURRENT_SOURCE_DIR}/shaders/*)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${SHADER_FILES})
+execute_process(COMMAND ${CMAKE_COMMAND} -DSHADER_DIR=${CMAKE_CURRENT_SOURCE_DIR}/shaders -DOUT=${SHADER_HEADER}
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/gen_shaders.cmake)
+
+add_library(rawline_jni SHARED jni_bridge.cpp jni_engine.cpp rw2_preview.cpp raw_decode.cpp engine/engine.cpp)
+target_include_directories(rawline_jni PRIVATE ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_options(rawline_jni PRIVATE -O2)
+target_link_libraries(rawline_jni PRIVATE raw GLESv3 EGL android log)

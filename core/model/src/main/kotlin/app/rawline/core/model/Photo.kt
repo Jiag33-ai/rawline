@@ -24,7 +24,14 @@ data class Photo(
     val previewLength: Int = 0,
     val width: Int = 0,
     val height: Int = 0,
-)
+    val rating: Int = 0,
+    val flag: Int = 0,
+    val label: Int = 0,
+    val edited: Boolean = false,
+) {
+    /** Stable across re-indexing: file name, size and modified time. */
+    val key: String get() = "$name|$size|$modified"
+}
 
 object FileTypes {
     private val raw = setOf("rw2", "dng", "orf", "cr2", "nef", "arw", "raf")

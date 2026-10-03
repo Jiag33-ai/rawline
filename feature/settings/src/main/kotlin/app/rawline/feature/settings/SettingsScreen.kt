@@ -31,6 +31,11 @@ fun SettingsScreen(
     onOverlayChange: (Boolean) -> Unit,
     onCopyReport: () -> Unit,
     lastCrash: String?,
+    xmpOn: Boolean,
+    onXmpChange: (Boolean) -> Unit,
+    onBackup: () -> Unit,
+    onRestore: () -> Unit,
+    message: String?,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -51,8 +56,29 @@ fun SettingsScreen(
             }
             Switch(overlayOn, onOverlayChange)
         }
+        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(Modifier.weight(1f)) {
+                Text("Write XMP sidecars", style = MaterialTheme.typography.bodyLarge)
+                Text("Saves ratings next to your photos so they survive outside the app", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Switch(xmpOn, onXmpChange)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = onBackup) { Text("Back up edits") }
+            Button(onClick = onRestore) { Text("Restore backup") }
+        }
+        if (message != null) Text(message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 4.dp))
+        Spacer(Modifier.height(12.dp))
         Button(onClick = onCopyReport) { Text("Copy report") }
         Text("Copies timings, device info, errors and the last crash. Paste it into the chat.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
+        Spacer(Modifier.height(16.dp))
+        Text("Gestures", style = MaterialTheme.typography.titleSmall)
+        Text(
+            "Library: long press to select, pinch to change columns.\n" +
+                "Viewer: swipe left or right to move, double tap to zoom, swipe up for info, swipe down to close it.\n" +
+                "Editor: hold the photo to see the original, double tap a slider name to reset it, tap its number to type a value.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         if (lastCrash != null) {
             Spacer(Modifier.height(16.dp))
             Text("Last crash", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.error)
