@@ -120,7 +120,13 @@ private fun RawlineRoot() {
     val currentRoute = route?.destination?.route
     Column(Modifier.fillMaxSize()) {
         Box(Modifier.weight(1f)) {
-            NavHost(nav, startDestination = "photos") {
+            NavHost(
+                nav, startDestination = "photos",
+                enterTransition = { androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(220)) + androidx.compose.animation.scaleIn(androidx.compose.animation.core.tween(220), initialScale = 0.97f) },
+                exitTransition = { androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(140)) },
+                popEnterTransition = { androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(200)) },
+                popExitTransition = { androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(140)) + androidx.compose.animation.scaleOut(androidx.compose.animation.core.tween(160), targetScale = 0.97f) },
+            ) {
                 composable("photos") {
                     Box(Modifier.statusBarsPadding()) {
                         LibraryScreen(

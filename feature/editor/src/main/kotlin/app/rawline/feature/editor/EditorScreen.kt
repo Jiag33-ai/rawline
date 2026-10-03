@@ -57,6 +57,21 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import app.rawline.core.model.EditRecipe
 import app.rawline.core.model.Photo
 import app.rawline.core.render.EditorGlView
@@ -129,7 +144,8 @@ fun EditorScreen(
     var cy by remember { mutableFloatStateOf(0.5f) }
     var viewW by remember { mutableFloatStateOf(1f) }
     var viewH by remember { mutableFloatStateOf(1f) }
-    var showHist by remember { mutableStateOf(true) }
+    var showHist by remember { mutableStateOf(false) }
+    var open by remember { mutableStateOf(true) }
     val landscape = LocalConfiguration.current.screenWidthDp > LocalConfiguration.current.screenHeightDp
 
     LaunchedEffect(tab) { session.setCropMode(tab == "geometry"); if (tab == "geometry") { zoom = 1f; cx = .5f; cy = .5f; session.setView(1f, .5f, .5f) } }
@@ -148,7 +164,7 @@ fun EditorScreen(
     }
 
     val photoArea: @Composable (Modifier) -> Unit = { mod ->
-        Box(mod.background(Color(0xFF2A2A2A)).onSizeChanged { viewW = it.width.toFloat(); viewH = it.height.toFloat() }) {
+        Box(mod.background(Lr.Black).onSizeChanged { viewW = it.width.toFloat(); viewH = it.height.toFloat() }) {
             if (ss.stage != Stage.READY && placeholder != null) {
                 Image(placeholder.asImageBitmap(), photo.name, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
             }
@@ -256,7 +272,6 @@ fun EditorScreen(
             if (tab == "geometry") CropOverlay(state, fit, session.baseAspect())
             tabOverlay(tab, PhotoMapper(session, viewW, viewH, zoom, cx, cy))
             status?.let { Text(it, color = Color.White, style = MaterialTheme.typography.labelMedium, modifier = Modifier.align(Alignment.TopStart).padding(8.dp).background(Color(0xAA000000), androidx.compose.foundation.shape.RoundedCornerShape(12.dp)).padding(horizontal = 10.dp, vertical = 4.dp)) }
-            if (showHist) Histogram(hist, Modifier.align(Alignment.TopEnd).padding(8.dp).width(120.dp).height(54.dp))
             if (mode != PhotoMode.NONE) {
                 Text(
                     if (mode == PhotoMode.PICK_WB) "Tap something that should be grey" else "Drag up or down on a colour",
@@ -281,7 +296,7 @@ fun EditorScreen(
     var colourSub by remember { mutableStateOf("basic") }
     var menu by remember { mutableStateOf(false) }
 
-    val panelBody: @Composable () -> Unit = {
+    val panelBody: @Composable (String) -> Unit = { tab ->
         val ctx = TabContext(state, hist)
         when (tab) {
             "auto" -> AutoPanel(state, session, photo, placeholder)
@@ -326,80 +341,101 @@ fun EditorScreen(
 
     val autoLight = { scope.launch { session.baseStats()?.let { st -> val a = AutoTools.autoLight(st)
         state.edit("Auto") { r -> r.copy(adjust = r.adjust.copy(exposure = a.exposure, contrast = a.contrast, highlights = a.highlights, shadows = a.shadows, whites = a.whites, blacks = a.blacks)) } } }; Unit }
-    val toolbar: @Composable () -> Unit = {
-        val inEdit = tab in sectionIds
-        Column(Modifier.fillMaxWidth().background(Lr.Background)) {
-            if (inEdit) {
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.width(72.dp).height(64.dp).clip(RoundedCornerShape(10.dp)).clickable { autoLight() }.semantics { contentDescription = "Auto" }, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                        LrIconView(LrIcon.AUTO, Lr.TextDim, size = 26.dp); Text("Auto", style = MaterialTheme.typography.labelMedium, color = Lr.TextDim)
-                    }
-                    Box(Modifier.width(1.dp).height(36.dp).background(Lr.Separator))
-                    sections.forEach { t ->
-                        val on = tab == t.id
-                        Column(
-                            Modifier.width(76.dp).height(64.dp).clip(RoundedCornerShape(10.dp)).background(if (on) Lr.Surface else Color.Transparent)
-                                .clickable { tab = t.id; mode = PhotoMode.NONE }.semantics { contentDescription = t.title },
-                            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
-                        ) {
-                            LrIconView(t.icon, if (on) Lr.Text else Lr.TextDim, size = 26.dp)
-                            Text(t.title, style = MaterialTheme.typography.labelMedium, color = if (on) Lr.Text else Lr.TextDim, maxLines = 1)
-                        }
-                    }
-                }
-                Box(Modifier.fillMaxWidth().height(1.dp).background(Lr.Separator))
-            }
-            Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-                modes.forEach { t ->
-                    val on = if (t.id == "edit") inEdit else tab == t.id
-                    Box(
-                        Modifier.weight(1f).height(52.dp).padding(horizontal = 4.dp).clip(RoundedCornerShape(10.dp)).background(if (on) Lr.Accent else Color.Transparent)
-                            .clickable { tab = if (t.id == "edit") (if (inEdit) tab else "light") else t.id; mode = PhotoMode.NONE }.semantics { contentDescription = t.title },
-                        contentAlignment = Alignment.Center,
-                    ) { LrIconView(t.icon, if (on) Color.White else Lr.TextDim, size = 26.dp) }
-                }
-            }
-        }
-    }
+    val inEdit = tab in sectionIds
+    val panelShown = open && tab != ""
+    // Edit sections float over the lower part of the photo; the other tools get their own space.
+    val panelH = if (inEdit) 214.dp else 300.dp
+    val overlap = if (inEdit) panelH * 0.37f else 0.dp
+    val reserved = 60.dp + (if (inEdit) 58.dp else 0.dp) + (if (panelShown) panelH - overlap else 0.dp)
 
-    Column(Modifier.fillMaxSize().background(Lr.Black).safeDrawingPadding()) {
-        // ---- top bar: back, undo / redo, versions on the left; histogram, share and more on the right ----
-        Row(Modifier.fillMaxWidth().height(52.dp).background(Lr.Background).padding(horizontal = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+    Box(Modifier.fillMaxSize().background(Lr.Black)) {
+        photoArea(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(bottom = reserved))
+        // ---- top icons float over the photo ----
+        Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 6.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             TopIcon(LrIcon.BACK, "Back", true, onClick = onBack)
             TopIcon(LrIcon.UNDO, "Undo", state.canUndo) { state.undo() }
             TopIcon(LrIcon.REDO, "Redo", state.canRedo) { state.redo() }
-            Text(photo.name, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f).padding(horizontal = 8.dp), maxLines = 1, color = Lr.TextDim)
-            TopIcon(LrIcon.HISTOGRAM, "Histogram", true, tint = if (showHist) Lr.Accent else Lr.Text) { showHist = !showHist }
+            Spacer(Modifier.weight(1f))
             TopIcon(LrIcon.SHARE, "Add to export queue", true, onClick = onExport)
             Box {
                 TopIcon(LrIcon.MORE, "More", true) { menu = true }
                 DropdownMenu(menu, { menu = false }) {
+                    DropdownMenuItem(text = { Text(if (showHist) "Hide histogram" else "Show histogram") }, onClick = { menu = false; showHist = !showHist })
                     DropdownMenuItem(text = { Text("Reset all edits") }, onClick = { menu = false; state.reset() })
-                    DropdownMenuItem(text = { Text("Versions and history") }, onClick = { menu = false; tab = "history" })
+                    DropdownMenuItem(text = { Text("Versions and history") }, onClick = { menu = false; tab = "history"; open = true })
                     DropdownMenuItem(text = { Text("Export settings") }, onClick = { menu = false; onExportSettings() })
                 }
             }
         }
-        if (landscape) {
-            Row(Modifier.fillMaxSize()) {
-                photoArea(Modifier.weight(1f).fillMaxHeight())
-                Column(Modifier.width(380.dp).fillMaxHeight().background(Lr.Panel)) {
-                    Box(Modifier.weight(1f)) { panelBody() }
-                    toolbar()
+        Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding()) {
+            AnimatedVisibility(
+                visible = panelShown,
+                enter = slideInVertically(tween(260, easing = FastOutSlowInEasing)) { it / 2 } + fadeIn(tween(200)),
+                exit = slideOutVertically(tween(200, easing = FastOutSlowInEasing)) { it / 2 } + fadeOut(tween(160)),
+            ) {
+                Column(
+                    Modifier.fillMaxWidth().height(panelH).clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
+                        .background(if (inEdit) Lr.PanelOverlay else Lr.Panel),
+                ) {
+                    // grab handle: drag down or tap to close
+                    Box(
+                        Modifier.fillMaxWidth().height(20.dp).pointerInput(Unit) { detectVerticalDragGestures { _, dy -> if (dy > 6f && tab != "geometry") open = false } }
+                            .clickable(enabled = tab != "geometry") { open = false }.semantics { contentDescription = "Close panel" },
+                        contentAlignment = Alignment.Center,
+                    ) { Box(Modifier.width(36.dp).height(4.dp).clip(RoundedCornerShape(2.dp)).background(Lr.TrackOff)) }
+                    Box(Modifier.weight(1f)) {
+                        Crossfade(tab, animationSpec = tween(160), label = "panel") { t -> panelBody(t) }
+                    }
                 }
             }
-        } else {
-            photoArea(Modifier.fillMaxWidth().weight(1f))
-            if (tab != "") Box(Modifier.fillMaxWidth().height(300.dp).background(Lr.Panel)) { panelBody() }
-            toolbar()
+            val modeBg by animateColorAsState(if (inEdit) Lr.Accent else Color.Transparent, tween(180), label = "mode")
+            Column(Modifier.fillMaxWidth().background(if (inEdit && panelShown) Lr.PanelOverlay else Lr.Background)) {
+                AnimatedVisibility(inEdit, enter = fadeIn(tween(160)) + expandVertically(tween(200)), exit = fadeOut(tween(120)) + shrinkVertically(tween(160))) {
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.width(68.dp).height(52.dp).clip(RoundedCornerShape(14.dp)).clickable { autoLight() }.semantics { contentDescription = "Auto" }, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                            LrIconView(LrIcon.AUTO, Lr.TextDim, size = 24.dp); Text("Auto", style = MaterialTheme.typography.labelMedium, color = Lr.TextDim)
+                        }
+                        Box(Modifier.width(1.dp).height(30.dp).background(Lr.Separator))
+                        sections.forEach { t ->
+                            val on = tab == t.id && panelShown
+                            val bg by animateColorAsState(if (on) Lr.Surface else Color.Transparent, tween(160), label = "sec")
+                            Column(
+                                Modifier.width(72.dp).height(52.dp).clip(RoundedCornerShape(14.dp)).background(bg)
+                                    .clickable { mode = PhotoMode.NONE; if (tab == t.id) open = !open else { tab = t.id; open = true } }.semantics { contentDescription = t.title },
+                                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
+                            ) {
+                                LrIconView(t.icon, if (tab == t.id) Lr.Text else Lr.TextDim, size = 24.dp)
+                                Text(t.title, style = MaterialTheme.typography.labelMedium, color = if (tab == t.id) Lr.Text else Lr.TextDim, maxLines = 1)
+                            }
+                        }
+                    }
+                }
+                if (inEdit) Box(Modifier.fillMaxWidth().height(1.dp).background(Lr.Separator))
+                Row(Modifier.fillMaxWidth().height(60.dp).padding(horizontal = 6.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+                    modes.forEach { t ->
+                        val on = if (t.id == "edit") inEdit else tab == t.id
+                        val bg by animateColorAsState(if (on) Lr.Accent else Color.Transparent, tween(180), label = "m")
+                        Box(
+                            Modifier.weight(1f).height(46.dp).padding(horizontal = 5.dp).clip(RoundedCornerShape(14.dp)).background(bg)
+                                .clickable {
+                                    mode = PhotoMode.NONE
+                                    if (t.id == "edit") { if (inEdit) open = !open else { tab = "light"; open = true } }
+                                    else if (tab == t.id && t.id != "geometry") open = !open else { tab = t.id; open = true }
+                                }.semantics { contentDescription = t.title },
+                            contentAlignment = Alignment.Center,
+                        ) { LrIconView(t.icon, if (on) Color.White else Lr.TextDim, size = 25.dp) }
+                    }
+                }
+            }
         }
+        if (showHist) Histogram(hist, Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(top = 52.dp, end = 12.dp).width(120.dp).height(54.dp))
     }
 }
 
 @Composable
 private fun TopIcon(icon: LrIcon, description: String, enabled: Boolean, tint: Color = Lr.Text, onClick: () -> Unit) {
-    Box(Modifier.size(48.dp).clickable(enabled = enabled, onClick = onClick).semantics { contentDescription = description }, contentAlignment = Alignment.Center) {
-        LrIconView(icon, if (enabled) tint else Lr.TrackOff, size = 24.dp)
+    Box(Modifier.padding(horizontal = 2.dp).size(44.dp).clip(CircleShape).background(Color(0x40000000)).clickable(enabled = enabled, onClick = onClick).semantics { contentDescription = description }, contentAlignment = Alignment.Center) {
+        LrIconView(icon, if (enabled) tint else Color(0x66FFFFFF), size = 24.dp)
     }
 }
 

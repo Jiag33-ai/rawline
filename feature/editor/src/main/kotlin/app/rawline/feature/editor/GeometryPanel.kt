@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -24,6 +25,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import app.rawline.core.model.Geometry
 import app.rawline.core.ui.ChipButton
+import app.rawline.core.ui.LrTabs
 import app.rawline.core.ui.RawSlider
 import app.rawline.core.ui.SectionTitle
 import kotlin.math.abs
@@ -35,36 +37,44 @@ private val Aspects = listOf(
 )
 
 @Composable
-fun GeometryPanel(state: EditorState, imageAspect: Float, onAutoLevel: (() -> Unit)?, onAutoPerspective: (() -> Unit)?) = PanelColumn {
+fun GeometryPanel(state: EditorState, imageAspect: Float, onAutoLevel: (() -> Unit)?, onAutoPerspective: (() -> Unit)?) {
     val g = state.recipe.geometry
+    var sub by remember { mutableStateOf("aspect") }
     fun upd(label: String, f: (Geometry) -> Geometry) = state.edit(label) { it.copy(geometry = f(it.geometry)) }
-    SectionTitle("Crop")
-    Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Aspects.forEach { (name, a) ->
-            ChipButton(name, g.aspect.equals(name, ignoreCase = true), {
-                upd("Crop $name") { gg -> gg.copy(aspect = name).let { fitAspect(it, a, imageAspect) } }
-            })
+    Column {
+        LrTabs(listOf("aspect" to "Aspect", "geometry" to "Geometry"), sub, { sub = it })
+        PanelColumn {
+            if (sub == "aspect") {
+                Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Aspects.forEach { (name, a) ->
+                        ChipButton(name, g.aspect.equals(name, ignoreCase = true), {
+                            upd("Crop $name") { gg -> gg.copy(aspect = name).let { fitAspect(it, a, imageAspect) } }
+                        })
+                    }
+                    ChipButton("Reset crop", false, { upd("Reset crop") { it.copy(cropX = 0f, cropY = 0f, cropW = 1f, cropH = 1f, aspect = "original") } })
+                }
+                Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ChipButton("Rotate left", false, { upd("Rotate left") { it.copy(rotate90 = (it.rotate90 + 3) % 4) } })
+                    ChipButton("Rotate right", false, { upd("Rotate right") { it.copy(rotate90 = (it.rotate90 + 1) % 4) } })
+                    ChipButton("Flip H", g.flipH, { upd("Flip horizontal") { it.copy(flipH = !it.flipH) } })
+                    ChipButton("Flip V", g.flipV, { upd("Flip vertical") { it.copy(flipV = !it.flipV) } })
+                }
+                RawSlider("Straighten", g.angle, -45f..45f, 0f, decimals = 1, unit = "°",
+                    onChange = { v -> state.live { it.copy(geometry = it.geometry.copy(angle = v)) } }, onCommit = { state.commit("Straighten") })
+                Row(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (onAutoLevel != null) ChipButton("Auto level", false, onAutoLevel)
+                }
+            } else {
+                Row(Modifier.padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (onAutoPerspective != null) ChipButton("Auto perspective", false, onAutoPerspective)
+                }
+                RawSlider("Vertical", g.keystoneV, -100f..100f, 0f,
+                    onChange = { v -> state.live { it.copy(geometry = it.geometry.copy(keystoneV = v)) } }, onCommit = { state.commit("Vertical perspective") })
+                RawSlider("Horizontal", g.keystoneH, -100f..100f, 0f,
+                    onChange = { v -> state.live { it.copy(geometry = it.geometry.copy(keystoneH = v)) } }, onCommit = { state.commit("Horizontal perspective") })
+            }
         }
-        ChipButton("Reset crop", false, { upd("Reset crop") { it.copy(cropX = 0f, cropY = 0f, cropW = 1f, cropH = 1f, aspect = "original") } })
     }
-    SectionTitle("Rotate and flip")
-    Row(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        ChipButton("Rotate left", false, { upd("Rotate left") { it.copy(rotate90 = (it.rotate90 + 3) % 4) } })
-        ChipButton("Rotate right", false, { upd("Rotate right") { it.copy(rotate90 = (it.rotate90 + 1) % 4) } })
-        ChipButton("Flip H", g.flipH, { upd("Flip horizontal") { it.copy(flipH = !it.flipH) } })
-        ChipButton("Flip V", g.flipV, { upd("Flip vertical") { it.copy(flipV = !it.flipV) } })
-    }
-    RawSlider("Straighten", g.angle, -45f..45f, 0f, decimals = 1, unit = "°",
-        onChange = { v -> state.live { it.copy(geometry = it.geometry.copy(angle = v)) } }, onCommit = { state.commit("Straighten") })
-    Row(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        if (onAutoLevel != null) ChipButton("Auto level", false, onAutoLevel)
-        if (onAutoPerspective != null) ChipButton("Auto perspective", false, onAutoPerspective)
-    }
-    SectionTitle("Perspective")
-    RawSlider("Vertical", g.keystoneV, -100f..100f, 0f,
-        onChange = { v -> state.live { it.copy(geometry = it.geometry.copy(keystoneV = v)) } }, onCommit = { state.commit("Vertical perspective") })
-    RawSlider("Horizontal", g.keystoneH, -100f..100f, 0f,
-        onChange = { v -> state.live { it.copy(geometry = it.geometry.copy(keystoneH = v)) } }, onCommit = { state.commit("Horizontal perspective") })
 }
 
 /** Centre-crops the current crop to a target aspect (width / height in image pixels). */

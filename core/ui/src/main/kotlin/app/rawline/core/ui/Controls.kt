@@ -73,14 +73,14 @@ fun RawSlider(
     var typing by remember { mutableStateOf(false) }
     val text = format?.invoke(value) ?: if (decimals == 0) value.toInt().toString() else String.format(Locale.US, "%.${decimals}f", value)
     val changed = kotlin.math.abs(value - default) > 1e-4f
-    Column(modifier.fillMaxWidth().padding(horizontal = 20.dp).semantics { contentDescription = "$label $text$unit" }) {
-        Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text(label, style = MaterialTheme.typography.bodyMedium, color = if (changed) Lr.Text else Lr.TextDim,
+    Column(modifier.fillMaxWidth().padding(horizontal = 18.dp).semantics { contentDescription = "$label $text$unit" }) {
+        Row(Modifier.fillMaxWidth().padding(top = 2.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text(label, style = MaterialTheme.typography.bodyMedium, color = Lr.Text,
                 modifier = Modifier.pointerInput(label) { detectTapGestures(onDoubleTap = { onChange(default); onCommit() }) }.defaultMinSize(minHeight = 24.dp))
-            Text("$text$unit", style = MaterialTheme.typography.bodyMedium, color = if (changed) Lr.Accent else Lr.TextDim,
+            Text("$text$unit", style = MaterialTheme.typography.bodyMedium, color = if (changed) Lr.Text else Lr.TextDim,
                 modifier = Modifier.clickable { typing = true }.defaultMinSize(minWidth = 56.dp, minHeight = 24.dp).wrapContentWidth(Alignment.End))
         }
-        LrTrack(value, range, default, trackColors, onChange, onCommit, Modifier.fillMaxWidth().height(32.dp))
+        LrTrack(value, range, default, trackColors, onChange, onCommit, Modifier.fillMaxWidth().height(30.dp))
     }
     if (typing) {
         var input by remember { mutableStateOf(text) }
@@ -135,7 +135,7 @@ private fun LrTrack(
         }
         if (default > range.start && default < range.endInclusive) drawLine(Lr.TextDim, Offset(px(default), cy - 6.dp.toPx()), Offset(px(default), cy - 3.dp.toPx()), 1.5.dp.toPx())
         // hollow ring thumb as in Lightroom mobile
-        val r = (if (dragging) 13 else 11).dp.toPx()
+        val r = (if (dragging) 12 else 10).dp.toPx()
         drawCircle(Lr.Panel, r, Offset(px(value), cy))
         drawCircle(Color.White, r - 1.dp.toPx(), Offset(px(value), cy), style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
     }
@@ -148,7 +148,7 @@ fun LrTabs(items: List<Pair<String, String>>, selected: String, onSelect: (Strin
         items.forEach { (id, label) ->
             val on = id == selected
             Column(
-                Modifier.height(48.dp).clickable { onSelect(id) }.semantics { contentDescription = label },
+                Modifier.height(44.dp).clickable { onSelect(id) }.semantics { contentDescription = label },
                 horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
             ) {
                 Text(label, color = if (on) Lr.Text else Lr.TextDim, style = MaterialTheme.typography.titleMedium)
@@ -162,8 +162,8 @@ fun LrTabs(items: List<Pair<String, String>>, selected: String, onSelect: (Strin
 @Composable
 fun LrOutlineButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifier, icon: LrIcon? = null, active: Boolean = false) {
     Row(
-        modifier.height(48.dp).clip(RoundedCornerShape(10.dp)).background(Lr.Black).border(1.dp, if (active) Lr.Accent else Lr.TrackOff, RoundedCornerShape(10.dp))
-            .clickable(onClick = onClick).padding(horizontal = 18.dp),
+        modifier.height(42.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF0E0E0E)).border(1.dp, if (active) Lr.Accent else Color(0xFF4A4A4A), RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick).padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center,
     ) {
         if (icon != null) { LrIconView(icon, Lr.Text, size = 22.dp); Spacer(Modifier.width(10.dp)) }
