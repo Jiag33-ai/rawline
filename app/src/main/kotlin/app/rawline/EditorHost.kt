@@ -53,7 +53,7 @@ fun EditorHost(photo: Photo, graph: Graph, onExport: (Photo) -> Unit, onBack: ()
         val st = EditorState(saved, session) { r ->
             // Debounced write so quick successive edits do one database write.
             saveJob?.cancel()
-            saveJob = scope.launch { delay(400); graph.catalog.saveRecipe(photo, r) }
+            saveJob = graph.appScope.launch { delay(400); graph.catalog.saveRecipe(photo, r) }
             masking?.persist(r)
         }
         graph.catalog.snapshots(photo).forEach { st.snapshots.add(Snapshot(it.id, it.name, runCatching { EditRecipe.fromJson(it.json) }.getOrDefault(EditRecipe()))) }
@@ -72,6 +72,7 @@ fun EditorHost(photo: Photo, graph: Graph, onExport: (Photo) -> Unit, onBack: ()
     }
 
     val st = state ?: return
+    androidx.activity.compose.BackHandler { saveJob?.cancel(); graph.appScope.launch { graph.catalog.saveRecipe(photo, st.recipe) }; onBack() }
     val mk = masking ?: return
     val rm = remove ?: return
     val ss by session.state.collectAsState()
@@ -82,11 +83,11 @@ fun EditorHost(photo: Photo, graph: Graph, onExport: (Photo) -> Unit, onBack: ()
         tabOverlay = { id, mapper -> with(mk) { Overlay(id, mapper) }; with(rm) { Overlay(id, mapper) } },
         toolGestures = { id, mapper -> mk.gestures(id, mapper) ?: rm.gestures(id, mapper) },
         userPresets = userPresets,
-        onSavePreset = { name, r -> scope.launch { graph.catalog.addPreset(name, r); userPresets.clear(); graph.catalog.presets().forEach { userPresets.add(Preset(it.name, EditRecipe.fromJson(it.json), false, it.id)) } } },
+        onSavePreset = { name, r -> scope.launch { graph.catalog.addPreset(name, r); userPresets.clear(); graph.catalog.presets().forEach { userPresets.add(Preset(it.name, runCatching { EditRecipe.fromJson(it.json) }.getOrDefault(EditRecipe()), false, it.id)) } } },
         onDeletePreset = { p -> scope.launch { graph.catalog.deletePreset(p.id); userPresets.remove(p) } },
         onSnapshot = { name -> scope.launch { val id = graph.catalog.addSnapshot(photo, name, st.recipe); st.addSnapshot(id, name) } },
-        onExport = { saveJob?.cancel(); scope.launch { graph.catalog.saveRecipe(photo, st.recipe); onExport(photo) } },
-        onBack = { saveJob?.cancel(); scope.launch(Dispatchers.IO) { graph.catalog.saveRecipe(photo, st.recipe) }; onBack() },
+        onExport = { saveJob?.cancel(); graph.appScope.launch { graph.catalog.saveRecipe(photo, st.recipe); kotlinx.coroutines.withContext(Dispatchers.Main) { onExport(photo) } } },
+        onBack = { saveJob?.cancel(); graph.appScope.launch { graph.catalog.saveRecipe(photo, st.recipe) }; onBack() },
     )
 }
 

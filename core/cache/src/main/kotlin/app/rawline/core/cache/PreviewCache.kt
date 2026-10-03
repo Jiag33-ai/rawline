@@ -11,6 +11,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ensureActive
 import java.util.concurrent.ConcurrentHashMap
 
 /** Screen-size previews (tier 2) with prefetch. Decoding never touches the raw data. */
@@ -29,31 +30,36 @@ class PreviewCache(private val context: Context) {
     /** Returns the preview, decoding it if needed. Concurrent callers share one decode. */
     suspend fun load(p: Photo): Bitmap? {
         lru.get(p.id)?.let { return it }
-        val d = inflight.getOrPut(p.id) {
-            scope.async {
-                val t0 = System.nanoTime()
-                try {
-                    val r = PreviewDecoder.decode(context, p, longEdge, software = false, wantExif = false)
-                    if (r == null) { PerfLog.error("preview failed: ${p.name}"); null } else {
-                        lru.put(p.id, r.bitmap)
-                        val total = (System.nanoTime() - t0) / 1_000_000
-                        PerfLog.record("tier2_total_ms", total)
-                        PerfLog.record("tier2_parse_ms", r.parseMs)
-                        PerfLog.record("tier2_read_ms", r.readMs)
-                        PerfLog.record("tier2_decode_ms", r.decodeMs)
-                        PerfLog.lastOpen = "${p.name} ${r.width}x${r.height} total=${total}ms parse=${r.parseMs} read=${r.readMs} decode=${r.decodeMs}"
-                        r.bitmap
-                    }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Throwable) {
-                    PerfLog.error("preview ${p.name}: ${e.message}"); null
-                } finally {
-                    inflight.remove(p.id)
-                }
-            }
+        val created = scope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) { decode(p) }
+        // Register before starting, so a fast finish can never leave a finished entry behind.
+        val existing = inflight.putIfAbsent(p.id, created)
+        val d = existing ?: created
+        if (existing != null) created.cancel() else {
+            created.invokeOnCompletion { inflight.remove(p.id, created) }
+            created.start()
         }
-        return try { d.await() } catch (e: CancellationException) { lru.get(p.id) }
+        return try { d.await() } catch (e: CancellationException) {
+            // The decode was cancelled by a prefetch change; only propagate if this caller itself was cancelled.
+            kotlin.coroutines.coroutineContext.ensureActive()
+            lru.get(p.id)
+        }
+    }
+
+    private fun decode(p: Photo): Bitmap? {
+        val t0 = System.nanoTime()
+        return try {
+            val r = PreviewDecoder.decode(context, p, longEdge, software = false, wantExif = false)
+            if (r == null) { PerfLog.error("preview failed: ${p.name}"); null } else {
+                lru.put(p.id, r.bitmap)
+                val total = (System.nanoTime() - t0) / 1_000_000
+                PerfLog.record("tier2_total_ms", total)
+                PerfLog.record("tier2_parse_ms", r.parseMs)
+                PerfLog.record("tier2_read_ms", r.readMs)
+                PerfLog.record("tier2_decode_ms", r.decodeMs)
+                PerfLog.lastOpen = "${p.name} ${r.width}x${r.height} total=${total}ms parse=${r.parseMs} read=${r.readMs} decode=${r.decodeMs}"
+                r.bitmap
+            }
+        } catch (e: Throwable) { PerfLog.error("preview ${p.name}: ${e.message}"); null }
     }
 
     /** Warm [wanted] and cancel decodes for anything else (user jumped away). */

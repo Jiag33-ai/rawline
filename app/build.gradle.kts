@@ -21,19 +21,27 @@ android {
     }
     signingConfigs {
         create("release") {
+            // Secrets win; otherwise the committed sideload key is used so every build is signed with the same key and
+            // installs over the previous one. It is not secret (personal sideload app): replace it with secrets if that matters.
             val ks = System.getenv("RAWLINE_KEYSTORE")
             if (ks != null) {
                 storeFile = file(ks)
                 storePassword = System.getenv("RAWLINE_KEYSTORE_PASSWORD")
                 keyAlias = System.getenv("RAWLINE_KEY_ALIAS")
                 keyPassword = System.getenv("RAWLINE_KEY_PASSWORD")
+            } else {
+                storeFile = file("rawline-sideload.jks")
+                storePassword = "rawline-sideload"
+                keyAlias = "rawline"
+                keyPassword = "rawline-sideload"
             }
         }
     }
     buildTypes {
+        debug { signingConfig = signingConfigs.getByName("release") }
         release {
             isMinifyEnabled = false
-            if (System.getenv("RAWLINE_KEYSTORE") != null) signingConfig = signingConfigs.getByName("release")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
     buildFeatures {

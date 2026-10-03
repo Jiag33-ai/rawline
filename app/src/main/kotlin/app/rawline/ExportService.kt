@@ -20,6 +20,7 @@ class ExportService : Service() {
         if (intent?.action == ACTION_CANCEL) { graph().exportRunner.cancelled = true; return START_NOT_STICKY }
         val job = pending ?: run { stopSelf(); return START_NOT_STICKY }
         pending = null
+        if (graph().exportRunner.progress.value.running) return START_NOT_STICKY   // one export at a time
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         nm.createNotificationChannel(NotificationChannel(CHANNEL, "Export", NotificationManager.IMPORTANCE_LOW))
         startForeground(NOTIF_ID, build(0, job.photos.size, "Starting"), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
@@ -33,9 +34,12 @@ class ExportService : Service() {
                     try { Thread.sleep(700) } catch (e: InterruptedException) { break }
                 }
             }
-            val ok = runner.exportAll(job.photos, job.settings)
-            watcher.interrupt()
-            stopForeground(STOP_FOREGROUND_REMOVE)
+            var ok = 0
+            try { ok = runner.exportAll(job.photos, job.settings) } finally {
+                watcher.interrupt(); runCatching { watcher.join(1500) }
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                nm.cancel(NOTIF_ID)
+            }
             val done = NotificationCompat.Builder(this, CHANNEL).setSmallIcon(android.R.drawable.stat_sys_download_done)
                 .setContentTitle("Export finished").setContentText("$ok of ${job.photos.size} photos saved").setAutoCancel(true).build()
             nm.notify(NOTIF_ID + 1, done)

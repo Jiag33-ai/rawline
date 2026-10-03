@@ -72,6 +72,8 @@ class LibraryActions(
     val onPasteEdits: (List<Photo>, Set<PasteScope>) -> Unit,
     val onSyncEdits: (Photo, List<Photo>) -> Unit,
     val onExport: (List<Photo>) -> Unit,
+    val folders: List<Pair<String, String>>,   // uri to label, most recent first
+    val onSwitchFolder: (String) -> Unit,
     val hasCopied: Boolean,
 )
 
@@ -93,6 +95,7 @@ fun LibraryScreen(
     val selected = remember { mutableStateOf(setOf<Long>()) }
     var showFilters by remember { mutableStateOf(false) }
     var pasting by remember { mutableStateOf(false) }
+    var folderMenu by remember { mutableStateOf(false) }
     LaunchedEffect(gridState.isScrollInProgress) {
         if (gridState.isScrollInProgress) FrameMonitor.start() else FrameMonitor.stop("grid")
     }
@@ -113,7 +116,7 @@ fun LibraryScreen(
             if (selecting) TextButton(onClick = { selected.value = emptySet() }) { Text("Clear") }
             else {
                 TextButton(onClick = { showFilters = !showFilters }) { Text(if (filter.isActive) "Filter *" else "Filter") }
-                TextButton(onClick = actions.onPickFolder) { Text("Folder") }
+                TextButton(onClick = { if (actions.folders.isEmpty()) actions.onPickFolder() else folderMenu = true }) { Text("Folder") }
                 TextButton(onClick = actions.onSettings) { Text("Settings") }
             }
         }
@@ -146,6 +149,12 @@ fun LibraryScreen(
             }
         }
     }
+    if (folderMenu) AlertDialog(
+        onDismissRequest = { folderMenu = false }, title = { Text("Folders") },
+        text = { Column { actions.folders.forEach { (uri, label) -> TextButton(onClick = { folderMenu = false; actions.onSwitchFolder(uri) }) { Text(label) } } } },
+        confirmButton = { TextButton(onClick = { folderMenu = false; actions.onPickFolder() }) { Text("Add folder...") } },
+        dismissButton = { TextButton(onClick = { folderMenu = false }) { Text("Close") } },
+    )
     if (pasting) PasteDialog(onDismiss = { pasting = false }, onPaste = { scopes -> actions.onPasteEdits(sel, scopes); pasting = false })
 }
 

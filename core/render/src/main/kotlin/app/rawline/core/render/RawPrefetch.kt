@@ -19,13 +19,16 @@ class RawPrefetch(private val context: Context) {
     private var photoId = -1L
     private val lock = Any()
 
+    private var wanted = -1L
+
     fun prefetch(p: Photo) {
         if (p.kind != Kind.RAW) return
-        synchronized(lock) { if (photoId == p.id) return }
+        synchronized(lock) { if (photoId == p.id || wanted == p.id) return; wanted = p.id }
         job?.cancel()
         job = scope.launch {
             val h = context.contentResolver.openFileDescriptor(Uri.parse(p.uri), "r")?.use { Native.decodeRaw(it.fd, true) } ?: 0L
             synchronized(lock) {
+                if (wanted != p.id) { if (h != 0L) Native.freeRaw(h); return@synchronized }
                 if (handle != 0L) Native.freeRaw(handle)
                 handle = h; photoId = if (h != 0L) p.id else -1L
             }
@@ -37,5 +40,5 @@ class RawPrefetch(private val context: Context) {
         if (photoId == p.id && handle != 0L) { val h = handle; handle = 0; photoId = -1; h } else 0L
     }
 
-    fun cancel() { job?.cancel(); synchronized(lock) { if (handle != 0L) Native.freeRaw(handle); handle = 0; photoId = -1 } }
+    fun cancel() { job?.cancel(); synchronized(lock) { wanted = -1L; if (handle != 0L) Native.freeRaw(handle); handle = 0; photoId = -1 } }
 }

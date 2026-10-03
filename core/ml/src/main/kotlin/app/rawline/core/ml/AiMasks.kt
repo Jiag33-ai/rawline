@@ -110,7 +110,11 @@ class AiMasksImpl(private val context: Context, private val store: ModelStore, p
         encode(ref)
     }
 
-    private fun encode(ref: Bitmap) {
+    private val encodeLock = Any()
+
+    private fun encode(ref: Bitmap) = synchronized(encodeLock) { encodeLocked(ref) }
+
+    private fun encodeLocked(ref: Bitmap) {
         // A cheap content probe so a changed frame (rotate, straighten) re-encodes
         val probe = (0 until 16).fold(0L) { a, i -> a * 31 + ref.getPixel((i * 97) % ref.width, (i * 61) % ref.height) }
         val k = "${ref.width}x${ref.height}:$probe"

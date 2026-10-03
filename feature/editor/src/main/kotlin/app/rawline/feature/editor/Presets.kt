@@ -30,9 +30,10 @@ object Presets {
         Preset("Film Grain", EditRecipe(adjust = Adjust(contrast = 8f, saturation = -6f), effects = Effects(grainAmount = 35f, grainSize = 30f, grainRoughness = 55f))),
     )
 
-    private fun lerp(a: Float, b: Float, t: Float) = a + (b - a) * t
+    /** Moves [a] towards [b], but a preset value of 0 means "not set by this look" and leaves the user's value alone. */
+    private fun lerp(a: Float, b: Float, t: Float) = if (b == 0f) a else a + (b - a) * t
     private fun lerp(a: List<Float>, b: List<Float>, t: Float) = List(a.size) { lerp(a[it], b[it], t) }
-    private fun lerp(a: Hsl, b: Hsl, t: Float) = Hsl(lerp(a.hue, b.hue, t), lerp(a.sat, b.sat, t), lerp(a.lum, b.lum, t))
+    private fun lerp(a: Hsl, b: Hsl, t: Float) = if (b == Hsl()) a else Hsl(a.hue + (b.hue - a.hue) * t, lerp(a.sat, b.sat, t), lerp(a.lum, b.lum, t))
 
     /** Blends a preset onto [base] by [t] (0 = base, 1 = full preset). Only the look settings move; crop and masks stay. */
     fun apply(base: EditRecipe, preset: EditRecipe, t: Float): EditRecipe {
@@ -47,9 +48,9 @@ object Presets {
             Grading(
                 lerp(a.grading.shadows, p.grading.shadows, t), lerp(a.grading.mid, p.grading.mid, t),
                 lerp(a.grading.highlights, p.grading.highlights, t), lerp(a.grading.global, p.grading.global, t),
-                lerp(a.grading.blending, p.grading.blending, t), lerp(a.grading.balance, p.grading.balance, t),
+                a.grading.blending, lerp(a.grading.balance, p.grading.balance, t),
             ),
-            if (t >= 0.5f) p.curves else a.curves,
+            if (t >= 0.5f && !p.curves.isIdentity) p.curves else a.curves,
         )
         val d = base.detail; val pd = preset.detail
         val e = base.effects; val pe = preset.effects

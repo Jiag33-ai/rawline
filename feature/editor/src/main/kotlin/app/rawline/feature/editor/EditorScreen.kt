@@ -63,7 +63,7 @@ class TabContext(val state: EditorState, val hist: IntArray?)
 class EditorTab(val id: String, val title: String, val content: @Composable (TabContext) -> Unit)
 
 /** Converts between view pixels and normalised positions in the shown (output) image. */
-class PhotoMapper(private val session: app.rawline.core.render.EditorSession, val viewW: Float, val viewH: Float) {
+class PhotoMapper(private val session: app.rawline.core.render.EditorSession, val viewW: Float, val viewH: Float, val zoom: Float = 1f, val cx: Float = .5f, val cy: Float = .5f) {
     fun toImage(x: Float, y: Float): androidx.compose.ui.geometry.Offset? = session.mapPoint(x, y, viewW, viewH)?.let { androidx.compose.ui.geometry.Offset(it[0], it[1]) }
     fun toView(nx: Float, ny: Float): androidx.compose.ui.geometry.Offset = session.pointToView(nx, ny, viewW, viewH).let { androidx.compose.ui.geometry.Offset(it[0], it[1]) }
     val outW: Int get() = session.outputSize[0]
@@ -119,7 +119,9 @@ fun EditorScreen(
     LaunchedEffect(Unit) { session.requestHistogram() }
     DisposableEffect(Unit) { onDispose { session.setCropMode(false); session.setBefore(false) } }
 
-    val ow = ss.outW.coerceAtLeast(1).toFloat(); val oh = ss.outH.coerceAtLeast(1).toFloat()
+    // read the recipe so a crop, rotate or flip recomposes with the new output size
+    state.recipe.geometry
+    val ow = session.outputSize[0].coerceAtLeast(1).toFloat(); val oh = session.outputSize[1].coerceAtLeast(1).toFloat()
     fun clampView(z: Float, x: Float, y: Float): Triple<Float, Float, Float> {
         val zz = z.coerceIn(1f, 16f)
         val fit = minOf(viewW / ow, viewH / oh)
@@ -155,7 +157,13 @@ fun EditorScreen(
                                     }
                                     session.setView(zoom, cx, cy)
                                 },
-                                onPress = { if (mode == PhotoMode.NONE && toolGestures(tab, PhotoMapper(session, viewW, viewH)) == null) { session.setBefore(true); tryAwaitRelease(); session.setBefore(false) } },
+                                onPress = {
+                                    if (mode == PhotoMode.NONE && toolGestures(tab, PhotoMapper(session, viewW, viewH)) == null) {
+                                        // hold for a moment to see the original; a quick tap or pinch start does nothing
+                                        val released = kotlinx.coroutines.withTimeoutOrNull(350) { tryAwaitRelease() }
+                                        if (released == null) { session.setBefore(true); tryAwaitRelease(); session.setBefore(false) }
+                                    }
+                                },
                                 onTap = { p ->
                                     if (mode == PhotoMode.PICK_WB) {
                                         val m = session.mapPoint(p.x, p.y, viewW, viewH) ?: return@detectTapGestures
@@ -223,8 +231,8 @@ fun EditorScreen(
                 )
             }
             val fit = session.fitRect(viewW, viewH)
-            if (tab == "geometry") CropOverlay(state, fit, ow / oh)
-            tabOverlay(tab, PhotoMapper(session, viewW, viewH))
+            if (tab == "geometry") CropOverlay(state, fit, session.baseAspect())
+            tabOverlay(tab, PhotoMapper(session, viewW, viewH, zoom, cx, cy))
             status?.let { Text(it, color = Color.White, style = MaterialTheme.typography.labelMedium, modifier = Modifier.align(Alignment.TopStart).padding(8.dp).background(Color(0xAA000000), androidx.compose.foundation.shape.RoundedCornerShape(12.dp)).padding(horizontal = 10.dp, vertical = 4.dp)) }
             if (showHist) Histogram(hist, Modifier.align(Alignment.TopEnd).padding(8.dp).width(120.dp).height(54.dp))
             if (mode != PhotoMode.NONE) {
@@ -260,9 +268,11 @@ fun EditorScreen(
                 "effects" -> EffectsPanel(state, AdjustTarget.Global)
                 "detail" -> DetailPanel(state, onAiDenoiseChanged)
                 "optics" -> OpticsPanel(state, session.lens?.name, photo.lens)
-                "geometry" -> GeometryPanel(state, ow / oh, onAutoLevel = {
+                "geometry" -> GeometryPanel(state, session.baseAspect(), onAutoLevel = {
                     placeholder?.let { b -> val a = AutoTools.autoLevel(b); state.edit("Auto level") { it.copy(geometry = it.geometry.copy(angle = a)) } }
-                }, onAutoPerspective = null)
+                }, onAutoPerspective = {
+                    placeholder?.let { b -> val (v, h) = AutoTools.autoPerspective(b); state.edit("Auto perspective") { it.copy(geometry = it.geometry.copy(keystoneV = v, keystoneH = h)) } }
+                })
                 "presets" -> PresetsPanel(state, userPresets, onSavePreset, onDeletePreset)
                 "history" -> HistoryPanel(state, onSnapshot)
                 else -> extraTabs.firstOrNull { it.id == tab }?.content?.invoke(ctx)
@@ -308,6 +318,9 @@ private fun AutoPanel(state: EditorState, session: app.rawline.core.render.Edito
         androidx.compose.material3.Button(onClick = {
             placeholder?.let { b -> val a = AutoTools.autoLevel(b); state.edit("Auto level") { it.copy(geometry = it.geometry.copy(angle = a)) } }
         }, modifier = Modifier.fillMaxWidth()) { Text("Auto level") }
+        androidx.compose.material3.Button(onClick = {
+            placeholder?.let { b -> val (v, h) = AutoTools.autoPerspective(b); state.edit("Auto perspective") { it.copy(geometry = it.geometry.copy(keystoneV = v, keystoneH = h)) } }
+        }, modifier = Modifier.fillMaxWidth()) { Text("Auto perspective") }
         androidx.compose.material3.OutlinedButton(onClick = { state.reset() }, modifier = Modifier.fillMaxWidth()) { Text("Reset all edits") }
     }
 }

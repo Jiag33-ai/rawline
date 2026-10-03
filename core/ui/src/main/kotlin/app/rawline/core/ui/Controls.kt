@@ -139,7 +139,7 @@ fun ChipButton(text: String, selected: Boolean, onClick: () -> Unit, modifier: M
     val bg = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
     val fg = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
     Box(
-        modifier.defaultMinSize(minWidth = 48.dp, minHeight = 40.dp).background(bg, RoundedCornerShape(20.dp)).clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 8.dp),
+        modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp).background(bg, RoundedCornerShape(20.dp)).clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center,
     ) { Text(text, color = fg, style = MaterialTheme.typography.labelLarge) }
 }

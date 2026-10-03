@@ -33,23 +33,25 @@ class BrushLayer(val w: Int, val h: Int, var reference: IntArray? = null) {
     }
     private val clear = Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR) }
 
-    fun clear() { alpha.fill(0) }
+    @Synchronized fun snapshot(): ByteArray = alpha.copyOf()
 
-    fun renderAll(strokes: List<BrushStroke>) {
+    @Synchronized fun clear() { alpha.fill(0) }
+
+    @Synchronized fun renderAll(strokes: List<BrushStroke>) {
         clear()
         strokes.forEach { s -> beginStroke(s); update(s); }
         endStroke()
     }
 
     /** Call before the first [update] of a stroke. */
-    fun beginStroke(s: BrushStroke) {
+    @Synchronized fun beginStroke(s: BrushStroke) {
         base = alpha.copyOf()
         tmpCanvas.drawRect(0f, 0f, w.toFloat(), h.toFloat(), clear)
         if (s.autoMask && reference != null && s.points.size >= 2) seed = meanColour((s.points[0] * w).toInt(), (s.points[1] * h).toInt(), (s.size * h * 0.5f).toInt().coerceAtLeast(2))
     }
 
     /** Draws the stroke as it is so far and merges it into [alpha]. Returns the dirty rectangle (x0, y0, x1, y1) in layer pixels. */
-    fun update(s: BrushStroke): IntArray {
+    @Synchronized fun update(s: BrushStroke): IntArray {
         val radius = s.size * h / 2f
         paint.strokeWidth = radius * 2f
         paint.alpha = (s.flow.coerceIn(0.05f, 1f) * 255).toInt()
@@ -86,7 +88,7 @@ class BrushLayer(val w: Int, val h: Int, var reference: IntArray? = null) {
         return intArrayOf(x0, y0, x1, y1)
     }
 
-    fun endStroke() { base = ByteArray(0) }
+    @Synchronized fun endStroke() { base = ByteArray(0) }
 
     private fun meanColour(cx: Int, cy: Int, r: Int): IntArray {
         val ref = reference ?: return intArrayOf(0, 0, 0)

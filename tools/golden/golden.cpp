@@ -45,7 +45,18 @@ int main(int argc, char **argv) {
     bool half = !(argc > 4 && !strcmp(argv[4], "full"));
     RawImage img;
     double t0 = now();
-    if (!decodeRaw(argv[1], half, img, err)) { fprintf(stderr, "decode: %s\n", err.c_str()); return 5; }
+    std::string in = argv[1];
+    if (in.size() > 4 && in.substr(in.size() - 4) == ".ppm") {   // synthetic 8 bit sRGB test picture
+        FILE *pf = fopen(in.c_str(), "rb");
+        int pw, ph, mx;
+        if (!pf || fscanf(pf, "P6 %d %d %d", &pw, &ph, &mx) != 3) { fprintf(stderr, "bad ppm\n"); return 5; }
+        fgetc(pf);
+        std::vector<uint8_t> rgb(size_t(pw) * ph * 3), rgba(size_t(pw) * ph * 4);
+        if (fread(rgb.data(), 1, rgb.size(), pf) != rgb.size()) return 5;
+        fclose(pf);
+        for (size_t i = 0; i < size_t(pw) * ph; i++) { rgba[i * 4] = rgb[i * 3]; rgba[i * 4 + 1] = rgb[i * 3 + 1]; rgba[i * 4 + 2] = rgb[i * 3 + 2]; rgba[i * 4 + 3] = 255; }
+        rawFromSrgb8(rgba.data(), pw, ph, img);
+    } else if (!decodeRaw(argv[1], half, img, err)) { fprintf(stderr, "decode: %s\n", err.c_str()); return 5; }
     double t1 = now();
     fprintf(stderr, "decode %s %dx%d in %.0f ms (orientation %d)\n", half ? "half" : "full", img.width, img.height, t1 - t0, img.orientation);
     if (!eng.setSource(img.width, img.height, img.half.data())) { fprintf(stderr, "setSource gl error\n"); return 6; }
@@ -77,6 +88,8 @@ int main(int argc, char **argv) {
         else if (k == "angle") p[G_GEO] = v;
         else if (k == "grain") p[G_FX2] = v;
         else if (k == "cropw") p[G_CROP + 2] = v;
+        else if (k == "ksv") p[G_GEO2] = v;
+        else if (k == "ksh") p[G_GEO2 + 1] = v;
         else if (k == "lens") {   // synthetic Lumix S 20-60 @ 20 mm style profile: ptlens a b c, strong vignetting, TCA
             p[G_LDIST] = 1.f - 0.02161f + 0.03781f + 0.08584f; p[G_LDIST + 1] = -0.08584f; p[G_LDIST + 2] = -0.03781f; p[G_LDIST + 3] = 0.02161f; p[G_LDIST_ON] = v;
             p[G_LTCA] = 1.0005613f; p[G_LTCA + 2] = -0.0002213f; p[G_LTCA + 3] = 0.9996489f; p[G_LTCA + 5] = 0.0002051f; p[G_LTCA_ON] = v;

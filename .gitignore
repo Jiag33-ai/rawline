@@ -4,8 +4,8 @@ testdata/
 .gradle/
 build/
 local.properties
-*.jks
-*.keystore
+
+
 .idea/
 .cxx/
 .android-sdk/

@@ -49,7 +49,8 @@ object MaskFactory {
 
     fun duplicate(m: Mask): Mask = m.copy(
         id = newId(), name = m.name + " copy",
-        components = m.components.map { c -> if (c.type == MaskType.BITMAP && c.strokes.isNotEmpty()) c.copy(layerKey = "brush_${newId()}") else c },
+        // a brush gets its own layer so painting on the copy never edits the original; AI layers are never changed, so they can be shared
+        components = m.components.map { c -> if (c.type == MaskType.BITMAP && c.layerKey?.startsWith("brush_") == true) c.copy(layerKey = "brush_${newId()}") else c },
     )
 }
 

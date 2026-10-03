@@ -20,7 +20,6 @@ bool decodeRaw(const std::string &path, bool halfSize, RawImage &out, std::strin
     P.highlight = 2;          // blend clipped highlights
     P.half_size = halfSize ? 1 : 0;
     P.user_qual = 3;          // AHD
-    P.user_flip = 0;          // orientation is applied by the renderer
     P.med_passes = 0;
     P.fbdd_noiserd = 0;
 

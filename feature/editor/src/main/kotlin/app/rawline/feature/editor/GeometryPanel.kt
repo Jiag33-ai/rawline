@@ -41,7 +41,7 @@ fun GeometryPanel(state: EditorState, imageAspect: Float, onAutoLevel: (() -> Un
     SectionTitle("Crop")
     Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         Aspects.forEach { (name, a) ->
-            ChipButton(name, g.aspect == name, {
+            ChipButton(name, g.aspect.equals(name, ignoreCase = true), {
                 upd("Crop $name") { gg -> gg.copy(aspect = name).let { fitAspect(it, a, imageAspect) } }
             })
         }
@@ -119,7 +119,7 @@ fun CropOverlay(state: EditorState, fit: FloatArray, imageAspect: Float, modifie
                     }
                     x0 = x0.coerceIn(0f, 0.95f); y0 = y0.coerceIn(0f, 0.95f); x1 = x1.coerceIn(0.05f, 1f); y1 = y1.coerceIn(0.05f, 1f)
                     var w = (x1 - x0).coerceAtLeast(0.05f); var h = (y1 - y0).coerceAtLeast(0.05f)
-                    val a = Aspects.firstOrNull { it.first == geo.aspect }?.second ?: -1f
+                    val a = Aspects.firstOrNull { it.first.equals(geo.aspect, ignoreCase = true) }?.second ?: -1f
                     if (a != -1f && active != 4) {
                         val target = if (a == 0f) imageAspect else a
                         h = w * imageAspect / target

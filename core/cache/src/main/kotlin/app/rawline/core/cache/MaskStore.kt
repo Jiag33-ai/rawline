@@ -7,7 +7,7 @@ import java.nio.ByteBuffer
 
 /** 8 bit alpha masks (AI results) kept as PNG files so edits stay small and masks survive restarts. */
 class MaskStore(context: Context) {
-    private val dir = File(context.filesDir, "masks").apply { mkdirs() }
+    val dir = File(context.filesDir, "masks").apply { mkdirs() }
 
     fun file(key: String) = File(dir, key.replace(Regex("[^A-Za-z0-9_.-]"), "_") + ".png")
 

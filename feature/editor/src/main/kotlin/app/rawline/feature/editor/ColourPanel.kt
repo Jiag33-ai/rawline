@@ -103,7 +103,7 @@ private fun bandGradient(i: Int, mode: Int): List<Color> {
 @Composable
 private fun Wheel(h: Hsl, onChange: (Hsl) -> Unit, onCommit: () -> Unit, size: androidx.compose.ui.unit.Dp = 120.dp) {
     Canvas(
-        Modifier.size(size).pointerInput(Unit) {
+        Modifier.size(size).pointerInput(h.lum) {
             val update = { p: Offset ->
                 val c = Offset(this.size.width / 2f, this.size.height / 2f)
                 val d = p - c

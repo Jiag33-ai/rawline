@@ -18,8 +18,13 @@ class TfModel(private val context: Context, private val file: File, private val 
     var accel: Accel = Accel.CPU
         private set
 
+    /** The GPU delegate must be created and used on one thread, so every model call runs on this executor. */
+    private fun <T> onGpuThread(f: () -> T): T = try { executor.submit<T> { f() }.get() } catch (e: java.util.concurrent.ExecutionException) { throw e.cause ?: e }
+
+    fun interpreter(): Interpreter = onGpuThread { interpreterOnThread() }
+
     @Synchronized
-    fun interpreter(): Interpreter {
+    private fun interpreterOnThread(): Interpreter {
         interp?.let { return it }
         val saved = prefs.getString("accel_$name", null)?.let { runCatching { Accel.valueOf(it) }.getOrNull() }
         val order = if (saved != null) listOf(saved, Accel.CPU).distinct() else listOf(Accel.GPU, Accel.CPU)
@@ -29,7 +34,7 @@ class TfModel(private val context: Context, private val file: File, private val 
                 val t0 = System.nanoTime()
                 val i = build(a)
                 // Warm up with zeros so a delegate that cannot run the graph fails here, not in the middle of an edit.
-                warm(i)
+                try { warm(i) } catch (e: Throwable) { runCatching { i.close() }; throw e }
                 PerfLog.record("ai_${name}_${a.name}_first_ms", (System.nanoTime() - t0) / 1_000_000)
                 accel = a; interp = i
                 prefs.edit().putString("accel_$name", a.name).apply()
@@ -61,9 +66,8 @@ class TfModel(private val context: Context, private val file: File, private val 
         i.runForMultipleInputsOutputs(ins, outs)
     }
 
-    @Synchronized
-    fun run(inputs: Array<Any>, outputs: Map<Int, Any>) {
-        val i = interpreter()
+    fun run(inputs: Array<Any>, outputs: Map<Int, Any>) = onGpuThread {
+        val i = interpreterOnThread()
         val t0 = System.nanoTime()
         i.runForMultipleInputsOutputs(inputs, outputs)
         PerfLog.record("ai_${name}_${accel.name}_run_ms", (System.nanoTime() - t0) / 1_000_000)
@@ -75,6 +79,7 @@ class TfModel(private val context: Context, private val file: File, private val 
     fun release() { runCatching { interp?.close() }; runCatching { gpu?.close() }; interp = null; gpu = null }
 
     companion object {
+        private val executor = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "ai-model") }
         fun zeros(bytes: Int): ByteBuffer = ByteBuffer.allocateDirect(bytes).order(ByteOrder.nativeOrder())
         fun floats(count: Int): ByteBuffer = zeros(count * 4)
     }

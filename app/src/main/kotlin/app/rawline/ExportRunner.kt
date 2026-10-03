@@ -63,11 +63,16 @@ class ExportRunner(private val context: Context, private val graph: Graph) {
     private fun exportOne(p: Photo, s: ExportSettings, n: Int, onFraction: (Float) -> Unit): Uri? {
         val name = fileName(p, s, n)
         val (out, uri) = openTarget(s, name, s.format.mime) ?: throw IllegalStateException("No place to save")
-        out.use { stream -> write(p, s, stream, name, onFraction) ?: run { runCatching { DocumentsContract.deleteDocument(context.contentResolver, uri) }; return null } }
+        val ok = try { out.use { stream -> write(p, s, stream, name, onFraction) } } catch (e: Throwable) { discard(uri); throw e }
+        if (ok == null) { discard(uri); return null }
         if (s.format == ExportFormat.JPEG && s.metadata != MetadataMode.NONE) runCatching {
             context.contentResolver.openFileDescriptor(uri, "rw")?.use { pfd -> writeExif(ExifInterface(pfd.fileDescriptor), p, s) }
         }
         return uri
+    }
+
+    private fun discard(uri: Uri) {
+        runCatching { if (DocumentsContract.isDocumentUri(context, uri)) DocumentsContract.deleteDocument(context.contentResolver, uri) else context.contentResolver.delete(uri, null, null) }
     }
 
     private fun write(p: Photo, s: ExportSettings, out: OutputStream, label: String, onFraction: ((Float) -> Unit)?): Unit? {

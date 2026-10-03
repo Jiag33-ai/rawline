@@ -10,6 +10,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
@@ -55,6 +56,7 @@ private fun RawlineRoot() {
     val progress by vm.progress.collectAsStateWithLifecycle()
     val folder by vm.folder.collectAsStateWithLifecycle()
     val overlay by vm.overlay.collectAsStateWithLifecycle()
+    val recents by vm.recentFolders.collectAsStateWithLifecycle()
     val xmp by vm.xmp.collectAsStateWithLifecycle()
     val copied by vm.copied.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
@@ -65,16 +67,16 @@ private fun RawlineRoot() {
     val backupOut = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri -> if (uri != null) vm.backupTo(uri) }
     val backupIn = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.restoreFrom(uri) }
 
-    LaunchedEffect(message) { message?.let { if (it.isNotEmpty() && nav.currentDestination?.route != "settings") Toast.makeText(context, it, Toast.LENGTH_SHORT).show() } }
+    LaunchedEffect(message) { message?.let { if (it.isNotEmpty() && nav.currentDestination?.route != "settings") { Toast.makeText(context, it, Toast.LENGTH_SHORT).show(); vm.message.value = null } } }
 
     exportTargets?.let { targets ->
         ExportDialog(targets, graph, onDismiss = { exportTargets = null }, onStart = {
             if (android.os.Build.VERSION.SDK_INT >= 33) notifPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         })
     }
+    androidx.compose.foundation.layout.Column(androidx.compose.ui.Modifier.fillMaxSize()) {
     ExportStatusBar(graph)
-
-    NavHost(nav, startDestination = "library") {
+    NavHost(nav, startDestination = "library", modifier = androidx.compose.ui.Modifier.weight(1f)) {
         composable("library") {
             LibraryScreen(
                 photos = photos, allCount = allPhotos.size, cameras = cameras, filter = filter, thumbs = graph.thumbs, progress = progress,
@@ -87,6 +89,7 @@ private fun RawlineRoot() {
                     onRate = { l, r -> vm.rate(l, r) }, onFlag = { l, f -> vm.flag(l, f) }, onLabel = { l, c -> vm.label(l, c) },
                     onCopyEdits = { vm.copyEdits(it) }, onPasteEdits = { l, s -> vm.pasteEdits(l, s) }, onSyncEdits = { f, t -> vm.syncEdits(f, t) },
                     onExport = { exportTargets = it },
+                    folders = recents.map { it to vm.labelOf(it) }, onSwitchFolder = { vm.switchFolder(it) },
                     hasCopied = copied != null,
                 ),
             )
@@ -116,12 +119,13 @@ private fun RawlineRoot() {
                     (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Rawline report", text))
                     Toast.makeText(context, "Report copied", Toast.LENGTH_SHORT).show()
                 },
-                lastCrash = CrashStore.last(context),
+                lastCrash = remember { CrashStore.last(context) },
                 xmpOn = xmp, onXmpChange = vm::setXmp,
                 onBackup = { backupOut.launch("rawline-backup.zip") }, onRestore = { backupIn.launch(arrayOf("application/zip", "application/octet-stream")) },
                 message = message,
                 onBack = { nav.popBackStack() },
             )
         }
+    }
     }
 }

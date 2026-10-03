@@ -39,7 +39,7 @@ void main() {
     float sharp = uDetail.x * 0.01;
     if (nrL > 0.0 || nrC > 0.0 || sharp > 0.0) {
         float sc = max(uPxScale, 0.5);
-        int rad = int(clamp(uDetail.y * sc, 1.0, 6.0));
+        int st = int(clamp(floor(uDetail.y * sc + 0.5), 1.0, 3.0));
         // Neighbourhood in a perceptual-ish domain
         float yc = pow(max(dot(c, Y), 0.0), 1.0 / 2.4);
         vec3 acc = vec3(0.0);
@@ -48,7 +48,7 @@ void main() {
         float grad = 0.0;
         for (int j = -2; j <= 2; j++) {
             for (int i = -2; i <= 2; i++) {
-                vec3 n = fetchE(ivec2(i, j)).rgb;
+                vec3 n = fetchE(ivec2(i, j) * st).rgb;
                 float yn = pow(max(dot(n, Y), 0.0), 1.0 / 2.4);
                 float d = abs(yn - yc);
                 float w = exp(-d * d / (0.0008 + nrL * 0.01)) * exp(-float(i * i + j * j) * 0.25);
@@ -63,7 +63,7 @@ void main() {
             // Chroma smoothing: keep luminance, take the chroma of the neighbourhood average.
             float yl = dot(c, Y);
             vec3 avg = vec3(0.0);
-            for (int j = -2; j <= 2; j++) for (int i = -2; i <= 2; i++) avg += fetchE(ivec2(i, j)).rgb;
+            for (int j = -2; j <= 2; j++) for (int i = -2; i <= 2; i++) avg += fetchE(ivec2(i, j) * st).rgb;
             avg /= 25.0;
             float ya = max(dot(avg, Y), 1.0e-5);
             vec3 chroma = avg / ya;
@@ -92,7 +92,8 @@ void main() {
         c *= exp2(uFx.x * 0.01 * 2.0 * f);
     }
     if (uFx2.x > 0.001) {
-        vec2 gp = floor(vUv * uPx / max(uFx2.y * 0.04 * uPxScale, 1.0)) + uFx2.w;
+        vec2 gpx = vUv * uPx + (uView.xy / uView.zw) * uPx;   // pixel position in the whole image, so tiles share one grain field
+        vec2 gp = floor(gpx / max(uFx2.y * 0.04 * uPxScale, 1.0)) + uFx2.w;
         float n = hash12(gp) - 0.5;
         float rough = mix(0.6, 1.4, uFx2.z * 0.01);
         float yl = pow(max(dot(c, Y), 0.0), 1.0 / 2.4);

@@ -81,8 +81,12 @@ class MaskingFeature(
 
     private fun brushLayer(key: String): BrushLayer {
         val (w, h) = layerDims()
-        brushLayers[key]?.let { if (it.w == w && it.h == h) return it }
-        return BrushLayer(w, h, if (refDims == (w to h)) refPixels else null).also { brushLayers[key] = it }
+        synchronized(brushLayers) {
+            brushLayers[key]?.let { if (it.w == w && it.h == h) return it }
+            // New or resized layer (for example after a rotate): redraw this brush's strokes into it
+            val strokes = state.recipe.masks.flatMap { it.components }.firstOrNull { it.layerKey == key }?.strokes ?: emptyList()
+            return BrushLayer(w, h, if (refDims == (w to h)) refPixels else null).also { if (strokes.isNotEmpty()) it.renderAll(strokes); brushLayers[key] = it }
+        }
     }
 
     /** Renders the frame at layer size so the edge-aware brush has a picture to compare colours against. */
@@ -94,7 +98,7 @@ class MaskingFeature(
             val s = Bitmap.createScaledBitmap(b, w, h, true)
             val px = IntArray(w * h); s.getPixels(px, 0, w, 0, 0, w, h)
             refPixels = px; refDims = w to h
-            brushLayers.values.forEach { it.reference = px }
+            synchronized(brushLayers) { brushLayers.values.forEach { it.reference = px } }
         }
     }
 
@@ -113,7 +117,7 @@ class MaskingFeature(
                 val l = brushLayer(key)
                 l.renderAll(c.strokes)
                 store.save(key, l.alpha, l.w, l.h)
-                upload(key, l.alpha, l.w, l.h)
+                upload(key, l.snapshot(), l.w, l.h)
                 savedHash[key] = hash
             }
         }
@@ -130,7 +134,7 @@ class MaskingFeature(
                     if (c.strokes.isNotEmpty()) {
                         val l = brushLayer(key)
                         l.renderAll(c.strokes)
-                        upload(key, l.alpha, l.w, l.h)
+                        upload(key, l.snapshot(), l.w, l.h)
                     } else store.load(key)?.let { (a, w, h) -> upload(key, a, w, h) }
                 }
             }
@@ -157,17 +161,19 @@ class MaskingFeature(
         if (masks.size >= P.MAX_MASKS) return
         state.edit("Add ${kind.label} mask") { it.copy(masks = it.masks + m) }
         select(masks.lastIndex)
-        if (kind == MaskKind.BRUSH) m.components[0].layerKey?.let { k -> val l = brushLayer(k); upload(k, l.alpha, l.w, l.h) }
+        if (kind == MaskKind.BRUSH) m.components[0].layerKey?.let { k -> val l = brushLayer(k); upload(k, l.snapshot(), l.w, l.h) }
     }
 
     private fun addAi(label: String, alpha: ByteArray, w: Int, h: Int) {
         val key = "ai_${MaskFactory.newId()}"
-        store.save(key, alpha, w, h)
+        runBlockingIo { store.save(key, alpha, w, h) }
         upload(key, alpha, w, h)
         val m = Mask(MaskFactory.newId(), label, listOf(MaskComponent(MaskType.BITMAP, MaskOp.ADD, layerKey = key, label = label)))
         state.edit("Add $label mask") { it.copy(masks = it.masks + m) }
         select(masks.lastIndex)
     }
+
+    private fun runBlockingIo(f: () -> Unit) { f() }
 
     private fun runAi(label: String, job: suspend (Int, Int) -> ByteArray?) {
         if (masks.size >= P.MAX_MASKS) return
@@ -274,7 +280,7 @@ class MaskingFeature(
                     if (m.components.size < 6) {
                         state.edit("Add mask part") { it.withMask(mi) { mm -> mm.copy(components = mm.components + MaskFactory.component(k, MaskOp.ADD)) } }
                         ui.selectedComp = state.recipe.masks[mi].components.lastIndex
-                        state.recipe.masks[mi].components.last().let { c -> if (c.type == MaskType.BITMAP) c.layerKey?.let { key -> val l = brushLayer(key); upload(key, l.alpha, l.w, l.h) } }
+                        state.recipe.masks[mi].components.last().let { c -> if (c.type == MaskType.BITMAP) c.layerKey?.let { key -> val l = brushLayer(key); upload(key, l.snapshot(), l.w, l.h) } }
                     }
                 })
             }
@@ -298,7 +304,7 @@ class MaskingFeature(
                     ChipButton("Auto mask", ui.brushAuto, { ui.brushAuto = !ui.brushAuto })
                     ChipButton("Clear brush", false, {
                         state.edit("Clear brush") { it.withComponent(mi, ci) { cc -> cc.copy(strokes = emptyList()) } }
-                        c.layerKey?.let { k -> val l = brushLayer(k); l.clear(); upload(k, l.alpha, l.w, l.h) }
+                        c.layerKey?.let { k -> val l = brushLayer(k); l.clear(); upload(k, l.snapshot(), l.w, l.h) }
                     })
                 }
             }
@@ -420,7 +426,7 @@ class MaskingFeature(
                 val l = brushLayer(key)
                 l.beginStroke(currentStroke!!)
                 l.update(currentStroke!!)
-                upload(key, l.alpha, l.w, l.h)
+                upload(key, l.snapshot(), l.w, l.h)
                 true
             },
             onMove = { pos ->
@@ -432,7 +438,7 @@ class MaskingFeature(
                     val l = brushLayer(key)
                     l.update(currentStroke!!)
                     val now = System.currentTimeMillis()
-                    if (now - lastUpload > 33) { lastUpload = now; upload(key, l.alpha, l.w, l.h) }
+                    if (now - lastUpload > 33) { lastUpload = now; upload(key, l.snapshot(), l.w, l.h) }
                 }
             },
             onUp = { cancelled ->
@@ -441,12 +447,12 @@ class MaskingFeature(
                 val l = brushLayer(key)
                 l.endStroke()
                 if (s != null && !cancelled) {
-                    upload(key, l.alpha, l.w, l.h)
+                    upload(key, l.snapshot(), l.w, l.h)
                     state.edit("Brush stroke") { it.withComponent(mi, ci) { cc -> cc.copy(strokes = cc.strokes + s) } }
                     savedHash[key] = state.recipe.masks[mi].components[ci].strokes.hashCode()
                     val snapshot = l.alpha.copyOf()
                     scope.launch(Dispatchers.IO) { store.save(key, snapshot, l.w, l.h) }
-                } else if (s != null) { l.renderAll(state.recipe.masks[mi].components[ci].strokes); upload(key, l.alpha, l.w, l.h) }
+                } else if (s != null) { l.renderAll(state.recipe.masks[mi].components[ci].strokes); upload(key, l.snapshot(), l.w, l.h) }
             },
         )
     }

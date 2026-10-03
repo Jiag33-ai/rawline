@@ -73,7 +73,7 @@ class EditorSession(
     private var srcH = 1
     private var loadStart = 0L
     private var firstFrameDone = false
-    private var wantHistogram = false
+    @Volatile private var wantHistogram = false
 
     @Volatile private var recipe = EditRecipe()
     @Volatile private var before = false
@@ -86,8 +86,8 @@ class EditorSession(
     @Volatile private var params = FloatArray(P.TOTAL)
     @Volatile private var geometryOutSize = intArrayOf(1, 1)
     private val layers = LinkedHashMap<String, Int>()
-    private var fullRequested = false
-    private var generation = 0
+    @Volatile private var fullRequested = false
+    @Volatile private var generation = 0
 
     val layerIndex: Map<String, Int> get() = synchronized(layers) { LinkedHashMap(layers) }
 
@@ -110,9 +110,9 @@ class EditorSession(
                 val info = Native.rawInfo(handle)
                 val decodeMs = (System.nanoTime() - t0) / 1_000_000
                 onTiming("edit_decode_ms", decodeMs)
-                maybeDenoise(handle)
+                try { maybeDenoise(handle) } catch (e: Throwable) { Native.freeRaw(handle); throw e }
                 post {
-                    if (gen != generation) { Native.freeRaw(handle); return@post }
+                    if (gen != generation || engine == 0L) { Native.freeRaw(handle); return@post }
                     val u0 = System.nanoTime()
                     val ok = Native.engineSetSource(engine, handle)
                     val upMs = (System.nanoTime() - u0) / 1_000_000
@@ -195,7 +195,7 @@ class EditorSession(
             onTiming("full_decode_ms", (System.nanoTime() - t0) / 1_000_000)
             maybeDenoise(handle)
             post {
-                if (gen != generation) { Native.freeRaw(handle); return@post }
+                if (gen != generation || engine == 0L) { Native.freeRaw(handle); return@post }
                 Native.engineSetSource(engine, handle)
                 rebuild()
                 _state.value = _state.value.copy(usingFull = true, outW = geometryOutSize[0], outH = geometryOutSize[1])
@@ -329,6 +329,7 @@ class EditorSession(
     /** Call after the AI denoise setting was committed: decodes again with the new setting and swaps the source. */
     fun reloadSource() {
         val p = photo ?: return
+        if (_state.value.stage != Stage.READY) return
         val d = recipe.detail
         val wanted = if (d.aiDenoise) d.aiDenoiseAmount else -1f
         if (wanted == appliedDenoise) return
@@ -338,13 +339,13 @@ class EditorSession(
         scope.launch {
             try {
                 val handle = decodeFor(p, half = true)
-                if (handle == 0L) return@launch
+                if (handle == 0L) { _status.value = null; return@launch }
                 val info = Native.rawInfo(handle)
                 appliedDenoise = -1f
                 maybeDenoise(handle)
                 if (!d.aiDenoise) { _status.value = null }
                 post {
-                    if (gen != generation) { Native.freeRaw(handle); return@post }
+                    if (gen != generation || engine == 0L) { Native.freeRaw(handle); return@post }
                     Native.engineSetSource(engine, handle)
                     srcW = info[0]; srcH = info[1]
                     rebuild(); requestRender()
@@ -379,13 +380,15 @@ class EditorSession(
         }
         val bmp = ImageDecoder.decodeBitmap(ImageDecoder.createSource(context.contentResolver, uri)) { d, info, _ ->
             d.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+            d.setTargetColorSpace(android.graphics.ColorSpace.get(android.graphics.ColorSpace.Named.SRGB))
             val long = maxOf(info.size.width, info.size.height)
             val cap = if (half) 3072 else 8192
             if (long > cap) { val s = cap.toFloat() / long; d.setTargetSize((info.size.width * s).toInt(), (info.size.height * s).toInt()) }
         }
-        val buf = java.nio.ByteBuffer.allocate(bmp.byteCount)
-        bmp.copyPixelsToBuffer(buf)
-        return Native.rawFromRgba(buf.array(), bmp.width, bmp.height)
+        val argb = if (bmp.config == android.graphics.Bitmap.Config.ARGB_8888) bmp else bmp.copy(android.graphics.Bitmap.Config.ARGB_8888, false)
+        val buf = java.nio.ByteBuffer.allocate(argb.byteCount)
+        argb.copyPixelsToBuffer(buf)
+        return Native.rawFromRgba(buf.array(), argb.width, argb.height)
     }
 
     private fun rebuild() {

@@ -67,7 +67,7 @@ fun LoupeScreen(
     onLabel: (Photo, Int) -> Unit,
     onDwell: (Photo) -> Unit = {},
 ) {
-    if (photos.isEmpty()) return
+    if (photos.isEmpty()) { LaunchedEffect(Unit) { onBack() }; return }
     val pager = rememberPagerState(initialPage = startIndex.coerceIn(0, photos.lastIndex)) { photos.size }
     LaunchedEffect(pager) {
         snapshotFlow { pager.currentPage }.collect { page ->

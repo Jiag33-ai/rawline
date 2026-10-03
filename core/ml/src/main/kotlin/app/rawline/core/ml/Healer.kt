@@ -84,7 +84,7 @@ class Healer(
             val pw: Int; val ph: Int
             if (kind == "remove") {
                 var side = max(bw, bh) * 2.2f + 96f
-                side = side.coerceIn(256f, min(sw, sh).toFloat())
+                side = side.coerceIn(min(256f, min(sw, sh).toFloat()), min(sw, sh).toFloat())
                 val cx = (minX + maxX) / 2f; val cy = (minY + maxY) / 2f
                 val rw = side / sw; val rh = side / sh
                 region = Region((cx - rw / 2).coerceIn(0f, 1f - rw), (cy - rh / 2).coerceIn(0f, 1f - rh), rw, rh)

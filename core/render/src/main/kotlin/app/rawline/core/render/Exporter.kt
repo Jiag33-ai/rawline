@@ -168,9 +168,10 @@ class Exporter(
     private fun decode(photo: Photo): Long {
         val uri = Uri.parse(photo.uri)
         if (photo.kind == Kind.RAW) return context.contentResolver.openFileDescriptor(uri, "r")?.use { Native.decodeRaw(it.fd, false) } ?: 0L
-        val bmp = android.graphics.ImageDecoder.decodeBitmap(android.graphics.ImageDecoder.createSource(context.contentResolver, uri)) { d, _, _ -> d.allocator = android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE }
-        val buf = ByteBuffer.allocate(bmp.byteCount); bmp.copyPixelsToBuffer(buf)
-        return Native.rawFromRgba(buf.array(), bmp.width, bmp.height)
+        val bmp = android.graphics.ImageDecoder.decodeBitmap(android.graphics.ImageDecoder.createSource(context.contentResolver, uri)) { d, _, _ -> d.allocator = android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE; d.setTargetColorSpace(android.graphics.ColorSpace.get(android.graphics.ColorSpace.Named.SRGB)) }
+        val argb = if (bmp.config == Bitmap.Config.ARGB_8888) bmp else bmp.copy(Bitmap.Config.ARGB_8888, false)
+        val buf = ByteBuffer.allocate(argb.byteCount); argb.copyPixelsToBuffer(buf)
+        return Native.rawFromRgba(buf.array(), argb.width, argb.height)
     }
 }
 
@@ -183,7 +184,7 @@ class Tiff16Writer(private val out: OutputStream, private val w: Int, private va
         val entries = 12 + (if (copyright.isNullOrEmpty()) 0 else 1)
         val ifdSize = 2 + entries * 12 + 4
         val extraStart = 8 + ifdSize
-        val copy = copyright?.takeIf { it.isNotEmpty() }?.toByteArray(Charsets.US_ASCII)?.let { it + 0 }
+        val copy = copyright?.takeIf { it.isNotEmpty() }?.toByteArray(Charsets.US_ASCII)?.let { var b = it + 0; if (b.size % 2 == 1) b += 0; b }
         val bitsOffset = extraStart
         val resOffset = bitsOffset + 6
         val copyOffset = resOffset + 16

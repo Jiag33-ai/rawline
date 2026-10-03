@@ -14,7 +14,7 @@ import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 
 /** Edits, ratings, snapshots, presets and backup. Everything is keyed by [Photo.key] so it survives re-indexing. */
-class Catalog(private val context: Context, private val db: RawlineDb) {
+class Catalog(private val context: Context, private val db: RawlineDb, private val maskStore: app.rawline.core.cache.MaskStore? = null, private val patchStore: app.rawline.core.cache.PatchStore? = null) {
     private val photos = db.photos()
     private val edits = db.edits()
 
@@ -25,12 +25,12 @@ class Catalog(private val context: Context, private val db: RawlineDb) {
         else { edits.put(EditEntity(p.key, r.toJson(), System.currentTimeMillis())); photos.setEdited(p.id, true) }
     }
 
-    suspend fun setRating(list: List<Photo>, rating: Int) { photos.setRating(list.map { it.id }, rating); saveMeta(list) { it.copy(rating = rating) } }
-    suspend fun setFlag(list: List<Photo>, flag: Int) { photos.setFlag(list.map { it.id }, flag); saveMeta(list) { it.copy(flag = flag) } }
-    suspend fun setLabel(list: List<Photo>, label: Int) { photos.setLabel(list.map { it.id }, label); saveMeta(list) { it.copy(label = label) } }
+    suspend fun setRating(list: List<Photo>, rating: Int) { list.chunked(400).forEach { photos.setRating(it.map { p -> p.id }, rating) }; saveMeta(list) { it.copy(rating = rating) } }
+    suspend fun setFlag(list: List<Photo>, flag: Int) { list.chunked(400).forEach { photos.setFlag(it.map { p -> p.id }, flag) }; saveMeta(list) { it.copy(flag = flag) } }
+    suspend fun setLabel(list: List<Photo>, label: Int) { list.chunked(400).forEach { photos.setLabel(it.map { p -> p.id }, label) }; saveMeta(list) { it.copy(label = label) } }
 
     private suspend fun saveMeta(list: List<Photo>, f: (MetaEntity) -> MetaEntity) {
-        val old = edits.metaFor(list.map { it.key }).associateBy { it.key }
+        val old = list.chunked(400).flatMap { c -> edits.metaFor(c.map { it.key }) }.associateBy { it.key }
         edits.putMeta(list.map { f(old[it.key] ?: MetaEntity(it.key, it.rating, it.flag, it.label)) })
         // XMP sidecar is best effort and only when the user turned it on
         if (xmpEnabled()) list.forEach { p -> val m = edits.metaFor(listOf(p.key)).firstOrNull(); if (m != null) runCatching { Xmp.write(context, p, m.rating, m.label, edits.get(p.key)?.json) } }
@@ -58,6 +58,9 @@ class Catalog(private val context: Context, private val db: RawlineDb) {
             entry("edits.json", JSONArray().also { a -> edits.all().forEach { a.put(JSONObject().put("key", it.key).put("json", it.json).put("t", it.updatedAt)) } }.toString())
             entry("snapshots.json", JSONArray().also { a -> edits.allSnapshots().forEach { a.put(JSONObject().put("key", it.key).put("name", it.name).put("json", it.json).put("t", it.createdAt)) } }.toString())
             entry("presets.json", JSONArray().also { a -> edits.presets().forEach { a.put(JSONObject().put("name", it.name).put("json", it.json).put("t", it.createdAt)) } }.toString())
+            // AI mask images and repair patches are not in the recipes, so they travel in the zip too
+            fun files(prefix: String, dir: java.io.File?) { dir?.listFiles()?.forEach { f -> z.putNextEntry(ZipEntry(prefix + f.name)); f.inputStream().use { it.copyTo(z) }; z.closeEntry() } }
+            files("masks/", maskStore?.dir); files("heals/", patchStore?.dir)
             entry("meta.json", JSONArray().also { a -> edits.allMeta().forEach { a.put(JSONObject().put("key", it.key).put("rating", it.rating).put("flag", it.flag).put("label", it.label)) } }.toString())
         }
     }
@@ -67,20 +70,31 @@ class Catalog(private val context: Context, private val db: RawlineDb) {
         val files = HashMap<String, String>()
         ZipInputStream(input).use { z ->
             var e = z.nextEntry
-            while (e != null) { files[e.name] = z.readBytes().toString(Charsets.UTF_8); e = z.nextEntry }
+            while (e != null) {
+                val name = e.name
+                val bytes = z.readBytes()
+                val dir = when { name.startsWith("masks/") -> maskStore?.dir; name.startsWith("heals/") -> patchStore?.dir; else -> null }
+                if (dir != null) { val f = java.io.File(dir, name.substringAfter('/').replace("/", "_")); if (!f.exists()) f.writeBytes(bytes) }
+                else files[name] = bytes.toString(Charsets.UTF_8)
+                e = z.nextEntry
+            }
         }
         files["edits.json"]?.let { s ->
             val a = JSONArray(s)
-            edits.putEdits(List(a.length()) { val o = a.getJSONObject(it); EditEntity(o.getString("key"), o.getString("json"), o.optLong("t")) })
+            val existing = edits.all().associateBy { it.key }
+            // keep whichever edit is newer, so an old backup never overwrites newer work
+            edits.putEdits(List(a.length()) { val o = a.getJSONObject(it); EditEntity(o.getString("key"), o.getString("json"), o.optLong("t")) }.filter { e -> (existing[e.key]?.updatedAt ?: -1L) < e.updatedAt })
             count += a.length()
         }
         files["snapshots.json"]?.let { s ->
             val a = JSONArray(s)
-            edits.putSnapshots(List(a.length()) { val o = a.getJSONObject(it); SnapshotEntity(0, o.getString("key"), o.getString("name"), o.getString("json"), o.optLong("t")) })
+            val have = edits.allSnapshots().map { it.key to it.createdAt }.toSet()
+            edits.putSnapshots(List(a.length()) { val o = a.getJSONObject(it); SnapshotEntity(0, o.getString("key"), o.getString("name"), o.getString("json"), o.optLong("t")) }.filter { (it.key to it.createdAt) !in have })
         }
         files["presets.json"]?.let { s ->
             val a = JSONArray(s)
-            edits.putPresets(List(a.length()) { val o = a.getJSONObject(it); PresetEntity(0, o.getString("name"), o.getString("json"), o.optLong("t")) })
+            val have = edits.presets().map { it.name to it.createdAt }.toSet()
+            edits.putPresets(List(a.length()) { val o = a.getJSONObject(it); PresetEntity(0, o.getString("name"), o.getString("json"), o.optLong("t")) }.filter { (it.name to it.createdAt) !in have })
         }
         val metas = files["meta.json"]?.let { s ->
             val a = JSONArray(s)
@@ -93,7 +107,7 @@ class Catalog(private val context: Context, private val db: RawlineDb) {
         photos.all().forEach { p ->
             val k = Photo(p.id, p.folderUri, p.uri, p.name, p.size, p.modified, app.rawline.core.model.Kind.RAW, true).key
             val m = byKey[k]
-            if (m != null || k in editKeys) photos.restoreMeta(p.uri, m?.rating ?: 0, m?.flag ?: 0, m?.label ?: 0, k in editKeys)
+            if (m != null || k in editKeys) photos.restoreMeta(p.uri, m?.rating ?: p.rating, m?.flag ?: p.flag, m?.label ?: p.label, k in editKeys)
         }
         return count
     }

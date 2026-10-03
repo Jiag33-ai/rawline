@@ -44,6 +44,7 @@ fun ExportSheet(
     onShare: (() -> Unit)?,
     onDismiss: () -> Unit,
 ) {
+    var customMode by remember { mutableStateOf(settings.longEdge > 0 && settings.longEdge !in listOf(2048, 4096)) }
     var customEdge by remember { mutableStateOf(if (settings.longEdge > 0 && settings.longEdge !in listOf(2048, 4096)) settings.longEdge.toString() else "3000") }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -57,12 +58,12 @@ fun ExportSheet(
                 if (settings.format == ExportFormat.JPEG) RawSlider("Quality", settings.quality.toFloat(), 40f..100f, 92f, onChange = { onChange(settings.copy(quality = it.toInt())) }, onCommit = {})
                 SectionTitle("Size")
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    ChipButton("Full size", settings.longEdge == 0, { onChange(settings.copy(longEdge = 0)) })
-                    ChipButton("4096 px", settings.longEdge == 4096, { onChange(settings.copy(longEdge = 4096)) })
-                    ChipButton("2048 px", settings.longEdge == 2048, { onChange(settings.copy(longEdge = 2048)) })
-                    ChipButton("Custom", settings.longEdge > 0 && settings.longEdge !in listOf(2048, 4096), { onChange(settings.copy(longEdge = customEdge.toIntOrNull() ?: 3000)) })
+                    ChipButton("Full size", settings.longEdge == 0 && !customMode, { customMode = false; onChange(settings.copy(longEdge = 0)) })
+                    ChipButton("4096 px", settings.longEdge == 4096 && !customMode, { customMode = false; onChange(settings.copy(longEdge = 4096)) })
+                    ChipButton("2048 px", settings.longEdge == 2048 && !customMode, { customMode = false; onChange(settings.copy(longEdge = 2048)) })
+                    ChipButton("Custom", customMode, { customMode = true; onChange(settings.copy(longEdge = customEdge.toIntOrNull() ?: 3000)) })
                 }
-                if (settings.longEdge > 0 && settings.longEdge !in listOf(2048, 4096)) {
+                if (customMode) {
                     OutlinedTextField(customEdge, { customEdge = it.filter { c -> c.isDigit() }.take(5); customEdge.toIntOrNull()?.let { v -> if (v >= 64) onChange(settings.copy(longEdge = v)) } },
                         label = { Text("Long edge (px)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 }
@@ -74,7 +75,7 @@ fun ExportSheet(
                     SharpenAmount.entries.forEach { a -> ChipButton(a.label, settings.sharpenAmount == a, { onChange(settings.copy(sharpenAmount = a)) }) }
                 }
                 SectionTitle("Colour space")
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     ColorSpaceOut.entries.forEach { c -> ChipButton(c.label, settings.colorSpace == c, { onChange(settings.copy(colorSpace = c)) }) }
                 }
                 SectionTitle("Metadata")

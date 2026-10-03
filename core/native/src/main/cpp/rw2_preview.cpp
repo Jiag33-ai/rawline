@@ -52,7 +52,7 @@ void walkIfd(const Reader &r, int64_t ifdOff, int depth, bool isIfd0, PreviewInf
     if (!r.read(ifdOff + 2, buf.data(), buf.size())) return;
 
     int64_t jifOff = -1, jifLen = -1, stripOff = -1, stripLen = -1;
-    int compression = 0;
+    int compression = 0, photometric = 0;
     for (int i = 0; i < n; i++) {
         const uint8_t *e = &buf[i * 12];
         Entry en{r.u16(e), r.u16(e + 2), r.u32(e + 4), r.u32(e + 8)};
@@ -66,6 +66,7 @@ void walkIfd(const Reader &r, int64_t ifdOff, int depth, bool isIfd0, PreviewInf
                 consider(r, en.value, en.count, best);
                 break;
             case 0x103: compression = shortVal; break;
+            case 0x106: photometric = shortVal; break;
             case 0x111: if (en.count == 1) stripOff = en.type == 3 ? shortVal : en.value; break;
             case 0x117: if (en.count == 1) stripLen = en.type == 3 ? shortVal : en.value; break;
             case 0x201: jifOff = en.value; break;
@@ -85,7 +86,8 @@ void walkIfd(const Reader &r, int64_t ifdOff, int depth, bool isIfd0, PreviewInf
         }
     }
     if (jifOff > 0 && jifLen > 0) consider(r, jifOff, jifLen, best);
-    if ((compression == 6 || compression == 7) && stripOff > 0 && stripLen > 0)
+    // Lossless-JPEG raw strips (CFA / LinearRaw photometric) are the sensor data, not a preview.
+    if ((compression == 6 || compression == 7) && photometric != 32803 && photometric != 34892 && stripOff > 0 && stripLen > 0)
         consider(r, stripOff, stripLen, best);
 
     uint32_t next = r.u32(&buf[n * 12]);

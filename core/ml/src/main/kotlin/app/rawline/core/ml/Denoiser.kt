@@ -30,6 +30,9 @@ class Denoiser(private val context: Context, private val store: ModelStore) {
         val outBuf = TfModel.floats(tile * tile * 3)
         val disp = FloatArray(tile * tile * 3)
         val tmp = FloatArray(3)
+        // Results are written after all tiles are read, so overlaps never see already denoised pixels.
+        class Out(val x: Int, val y: Int, val w: Int, val h: Int, val rgb: FloatArray)
+        val results = ArrayList<Out>()
         for (ty in 0 until ny) for (tx in 0 until nx) {
             coroutineContext.ensureActive()
             val cx = tx * stride; val cy = ty * stride            // core origin
@@ -62,10 +65,11 @@ class Denoiser(private val context: Context, private val store: ModelStore) {
                 if (changed < 1e-4f) { outLin[o] = lin[oi * 3]; outLin[o + 1] = lin[oi * 3 + 1]; outLin[o + 2] = lin[oi * 3 + 2] }
                 else { outLin[o] = tmp[0]; outLin[o + 1] = tmp[1]; outLin[o + 2] = tmp[2] }
             }
-            Native.rawWrite(handle, cx, cy, cw, ch, outLin)
+            results.add(Out(cx, cy, cw, ch, outLin))
             done++
             onProgress(done / total.toFloat())
         }
+        results.forEach { Native.rawWrite(handle, it.x, it.y, it.w, it.h, it.rgb) }
         PerfLog.record("denoise_total_ms (${w}x$h)", (System.nanoTime() - t0) / 1_000_000)
         return true
     }

@@ -21,3 +21,4 @@
 - AVIF export is not offered: Android has no AVIF encoder API. JPEG, PNG and 16-bit TIFF are.
 - Edits, ratings, snapshots, presets are keyed by `name|size|modified`, so they survive re-indexing and a restore from backup on a new install.
 - Tags: the sandbox git proxy rejects tag pushes, so milestone tags are not pushed.
+- Release signing: a committed sideload keystore (not secret; personal app) signs every build so updates install over the top. Actions secrets, if set, take precedence.

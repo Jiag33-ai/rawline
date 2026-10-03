@@ -35,6 +35,13 @@ fun PresetsPanel(state: EditorState, userPresets: List<Preset>, onSavePreset: (S
     var base by remember { mutableStateOf(EditRecipe()) }
     var strength by remember { mutableFloatStateOf(100f) }
     var naming by remember { mutableStateOf(false) }
+    var origin by remember { mutableStateOf<EditRecipe?>(null) }
+    // The look is always blended onto the edit as it was before any preset was picked, so presets do not stack.
+    fun selectPreset(p: Preset) {
+        if (selected == null) origin = state.recipe
+        base = origin ?: state.recipe; selected = p; strength = 100f
+        state.edit("Preset ${p.name}") { Presets.apply(base, p.recipe, 1f) }
+    }
     Column(Modifier.fillMaxWidth()) {
         Row(Modifier.padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Button(onClick = { naming = true }) { Text("Save current as preset") }
@@ -47,9 +54,9 @@ fun PresetsPanel(state: EditorState, userPresets: List<Preset>, onSavePreset: (S
         LazyColumn(Modifier.fillMaxWidth().size(width = 400.dp, height = 190.dp)) {
             item { SectionTitle("Mine") }
             if (userPresets.isEmpty()) item { Text("None yet", modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            items(userPresets) { p -> PresetRow(p, selected == p, { base = state.recipe; selected = p; strength = 100f; state.edit("Preset ${p.name}") { Presets.apply(base, p.recipe, 1f) } }, { onDeletePreset(p) }) }
+            items(userPresets) { p -> PresetRow(p, selected == p, { selectPreset(p) }, { onDeletePreset(p) }) }
             item { SectionTitle("Looks") }
-            items(Presets.builtIn) { p -> PresetRow(p, selected == p, { base = state.recipe; selected = p; strength = 100f; state.edit("Preset ${p.name}") { Presets.apply(base, p.recipe, 1f) } }, null) }
+            items(Presets.builtIn) { p -> PresetRow(p, selected == p, { selectPreset(p) }, null) }
         }
     }
     if (naming) {

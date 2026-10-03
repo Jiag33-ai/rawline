@@ -37,7 +37,7 @@ class Indexer(private val context: Context, private val dao: PhotoDao, private v
         val folderKey = folder.toString()
         val docs = ArrayList<Doc>()
         val xmp = HashMap<String, String>()
-        walk(folder, DocumentsContract.getTreeDocumentId(folder), docs, xmp)
+        val complete = walk(folder, DocumentsContract.getTreeDocumentId(folder), docs, xmp)
         val known = dao.known(folderKey)
         val byUri = known.associateBy { it.uri }
         val seen = HashSet<String>(docs.size)
@@ -49,20 +49,22 @@ class Indexer(private val context: Context, private val dao: PhotoDao, private v
             if (k == null) fresh.add(PhotoEntity(folderUri = folderKey, uri = d.uri, name = d.name, size = d.size, modified = d.modified, isRaw = d.raw))
             else if (k.modified != d.modified || k.size != d.size) { stale.add(k.id); fresh.add(PhotoEntity(folderUri = folderKey, uri = d.uri, name = d.name, size = d.size, modified = d.modified, isRaw = d.raw)) }
         }
-        known.filter { it.uri !in seen }.forEach { stale.add(it.id) }
+        // Never prune when the listing may be partial (unmounted card, revoked permission): that would wipe ratings and edit marks.
+        if (complete && docs.isNotEmpty()) known.filter { it.uri !in seen }.forEach { stale.add(it.id) }
         stale.chunked(500).forEach { dao.delete(it) }
         fresh.chunked(200).forEach { dao.insertAll(it) }
         catalog?.reapply(folderKey)
         // Ratings and labels from existing XMP sidecars (only for photos without saved ratings)
         if (xmp.isNotEmpty()) {
             val byUri = docs.associateBy { it.uri }
+            val freshUris = fresh.mapTo(HashSet()) { it.uri }
             dao.known(folderKey).forEach { k ->
                 val d = byUri[k.uri] ?: return@forEach
                 val sidecar = xmp[d.dir + "/" + d.name.substringBeforeLast('.').lowercase()] ?: return@forEach
-                if (k.id in freshIds(fresh, folderKey)) {
+                if (k.uri in freshUris) {
                     runCatching {
                         context.contentResolver.openInputStream(Uri.parse(sidecar))?.use { st ->
-                            Xmp.parse(st.readBytes().toString(Charsets.UTF_8))?.let { (r, l) -> if (r > 0 || l > 0) dao.restoreMeta(k.uri, r, 0, l, false) }
+                            Xmp.parse(st.readBytes().toString(Charsets.UTF_8))?.let { (r, l) -> if (r > 0 || l > 0) dao.setRatingLabelIfUnset(k.uri, r, l) }
                         }
                     }
                 }
@@ -84,7 +86,7 @@ class Indexer(private val context: Context, private val dao: PhotoDao, private v
             todo.map { row ->
                 async(Dispatchers.IO) {
                     gate.withPermit {
-                        try { indexOne(row) } catch (e: Throwable) { failures.incrementAndGet(); PerfLog.error("index ${row.name}: ${e.message}"); dao.markFailed(row.id) }
+                        try { indexOne(row) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Throwable) { failures.incrementAndGet(); PerfLog.error("index ${row.name}: ${e.message}"); dao.markFailed(row.id) }
                     }
                     val n = done.incrementAndGet()
                     if (n % 10 == 0 || n == todo.size) _progress.value = IndexProgress(todo.size, n, n < todo.size)
@@ -109,13 +111,9 @@ class Indexer(private val context: Context, private val dao: PhotoDao, private v
         )
     }
 
-    private val freshUris = HashSet<String>()
-    private suspend fun freshIds(fresh: List<PhotoEntity>, folder: String): Set<Long> {
-        freshUris.clear(); fresh.forEach { freshUris.add(it.uri) }
-        return dao.known(folder).filter { it.uri in freshUris }.map { it.id }.toSet()
-    }
-
-    private fun walk(tree: Uri, docId: String, out: MutableList<Doc>, xmp: MutableMap<String, String>) {
+    /** @return false if any folder could not be listed */
+    private fun walk(tree: Uri, docId: String, out: MutableList<Doc>, xmp: MutableMap<String, String>): Boolean {
+        var ok = true
         val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, docId)
         val cols = arrayOf(
             DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME,
@@ -123,7 +121,9 @@ class Indexer(private val context: Context, private val dao: PhotoDao, private v
             DocumentsContract.Document.COLUMN_LAST_MODIFIED,
         )
         val dirs = ArrayList<String>()
-        context.contentResolver.query(children, cols, null, null, null)?.use { c ->
+        val cursor = context.contentResolver.query(children, cols, null, null, null)
+        if (cursor == null) ok = false
+        cursor?.use { c ->
             while (c.moveToNext()) {
                 val id = c.getString(0); val name = c.getString(1) ?: continue; val mime = c.getString(2)
                 if (mime == DocumentsContract.Document.MIME_TYPE_DIR) { dirs.add(id); continue }
@@ -132,7 +132,8 @@ class Indexer(private val context: Context, private val dao: PhotoDao, private v
                 out.add(Doc(DocumentsContract.buildDocumentUriUsingTree(tree, id).toString(), name, c.getLong(3), c.getLong(4), kind == Kind.RAW, docId))
             }
         }
-        dirs.forEach { walk(tree, it, out, xmp) }
+        dirs.forEach { if (!walk(tree, it, out, xmp)) ok = false }
+        return ok
     }
 
 }

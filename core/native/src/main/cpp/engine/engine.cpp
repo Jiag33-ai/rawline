@@ -265,6 +265,11 @@ void Engine::runAnalysis(const float *p) {
         std::memcpy(&b, &p[i], 4);
         key = (key ^ b) * 1099511628211ull;
     }
+    for (int i = G_LDIST; i <= G_LDIST_ON; i++) {
+        uint32_t b;
+        std::memcpy(&b, &p[i], 4);
+        key = (key ^ b) * 1099511628211ull;
+    }
     key ^= uint64_t(srcW_) << 20 ^ uint64_t(srcH_) << 40 ^ uint64_t(srcTex_);
     if (key == analysisKey_) return;
     analysisKey_ = key;
@@ -312,6 +317,7 @@ void Engine::runMain(const float *p, Rect vis, int pw, int ph, Target &e, int ma
     int ow, oh;
     outputSize(p, ow, oh);
     ensureTarget(e, pw + 2 * margin, ph + 2 * margin, GL_RGBA16F);
+    glDisable(GL_BLEND); glDisable(GL_DEPTH_TEST); glDisable(GL_SCISSOR_TEST); glDisable(GL_CULL_FACE);
     glBindFramebuffer(GL_FRAMEBUFFER, e.fbo);
     glViewport(0, 0, e.w, e.h);
     glUseProgram(main_.id);
@@ -373,7 +379,7 @@ static void setOutUniforms(GLuint pr, const float *p, int pw, int ph, Rect vis, 
     }
     glUniformMatrix3fv(glGetUniformLocation(pr, "uToSrgb"), 1, GL_FALSE, space == 1 ? mp3 : msrgb);
     glUniform1f(glGetUniformLocation(pr, "uOutLinear"), outLinear);
-    glUniform1f(glGetUniformLocation(pr, "uChecker"), 1.f);
+    glUniform1f(glGetUniformLocation(pr, "uChecker"), flip > 0.5f ? 1.f : 0.f);
     glUniform1f(glGetUniformLocation(pr, "uFlipY"), flip);
 }
 
@@ -399,6 +405,10 @@ void Engine::renderToScreen(const float *p, int vx, int vy, int vw, int vh, Rect
 
 bool Engine::renderRegion(const float *p, int pw, int ph, Rect vis, uint8_t *rgba, bool linearHalfOut, uint16_t *halfOut) {
     if (!hasSource()) return false;
+    while (glGetError() != GL_NO_ERROR) {}
+    GLint prevFbo = 0, prevVp[4];
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+    glGetIntegerv(GL_VIEWPORT, prevVp);
     uploadTables(p);
     runAnalysis(p);
     runMain(p, vis, pw, ph, e_, kMargin);
@@ -422,6 +432,8 @@ bool Engine::renderRegion(const float *p, int pw, int ph, Rect vis, uint8_t *rgb
         for (size_t i = 0; i < f.size(); i++) halfOut[i] = floatToHalf(f[i]);
     }
     else glReadPixels(0, 0, pw, ph, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
+    glViewport(prevVp[0], prevVp[1], prevVp[2], prevVp[3]);
     return glGetError() == GL_NO_ERROR;
 }
 

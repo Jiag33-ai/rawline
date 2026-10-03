@@ -19,7 +19,7 @@ class HealOverlay(private val session: OverlaySink, srcW: Int, srcH: Int) {
         val s = min(1f, 3072f / max(srcW, srcH))
         w = max(16, (srcW * s).toInt()); h = max(16, (srcH * s).toInt())
         buf = ShortArray(w * h * 4)
-        session.setOverlay(buf, w, h)
+        session.setOverlay(buf.copyOf(), w, h)
     }
 
     /**
@@ -64,7 +64,7 @@ class HealOverlay(private val session: OverlaySink, srcW: Int, srcH: Int) {
         session.updateOverlay(x0, y0, rw, rh, out)
     }
 
-    fun clear() { buf.fill(0); session.setOverlay(buf, w, h) }
+    fun clear() { buf.fill(0); session.setOverlay(buf.copyOf(), w, h) }
 }
 
 /** Where overlay pixels go: the live editor (GL thread queue) or an export engine. */

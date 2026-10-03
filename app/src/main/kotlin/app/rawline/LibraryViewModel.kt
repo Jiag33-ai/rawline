@@ -35,6 +35,7 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
     private val catalog = graph.catalog
 
     val folder = MutableStateFlow(graph.prefs.getString("folder", null))
+    val recentFolders = MutableStateFlow(graph.prefs.getStringSet("folders", emptySet())!!.toList())
     val overlay = MutableStateFlow(graph.prefs.getBoolean("overlay", false))
     val xmp = MutableStateFlow(graph.prefs.getBoolean("xmp", false))
     val filter = MutableStateFlow(LibraryFilter())
@@ -68,10 +69,26 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
         }.onFailure {
             runCatching { app.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
         }
+        remember(uri.toString())
         graph.prefs.edit().putString("folder", uri.toString()).apply()
         folder.value = uri.toString()
         rescan(uri)
     }
+
+    private fun remember(uri: String) {
+        val all = (listOf(uri) + recentFolders.value).distinct().take(8)
+        graph.prefs.edit().putStringSet("folders", all.toSet()).apply()
+        recentFolders.value = all
+    }
+
+    fun switchFolder(uri: String) {
+        graph.prefs.edit().putString("folder", uri).apply()
+        folder.value = uri
+        remember(uri)
+        rescan(Uri.parse(uri))
+    }
+
+    fun labelOf(uri: String): String = runCatching { DocumentsContract.getTreeDocumentId(Uri.parse(uri)).substringAfter(':').ifEmpty { "Storage" } }.getOrDefault(uri)
 
     fun setOverlay(on: Boolean) { graph.prefs.edit().putBoolean("overlay", on).apply(); overlay.value = on }
     fun setXmp(on: Boolean) { graph.prefs.edit().putBoolean("xmp", on).apply(); xmp.value = on }

@@ -54,7 +54,16 @@ object RecipeMerge {
         if (PasteScope.DETAIL in scopes) t = t.copy(detail = source.detail)
         if (PasteScope.OPTICS in scopes) t = t.copy(optics = source.optics)
         if (PasteScope.GEOMETRY in scopes) t = t.copy(geometry = source.geometry)
-        if (PasteScope.MASKS in scopes) t = t.copy(masks = source.masks)
+        if (PasteScope.MASKS in scopes) {
+            // brush layers are edited, so each pasted brush gets its own key (rebuilt from its strokes); AI layers are read only and shared
+            var n = 0
+            val stamp = System.nanoTime().toString(36)
+            t = t.copy(masks = source.masks.map { m ->
+                m.copy(id = m.id + "p$stamp", components = m.components.map { c ->
+                    if (c.type == MaskType.BITMAP && c.layerKey?.startsWith("brush_") == true) c.copy(layerKey = "brush_p${stamp}_${n++}") else c
+                })
+            })
+        }
         if (PasteScope.HEALS in scopes) t = t.copy(heals = source.heals)
         return t
     }

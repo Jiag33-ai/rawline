@@ -56,12 +56,12 @@ fun ExportDialog(photos: List<Photo>, graph: Graph, onDismiss: () -> Unit, onSta
             onDismiss()
         },
         onShare = if (photos.size == 1) ({
-            scope.launch {
+            graph.appScope.launch {
                 val f = withContext(Dispatchers.IO) { graph.exportRunner.exportForShare(photos[0], settings) }
                 if (f != null) {
                     val uri = FileProvider.getUriForFile(context, context.packageName + ".files", f)
                     val send = Intent(Intent.ACTION_SEND).setType(settings.format.mime).putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    context.startActivity(Intent.createChooser(send, "Share photo"))
+                    withContext(Dispatchers.Main) { context.startActivity(Intent.createChooser(send, "Share photo").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
                 }
             }
             onDismiss()

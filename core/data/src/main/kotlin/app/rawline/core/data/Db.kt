@@ -106,6 +106,9 @@ interface PhotoDao {
     @Query("UPDATE photos SET edited = :edited WHERE id = :id")
     suspend fun setEdited(id: Long, edited: Boolean)
 
+    @Query("UPDATE photos SET rating = :rating, label = :label WHERE uri = :uri AND rating = 0 AND label = 0")
+    suspend fun setRatingLabelIfUnset(uri: String, rating: Int, label: Int)
+
     @Query("SELECT * FROM photos")
     suspend fun all(): List<PhotoEntity>
 

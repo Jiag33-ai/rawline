@@ -7,7 +7,7 @@ import java.io.File
 
 /** Repair patches (RGBA, straight alpha) kept as PNG files next to the edit. */
 class PatchStore(context: Context) {
-    private val dir = File(context.filesDir, "heals").apply { mkdirs() }
+    val dir = File(context.filesDir, "heals").apply { mkdirs() }
     private fun file(key: String) = File(dir, key.replace(Regex("[^A-Za-z0-9_.-]"), "_") + ".png")
 
     fun save(key: String, pixels: IntArray, w: Int, h: Int) {
