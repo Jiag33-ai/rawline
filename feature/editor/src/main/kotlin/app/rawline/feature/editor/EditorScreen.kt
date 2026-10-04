@@ -378,6 +378,13 @@ fun EditorScreen(
     val autoLight = { scope.launch { session.baseStats()?.let { st -> val a = AutoTools.autoLight(st)
         state.edit("Auto") { r -> r.copy(adjust = r.adjust.copy(exposure = a.exposure, contrast = a.contrast, highlights = a.highlights, shadows = a.shadows, whites = a.whites, blacks = a.blacks)) } } }; Unit }
     val inEdit = open && tab in sectionIds
+    // A portrait photo would shrink to a sliver above a full-height tray, so there the edit tray floats over the photo, see-through.
+    val overlayTray = inEdit && oh > ow
+    val tray: @Composable (Float) -> Unit = { alpha ->
+        Box(
+            Modifier.fillMaxWidth().background(Lr.Surface2.copy(alpha = alpha)).then(if (inEdit) Modifier.heightIn(max = if (alpha < 1f) 250.dp else 270.dp) else Modifier.height(300.dp)).animateContentSize(tween(LrMotion.panel, easing = LrMotion.standard)),
+        ) { Crossfade(tab, animationSpec = tween(LrMotion.fast + 20), label = "tray") { t -> panelBody(t) } }
+    }
     var entryGeo by remember { mutableStateOf(state.recipe.geometry) }
     LaunchedEffect(isCrop) { if (isCrop) entryGeo = state.recipe.geometry }
     androidx.activity.compose.BackHandler(enabled = open) {
@@ -434,6 +441,11 @@ fun EditorScreen(
             ValueFeedbackPill(feedback, Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 14.dp))
             if (showHist && !isCrop) Histogram(hist, Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(top = 56.dp, end = 12.dp).width(120.dp).height(54.dp))
 
+            FlatVisibility(
+                overlayTray, Modifier.align(Alignment.BottomCenter),
+                enter = slideInVertically(tween(LrMotion.panel, easing = LrMotion.standard)) { it / 3 } + fadeIn(tween(LrMotion.normal, easing = LrMotion.enter)),
+                exit = slideOutVertically(tween(LrMotion.panel - 20, easing = LrMotion.standard)) { it / 3 } + fadeOut(tween(100)),
+            ) { tray(0.8f) }
             // ---- idle dock ----
             FlatVisibility(
                 !open, Modifier.align(Alignment.BottomCenter).padding(bottom = 8.dp),
@@ -464,12 +476,8 @@ fun EditorScreen(
                 exit = shrinkVertically(tween(LrMotion.panel - 20, easing = LrMotion.standard), shrinkTowards = Alignment.Bottom) + fadeOut(tween(100)),
             ) {
                 Column {
-                    // parameter tray: straight edge, no handle, open controls on the surface
-                    Box(
-                        Modifier.fillMaxWidth().background(Lr.Surface2).then(if (inEdit) Modifier.heightIn(max = 270.dp) else Modifier.height(300.dp)).animateContentSize(tween(LrMotion.panel, easing = LrMotion.standard)),
-                    ) {
-                        Crossfade(tab, animationSpec = tween(LrMotion.fast + 20), label = "tray") { t -> panelBody(t) }
-                    }
+                    // parameter tray: straight edge, no handle, open controls on the surface (floats over the photo instead for portrait photos)
+                    if (!overlayTray) tray(1f)
                     if (inEdit) {
                         Box(Modifier.fillMaxWidth().height(1.dp).background(Lr.BorderSubtle))
                         CategoryRail(sections, tab, { mode = PhotoMode.NONE; tab = it.id }, { autoLight() })
