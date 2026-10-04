@@ -37,6 +37,8 @@ class AiMasksImpl(private val context: Context, private val store: ModelStore, p
 
     override fun invalidate() { embedding = null; embedKey = "" }
 
+    fun release() { listOf(skyModel, peopleModel, samEnc, samDec).forEach { if (it.isInitialized()) it.value.release() } }
+
     private suspend fun frame(maxEdge: Int = 1024): Bitmap? = session.renderFrame(maxEdge)
 
     // ---------------- subject (ML Kit) ----------------

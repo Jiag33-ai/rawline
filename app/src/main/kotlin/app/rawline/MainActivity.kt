@@ -142,6 +142,7 @@ private fun RawlineRoot() {
             // Library to editor and back is a horizontal move (320 ms, no bounce); the tabs and photo to photo swipes do not slide.
             val slide = tween<androidx.compose.ui.unit.IntOffset>(LrMotion.page, easing = LrMotion.standard)
             fun androidx.navigation.NavBackStackEntry.top() = destination.route in TopLevel
+            androidx.compose.animation.SharedTransitionLayout {
             NavHost(
                 nav, startDestination = "photos",
                 enterTransition = {
@@ -164,6 +165,8 @@ private fun RawlineRoot() {
                 },
             ) {
                 composable("photos") {
+                    val sharedPhoto = photoShared(this@SharedTransitionLayout, this)
+                    androidx.compose.runtime.CompositionLocalProvider(app.rawline.core.ui.LocalSharedPhoto provides sharedPhoto) {
                     Box(Modifier.statusBarsPadding()) {
                         LibraryScreen(
                             photos = photos, allCount = allPhotos.size, cameras = cameras, filter = filter, thumbs = graph.thumbs, progress = progress,
@@ -188,6 +191,7 @@ private fun RawlineRoot() {
                             ),
                         )
                     }
+                                    }
                 }
                 composable("queue") {
                     Box(Modifier.statusBarsPadding()) {
@@ -203,6 +207,8 @@ private fun RawlineRoot() {
                     }
                 }
                 composable("loupe/{index}", arguments = listOf(navArgument("index") { type = NavType.IntType })) { entry ->
+                    val sharedPhoto = photoShared(this@SharedTransitionLayout, this)
+                    androidx.compose.runtime.CompositionLocalProvider(app.rawline.core.ui.LocalSharedPhoto provides sharedPhoto) {
                     LoupeScreen(
                         photos = photos, startIndex = entry.arguments?.getInt("index") ?: 0,
                         previews = graph.previews, thumbs = graph.thumbs, showOverlay = overlay,
@@ -212,8 +218,11 @@ private fun RawlineRoot() {
                         onExport = { p -> vm.enqueueExport(listOf(p)) },
                         onDwell = { p -> graph.rawPrefetch.prefetch(p) },
                     )
+                                    }
                 }
                 composable("edit/{id}", arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
+                    val sharedPhoto = photoShared(this@SharedTransitionLayout, this)
+                    androidx.compose.runtime.CompositionLocalProvider(app.rawline.core.ui.LocalSharedPhoto provides sharedPhoto) {
                     val id = entry.arguments?.getLong("id") ?: 0L
                     val photo = allPhotos.firstOrNull { it.id == id } ?: photos.firstOrNull { it.id == id }
                     if (photo != null) {
@@ -227,6 +236,7 @@ private fun RawlineRoot() {
                             onBack = { nav.popBackStack() },
                         )
                     }
+                                    }
                 }
                 composable("settings") {
                     Box(Modifier.statusBarsPadding()) {
@@ -247,7 +257,8 @@ private fun RawlineRoot() {
                         )
                     }
                 }
-            }
+            }            }
+
         }
         if (currentRoute in TopLevel) {
             Row(Modifier.fillMaxWidth().background(Lr.Surface1).navigationBarsPadding().height(LrDim.bottomNav)) {
@@ -284,5 +295,19 @@ private fun ToastHost(text: String?, modifier: Modifier) {
         Box(Modifier.widthIn(max = 320.dp).defaultMinSize(minHeight = 36.dp).background(Color(0xFF292929), RoundedCornerShape(6.dp)).border(1.dp, Lr.BorderSubtle, RoundedCornerShape(6.dp)).padding(horizontal = 12.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
             Text(shown, style = MaterialTheme.typography.bodySmall, color = Lr.TextPrimary)
         }
+    }
+}
+
+/** The shared-element modifier for a photo's picture inside one navigation destination (420 ms, same curve as the spec). */
+@androidx.compose.runtime.Composable
+private fun photoShared(
+    transition: androidx.compose.animation.SharedTransitionScope,
+    visibility: androidx.compose.animation.AnimatedVisibilityScope,
+): @androidx.compose.runtime.Composable (Long) -> androidx.compose.ui.Modifier = { id ->
+    with(transition) {
+        androidx.compose.ui.Modifier.sharedElement(
+            rememberSharedContentState("photo-$id"), visibility,
+            boundsTransform = { _, _ -> tween(LrMotion.shared, easing = LrMotion.enter) },
+        )
     }
 }

@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Column
@@ -46,6 +47,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -62,7 +64,13 @@ import app.rawline.core.cache.PerfLog
 import app.rawline.core.cache.PreviewCache
 import app.rawline.core.cache.ThumbStore
 import app.rawline.core.model.Photo
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.ui.geometry.isSpecified
+import app.rawline.core.ui.LrMotion
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
@@ -119,7 +127,7 @@ fun LoupeScreen(
                 if (showOverlay) {
                     var line by remember { mutableStateOf("") }
                     LaunchedEffect(pager.currentPage) { kotlinx.coroutines.delay(300); line = PerfLog.lastOpen }
-                    Text(line, color = Color(0xFF9EE493), style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(2f))
+                    Text(line, color = Lr.DebugText, style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(2f))
                 }
             }
         }
@@ -140,7 +148,8 @@ fun LoupeScreen(
                     Box(Modifier.height(40.dp).clip(RoundedCornerShape(4.dp)).background(Lr.Accent).clickable { onEdit(p) }.padding(horizontal = 16.dp), contentAlignment = Alignment.Center) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             LrIconView(LrIcon.EDIT, Color.White, size = 18.dp)
-                            Text("  Edit", color = Color.White, style = MaterialTheme.typography.labelLarge)
+                            Spacer(Modifier.width(7.dp))
+                            Text("Edit", color = Color.White, style = MaterialTheme.typography.labelLarge)
                         }
                     }
                 }
@@ -182,12 +191,27 @@ private fun LoupePage(p: Photo, previews: PreviewCache, thumbs: ThumbStore, isCu
     var scale by remember(p.id) { mutableFloatStateOf(1f) }
     var offset by remember(p.id) { mutableStateOf(Offset.Zero) }
     val shown = preview ?: thumb
+    val zoomScope = rememberCoroutineScope()
+    var zoomJob by remember(p.id) { mutableStateOf<Job?>(null) }
     Box(
         Modifier
             .fillMaxSize()
             .pointerInput(p.id) {
-                detectTapGestures(onTap = { onTap() }, onDoubleTap = {
-                    if (scale > 1f) { scale = 1f; offset = Offset.Zero } else scale = 3f
+                detectTapGestures(onTap = { onTap() }, onDoubleTap = { tap ->
+                    zoomJob?.cancel()
+                    val s0 = scale; val o0 = offset
+                    val s1 = if (s0 > 1f) 1f else 3f
+                    // zoom about the tapped point; going back to fit centres the photo again
+                    val c = Offset(size.width / 2f, size.height / 2f)
+                    val o1 = if (s1 <= 1f) Offset.Zero else {
+                        val raw = (tap - c) * (1f - s1 / s0) + o0 * (s1 / s0)
+                        Offset(raw.x.coerceIn(-size.width * (s1 - 1f) / 2f, size.width * (s1 - 1f) / 2f), raw.y.coerceIn(-size.height * (s1 - 1f) / 2f, size.height * (s1 - 1f) / 2f))
+                    }
+                    zoomJob = zoomScope.launch {
+                        androidx.compose.animation.core.Animatable(0f).animateTo(1f, tween(LrMotion.panel, easing = LrMotion.standard)) {
+                            scale = s0 + (s1 - s0) * value; offset = o0 + (o1 - o0) * value
+                        }
+                    }
                 })
             }
             .pointerInput(p.id) {
@@ -198,10 +222,15 @@ private fun LoupePage(p: Photo, previews: PreviewCache, thumbs: ThumbStore, isCu
                         val ev = awaitPointerEvent()
                         val multi = ev.changes.size >= 2
                         if (multi || scale > 1f) {
+                            zoomJob?.cancel()
+                            val oldScale = scale
                             scale = (scale * ev.calculateZoom()).coerceIn(1f, 8f)
                             val maxX = size.width * (scale - 1f) / 2f
                             val maxY = size.height * (scale - 1f) / 2f
-                            val o = offset + ev.calculatePan()
+                            // keep the point under the finger centroid fixed while scaling (layer scales about the view centre)
+                            val centre = Offset(size.width / 2f, size.height / 2f)
+                            val ratio = scale / oldScale
+                            val o = (ev.calculateCentroid(useCurrent = false).takeIf { it.isSpecified }?.let { cen -> (cen - centre) * (1f - ratio) } ?: Offset.Zero) + offset * ratio + ev.calculatePan()
                             offset = if (scale <= 1f) Offset.Zero else Offset(o.x.coerceIn(-maxX, maxX), o.y.coerceIn(-maxY, maxY))
                             ev.changes.forEach { if (it.positionChanged()) it.consume() }
                         }
@@ -214,7 +243,7 @@ private fun LoupePage(p: Photo, previews: PreviewCache, thumbs: ThumbStore, isCu
             val img = remember(b) { b.asImageBitmap() }
             Image(
                 img, contentDescription = p.name, contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxSize().graphicsLayer { scaleX = scale; scaleY = scale; translationX = offset.x; translationY = offset.y },
+                modifier = Modifier.fillMaxSize().then(app.rawline.core.ui.LocalSharedPhoto.current(p.id)).graphicsLayer { scaleX = scale; scaleY = scale; translationX = offset.x; translationY = offset.y },
             )
         }
     }

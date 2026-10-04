@@ -99,20 +99,24 @@ fun CompactMasterRail(modes: List<Tool>, isActive: (Tool) -> Boolean, onSelect: 
 @Composable
 fun CategoryRail(items: List<Tool>, selected: String, onSelect: (Tool) -> Unit, onAuto: () -> Unit, modifier: Modifier = Modifier) {
     Row(modifier.fillMaxWidth().height(LrDim.categoryRail).background(Lr.Surface1).horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-        Column(Modifier.size(width = 52.dp, height = 56.dp).clip(RoundedCornerShape(6.dp)).clickable { onAuto() }.semantics { contentDescription = "Auto" }, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-            LrIconView(LrIcon.AUTO, Lr.IconSecondary, size = 22.dp); Spacer(Modifier.height(5.dp)); Text("Auto", style = MaterialTheme.typography.labelMedium, color = Lr.TextMuted)
+        Box(Modifier.size(width = 50.dp, height = 56.dp).clickable { onAuto() }.semantics { contentDescription = "Auto" }, contentAlignment = Alignment.Center) {
+            Column(Modifier.size(width = 44.dp, height = 56.dp).clip(RoundedCornerShape(6.dp)), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                LrIconView(LrIcon.AUTO, Lr.IconSecondary, size = 22.dp); Spacer(Modifier.height(5.dp)); Text("Auto", style = MaterialTheme.typography.labelMedium, color = Lr.TextMuted)
+            }
         }
         Box(Modifier.width(1.dp).height(32.dp).background(Lr.Divider))
         items.forEach { t ->
             val on = selected == t.id
             val bg by animateColorAsState(if (on) Lr.SurfaceSelected else Color.Transparent, tween(LrMotion.fast), label = "cat")
-            Column(
-                Modifier.size(width = 56.dp, height = 56.dp).clip(RoundedCornerShape(6.dp)).background(bg).clickable { onSelect(t) }.semantics { contentDescription = t.title },
-                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
-            ) {
-                LrIconView(t.icon, if (on) Lr.IconPrimary else Lr.IconSecondary, size = 22.dp)
-                Spacer(Modifier.height(5.dp))
-                Text(t.title, style = MaterialTheme.typography.labelMedium, color = if (on) Lr.TextPrimary else Lr.TextMuted, maxLines = 1)
+            Box(Modifier.size(width = 50.dp, height = 56.dp).clickable { onSelect(t) }.semantics { contentDescription = t.title }, contentAlignment = Alignment.Center) {
+                Column(
+                    Modifier.size(width = 44.dp, height = 56.dp).clip(RoundedCornerShape(6.dp)).background(bg),
+                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
+                ) {
+                    LrIconView(t.icon, if (on) Lr.IconPrimary else Lr.IconSecondary, size = 22.dp)
+                    Spacer(Modifier.height(5.dp))
+                    Text(t.title, style = MaterialTheme.typography.labelMedium, color = if (on) Lr.TextPrimary else Lr.TextMuted, maxLines = 1)
+                }
             }
         }
     }
@@ -131,7 +135,7 @@ fun CropStatusPill(text: String, modifier: Modifier = Modifier) {
 @Composable
 fun CropUtilityButton(icon: LrIcon, description: String, onClick: () -> Unit, modifier: Modifier = Modifier, active: Boolean = false) {
     Box(
-        modifier.size(44.dp).clip(CircleShape).background(Color(0xFF2A2A2A)).border(1.dp, if (active) Lr.Accent else Color(0xFF414141), CircleShape)
+        modifier.size(44.dp).clip(CircleShape).background(Lr.CircleButton).border(1.dp, if (active) Lr.Accent else Lr.CircleButtonBorder, CircleShape)
             .clickable(onClick = onClick).semantics { contentDescription = description },
         contentAlignment = Alignment.Center,
     ) { LrIconView(icon, if (active) Lr.Accent else Lr.IconPrimary, size = 20.dp) }

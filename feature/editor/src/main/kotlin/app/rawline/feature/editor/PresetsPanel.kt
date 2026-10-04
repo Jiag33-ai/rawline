@@ -50,9 +50,14 @@ import app.rawline.core.ui.SectionTitle
 fun PresetsPanel(state: EditorState, userPresets: List<Preset>, onSavePreset: (String, EditRecipe) -> Unit, onDeletePreset: (Preset) -> Unit) {
     var selected by remember { mutableStateOf<Preset?>(null) }
     var base by remember { mutableStateOf(EditRecipe()) }
-    var strength by remember { mutableFloatStateOf(100f) }
-    var naming by remember { mutableStateOf(false) }
     var origin by remember { mutableStateOf<EditRecipe?>(null) }
+    var strength by remember { mutableFloatStateOf(100f) }
+    // Undo, redo, reset and snapshots move the edit away from the preset result: forget the preset and its stored origin.
+    androidx.compose.runtime.LaunchedEffect(state.historyIndex) {
+        val p = selected ?: return@LaunchedEffect
+        if (state.recipe != Presets.apply(base, p.recipe, strength / 100f)) { selected = null; origin = null }
+    }
+    var naming by remember { mutableStateOf(false) }
     // The look is always blended onto the edit as it was before any preset was picked, so presets do not stack.
     fun selectPreset(p: Preset) {
         if (selected == null) origin = state.recipe

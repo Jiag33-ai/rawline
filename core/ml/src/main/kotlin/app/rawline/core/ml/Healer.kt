@@ -33,6 +33,10 @@ class Healer(
     private val lama = lazy { TfModel(context, models.file("lama_dilated.tflite"), "lama") }
     val busy = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
 
+    /** Frees the model and sends the overlay to the GPU again after a lost GL context. */
+    fun release() { if (lama.isInitialized()) lama.value.release() }
+    fun resendOverlay() { overlay?.resend() }
+
     private fun ensureOverlay(): HealOverlay {
         overlay?.let { return it }
         return HealOverlay(session, session.sourceWidth, session.sourceHeight).also { overlay = it; session.setOverlayActive(true) }

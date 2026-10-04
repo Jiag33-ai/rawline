@@ -1,5 +1,6 @@
 package app.rawline.core.ui
 
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
@@ -25,6 +26,7 @@ import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
@@ -35,11 +37,9 @@ import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import app.rawline.core.ui.LrTextButton as TextButton
 import androidx.compose.runtime.Composable
@@ -130,6 +130,7 @@ fun RawSlider(
     val currentChange by rememberUpdatedState(onChange)
     val currentCommit by rememberUpdatedState(onCommit)
     val currentText by rememberUpdatedState(shownValue)
+    val currentValue by rememberUpdatedState(value)
     Box(
         modifier.fillMaxWidth().height(LrDim.sliderBlock).semantics { contentDescription = "$label $text$unit" }
             .pointerInput(range) { detectTapGestures(onDoubleTap = { currentChange(default); currentCommit() }) }
@@ -137,13 +138,16 @@ fun RawSlider(
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     val pad = 9.dp.toPx() + 14.dp.toPx()
-                    fun at(x: Float) = range.start + ((x - pad) / (size.width - 2 * pad)).coerceIn(0f, 1f) * (range.endInclusive - range.start)
+                    val span = range.endInclusive - range.start
+                    fun at(x: Float) = range.start + ((x - pad) / (size.width - 2 * pad)).coerceIn(0f, 1f) * span
+                    fun thumbX(v: Float) = pad + ((v - range.start) / span).coerceIn(0f, 1f) * (size.width - 2 * pad)
                     // only a sideways drag moves the slider; a vertical drag is left alone so the panel can scroll
                     val slop = awaitHorizontalTouchSlopOrCancellation(down.id) { change, _ -> change.consume() }
                     if (slop != null) {
-                        currentChange(at(slop.position.x))
+                        // keep the thumb where it is relative to the finger, so grabbing never makes it hop
+                        val grab = thumbX(currentValue) - slop.position.x
                         feedback.show(label, currentText)
-                        horizontalDrag(slop.id) { c -> currentChange(at(c.position.x)); feedback.show(label, currentText); c.consume() }
+                        horizontalDrag(slop.id) { c -> currentChange(at(c.position.x + grab)); feedback.show(label, currentText); c.consume() }
                         feedback.release()
                         currentCommit()
                     }
@@ -174,7 +178,18 @@ fun RawSlider(
         AlertDialog(
             onDismissRequest = { typing = false },
             title = { Text(label) },
-            text = { OutlinedTextField(input, { input = it }, singleLine = true, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Decimal), shape = RoundedCornerShape(4.dp)) },
+            text = {
+                // spec 7.22: 40 dp high, #242424, 1 px #454545 border, 4 dp radius, 12 dp inline padding, 14 sp
+                androidx.compose.foundation.text.BasicTextField(
+                    input, { input = it }, singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = Lr.TextPrimary, fontSize = 14.sp),
+                    cursorBrush = androidx.compose.ui.graphics.SolidColor(Lr.Focus),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth().height(40.dp).clip(RoundedCornerShape(4.dp)).background(Lr.Input)
+                        .border(1.dp, Lr.InputBorder, RoundedCornerShape(4.dp)).padding(horizontal = 12.dp),
+                    decorationBox = { inner -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterStart) { inner() } },
+                )
+            },
             confirmButton = { TextButton(onClick = { input.toFloatOrNull()?.let { onChange(it.coerceIn(range.start, range.endInclusive)); onCommit() }; typing = false }) { Text("Set") } },
             dismissButton = { TextButton(onClick = { typing = false }) { Text("Cancel") } },
         )
@@ -209,7 +224,7 @@ fun LrOutlineButton(label: String, onClick: () -> Unit, modifier: Modifier = Mod
     val pressed by src.collectIsPressedAsState()
     Row(
         modifier.height(if (small) LrDim.smallButton else LrDim.button).clip(RoundedCornerShape(4.dp))
-            .background(if (pressed) Color(0xFF2E2E2E) else Lr.Button)
+            .background(if (pressed) Lr.ControlPressed else Lr.Button)
             .border(1.dp, if (active) Lr.Accent else Lr.FunctionBorder, RoundedCornerShape(4.dp))
             .clickable(interactionSource = src, indication = null, onClick = onClick).padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center,
@@ -242,7 +257,7 @@ fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifi
 @Composable
 fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     Box(
-        modifier.height(LrDim.button).clip(RoundedCornerShape(4.dp)).border(1.dp, Color(0xFF555555), RoundedCornerShape(4.dp)).clickable(enabled = enabled, onClick = onClick).padding(horizontal = 16.dp),
+        modifier.height(LrDim.button).clip(RoundedCornerShape(4.dp)).border(1.dp, Lr.ButtonBorder, RoundedCornerShape(4.dp)).clickable(enabled = enabled, onClick = onClick).padding(horizontal = 16.dp),
         contentAlignment = Alignment.Center,
     ) { Text(text, color = if (enabled) Color(0xFFE9E9E9) else Lr.TextDisabled, style = MaterialTheme.typography.labelLarge) }
 }
@@ -276,7 +291,7 @@ fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit, modi
 fun LrIconButton(icon: LrIcon, description: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, tint: Color = Lr.IconPrimary, size: Dp = 22.dp) {
     val src = remember { MutableInteractionSource() }
     val pressed by src.collectIsPressedAsState()
-    val bg by animateColorAsState(if (pressed) Color(0x17FFFFFF) else Color.Transparent, tween(if (pressed) LrMotion.instant else LrMotion.fast), label = "press")
+    val bg by animateColorAsState(if (pressed) Lr.PressOverlay else Color.Transparent, tween(if (pressed) LrMotion.instant else LrMotion.fast), label = "press")
     Box(
         modifier.size(LrDim.hit).clip(RoundedCornerShape(6.dp)).background(bg).clickable(interactionSource = src, indication = null, enabled = enabled, onClick = onClick).semantics { contentDescription = description },
         contentAlignment = Alignment.Center,
@@ -303,7 +318,7 @@ fun LrOutlinedButton(onClick: () -> Unit, modifier: Modifier = Modifier, enabled
     androidx.compose.runtime.CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides if (enabled) Color(0xFFE9E9E9) else Lr.TextDisabled) {
         androidx.compose.material3.ProvideTextStyle(MaterialTheme.typography.labelLarge) {
             Row(
-                modifier.height(LrDim.button).clip(RoundedCornerShape(4.dp)).border(1.dp, Color(0xFF555555), RoundedCornerShape(4.dp))
+                modifier.height(LrDim.button).clip(RoundedCornerShape(4.dp)).border(1.dp, Lr.ButtonBorder, RoundedCornerShape(4.dp))
                     .clickable(enabled = enabled, onClick = onClick).padding(horizontal = 16.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center, content = content,
             )
@@ -367,7 +382,13 @@ fun LrMenuItem(text: String, onClick: () -> Unit, icon: LrIcon? = null, enabled:
 /** Local spinner: 2 dp stroke, linear. */
 @Composable
 fun LocalLoader(modifier: Modifier = Modifier, size: Dp = 28.dp, color: Color = Lr.TextSecondary) {
-    CircularProgressIndicator(modifier.size(size), color = color, strokeWidth = 2.dp, trackColor = Color.Transparent)
+    val turn by androidx.compose.animation.core.rememberInfiniteTransition(label = "loader").animateFloat(
+        0f, 360f, androidx.compose.animation.core.infiniteRepeatable(tween(700, easing = androidx.compose.animation.core.LinearEasing)), label = "turn",
+    )
+    Canvas(modifier.size(size).semantics { contentDescription = "Loading" }) {
+        val w = 2.dp.toPx()
+        drawArc(color, turn, 270f, false, Offset(w / 2f, w / 2f), Size(this.size.width - w, this.size.height - w), style = Stroke(w, cap = StrokeCap.Round))
+    }
 }
 
 /** Empty state: monochrome icon, 15 sp heading, 13 sp body, at most one compact action. */

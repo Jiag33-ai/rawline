@@ -44,7 +44,7 @@ import kotlinx.coroutines.withContext
 fun EditorHost(photo: Photo, graph: Graph, neighbors: List<Photo>, onExport: (Photo) -> Unit, onExportSettings: (Photo) -> Unit, onSwipe: (Int) -> Unit, onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val denoiser = remember { app.rawline.core.ml.Denoiser(context, graph.modelStore) }
+    val denoiser = remember(photo.id) { app.rawline.core.ml.Denoiser(context, graph.modelStore) }
     val session = remember(photo.id) { EditorSession(context, graph.rawPrefetch, PerfLog::record) { h, a, p -> denoiser.run(h, a, p) } }
     var state by remember(photo.id) { mutableStateOf<EditorState?>(null) }
     var placeholder by remember(photo.id) { mutableStateOf<Bitmap?>(graph.previews.peek(photo.id)?.let { toSoftware(it) }) }
@@ -53,6 +53,7 @@ fun EditorHost(photo: Photo, graph: Graph, neighbors: List<Photo>, onExport: (Ph
     var masking by remember(photo.id) { mutableStateOf<MaskingFeature?>(null) }
     var remove by remember(photo.id) { mutableStateOf<RemoveFeature?>(null) }
     var healer by remember(photo.id) { mutableStateOf<Healer?>(null) }
+    var aiMasks by remember(photo.id) { mutableStateOf<AiMasksImpl?>(null) }
 
     LaunchedEffect(photo.id) {
         if (placeholder == null) placeholder = graph.previews.load(photo)?.let { toSoftware(it) }
@@ -65,14 +66,29 @@ fun EditorHost(photo: Photo, graph: Graph, neighbors: List<Photo>, onExport: (Ph
         }
         graph.catalog.snapshots(photo).forEach { st.snapshots.add(Snapshot(it.id, it.name, runCatching { EditRecipe.fromJson(it.json) }.getOrDefault(EditRecipe()))) }
         state = st
-        masking = MaskingFeature(st, session, graph.maskStore, scope, { edge -> session.renderFrame(edge) }, AiMasksImpl(context, graph.modelStore, session))
+        masking = MaskingFeature(st, session, graph.maskStore, scope, { edge -> session.renderFrame(edge) }, AiMasksImpl(context, graph.modelStore, session).also { aiMasks = it })
         session.load(photo)
         masking?.restore(saved)
-        healer = Healer(context, session, graph.modelStore, graph.patchStore).also { remove = RemoveFeature(st, session, it, scope) }
+        healer = Healer(context, session, graph.modelStore, graph.patchStore).also { remove = RemoveFeature(st, session, it, scope); session.onContextRestored = { it.resendOverlay() } }
         userPresets.clear()
         graph.catalog.presets().forEach { userPresets.add(Preset(it.name, runCatching { EditRecipe.fromJson(it.json) }.getOrDefault(EditRecipe()), false, it.id)) }
     }
-    DisposableEffect(photo.id) { onDispose { session.release() } }
+    DisposableEffect(photo.id) {
+        onDispose { session.release(); denoiser.release(); healer?.release(); aiMasks?.release() }
+    }
+    // Write a pending debounced edit as soon as the app is paused or stopped, so it is not lost if the process dies.
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, photo.id) {
+        val o = androidx.lifecycle.LifecycleEventObserver { _, e ->
+            if (e == androidx.lifecycle.Lifecycle.Event.ON_PAUSE || e == androidx.lifecycle.Lifecycle.Event.ON_STOP) {
+                val job = saveJob
+                val s = state
+                if (s != null && job != null && job.isActive) { job.cancel(); saveJob = graph.appScope.launch { graph.catalog.saveRecipe(photo, s.recipe) } }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(o)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(o) }
+    }
     val committed = state?.let { it.history[it.historyIndex].recipe.detail }
     LaunchedEffect(committed?.aiDenoise, committed?.aiDenoiseAmount) {
         if (committed != null && session.state.value.stage == app.rawline.core.render.Stage.READY) session.reloadSource()
@@ -102,10 +118,10 @@ fun EditorHost(photo: Photo, graph: Graph, neighbors: List<Photo>, onExport: (Ph
         onSnapshot = { name -> scope.launch { val id = graph.catalog.addSnapshot(photo, name, st.recipe); st.addSnapshot(id, name) } },
         onExport = { saveJob?.cancel(); graph.appScope.launch { graph.catalog.saveRecipe(photo, st.recipe); kotlinx.coroutines.withContext(Dispatchers.Main) { onExport(photo) } } },
         onExportSettings = { onExportSettings(photo) },
-        onSwipePhoto = { d -> saveJob?.cancel(); graph.appScope.launch { graph.catalog.saveRecipe(photo, st.recipe) }; onSwipe(d) },
+        onSwipePhoto = { d -> saveJob?.cancel(); scope.launch { graph.catalog.saveRecipe(photo, st.recipe); onSwipe(d) } },
         onBack = { leave() },
     )
-    if (showSaving) Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color(0xB8000000)).clickable(enabled = true, indication = null, interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }) {}, contentAlignment = androidx.compose.ui.Alignment.Center) {
+    if (showSaving) Box(Modifier.fillMaxSize().background(app.rawline.core.ui.Lr.OverlayHeavy).clickable(enabled = true, indication = null, interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }) {}, contentAlignment = androidx.compose.ui.Alignment.Center) {
         androidx.compose.foundation.layout.Column(horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
             app.rawline.core.ui.LocalLoader(size = 32.dp, color = androidx.compose.ui.graphics.Color.White)
             androidx.compose.material3.Text("Saving your edits…", color = androidx.compose.ui.graphics.Color.White, style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 12.dp))

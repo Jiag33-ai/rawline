@@ -50,7 +50,18 @@ object Lr {
     val ToggleOff = Color(0xFF4A4A4A)
     // overlays
     val Overlay = Color(0x8F000000)
+    val OverlayHeavy = Color(0xB8000000)
     val ValuePill = Color(0xF0141414)
+    // named literals that used to sit inline
+    val IconDisabled = Color(0xFF666666)
+    val ControlPressed = Color(0xFF2E2E2E)
+    val ButtonBorder = Color(0xFF555555)
+    val PressOverlay = Color(0x17FFFFFF)
+    val CircleButton = Color(0xFF2A2A2A)
+    val CircleButtonBorder = Color(0xFF414141)
+    val InputBorder = Color(0xFF454545)
+    val ScrollThumb = Color(0xFF717171)
+    val DebugText = Color(0xFF9EE493)
 
     // names used before the specification; they point at the spec values
     val Black = Canvas
@@ -80,7 +91,7 @@ object LrDim {
 
 /** Durations in ms and easings. No springs anywhere. */
 object LrMotion {
-    const val instant = 80; const val fast = 120; const val normal = 180; const val panel = 220; const val page = 320; const val shared = 420
+    const val instant = 80; const val fast = 120; const val normal = 180; const val panel = 220; const val page = 320; const val shared = 420; const val slow = 520
     val standard = CubicBezierEasing(0.2f, 0f, 0f, 1f)
     val enter = CubicBezierEasing(0.16f, 1f, 0.3f, 1f)
     val exit = CubicBezierEasing(0.4f, 0f, 1f, 1f)

@@ -300,23 +300,23 @@ private fun Thumb(p: Photo, thumbs: ThumbStore, selected: Boolean, selecting: Bo
     Box(modifier.background(Lr.Surface2).semantics { contentDescription = p.name + (if (p.rating > 0) ", ${p.rating} stars" else "") + (if (p.edited) ", edited" else "") }) {
         bmp?.let { b ->
             val img = remember(b) { b.asImageBitmap() }
-            Image(img, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            Image(img, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().then(app.rawline.core.ui.LocalSharedPhoto.current(p.id)))
         }
         if (p.rating > 0) Text("★".repeat(p.rating), color = Lr.Star, style = MaterialTheme.typography.labelSmall, modifier = Modifier.align(Alignment.BottomStart).padding(3.dp))
         if (p.flag == 1) Box(Modifier.align(Alignment.TopStart).padding(4.dp)) { LrIconView(LrIcon.FLAG_FILLED, Color.White, size = 14.dp) }
-        if (p.flag == -1) Box(Modifier.align(Alignment.TopStart).padding(4.dp)) { LrIconView(LrIcon.REJECT, Color(0xFFE57373), size = 14.dp) }
+        if (p.flag == -1) Box(Modifier.align(Alignment.TopStart).padding(4.dp)) { LrIconView(LrIcon.REJECT, Lr.Error, size = 14.dp) }
         if (p.label in 1..5) Box(Modifier.align(Alignment.BottomEnd).padding(end = 24.dp, bottom = 7.dp).size(9.dp).background(LabelColors[p.label], CircleShape))
         if (p.kind == Kind.RAW && !selecting) Text("RAW", color = Lr.TextPrimary, style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, lineHeight = 11.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium),
             modifier = Modifier.align(Alignment.TopEnd).padding(3.dp).background(Color(0xB3000000), androidx.compose.foundation.shape.RoundedCornerShape(2.dp)).padding(horizontal = 3.dp, vertical = 1.dp))
         if (p.edited) Box(Modifier.align(Alignment.BottomEnd).padding(4.dp)) { LrIconView(LrIcon.EDIT, Color.White, size = 14.dp) }
         if (selecting) Box(Modifier.align(Alignment.TopEnd).padding(6.dp).size(20.dp).clip(CircleShape).background(if (selected) Lr.Accent else Color(0x66000000))) {
-            if (selected) LrIconView(LrIcon.CHECK, Color.White, size = 20.dp)
+            if (selected) LrIconView(LrIcon.CHECK, Color.White, size = 12.dp)
         }
         if (selected) Box(Modifier.fillMaxSize().border(2.dp, Lr.Accent))
     }
 }
 
-/** Two-finger pinch changes the column count (2 to 6) without blocking one-finger scrolling. */
+/** Two-finger pinch changes the column count (4 to 6) without blocking one-finger scrolling. */
 private fun Modifier.pinchColumns(current: Int, set: (Int) -> Unit): Modifier = pointerInput(current) {
     awaitEachGesture {
         awaitFirstDown(requireUnconsumed = false)
@@ -327,7 +327,7 @@ private fun Modifier.pinchColumns(current: Int, set: (Int) -> Unit): Modifier = 
             if (ev.changes.size >= 2 && ev.changes.all { it.pressed }) {
                 acc *= ev.calculateZoom()
                 ev.changes.forEach { it.consume() }
-                if (acc > 1.3f && cols > 2) { cols--; acc = 1f; set(cols) }
+                if (acc > 1.3f && cols > 4) { cols--; acc = 1f; set(cols) }
                 else if (acc < 0.77f && cols < 6) { cols++; acc = 1f; set(cols) }
             }
         } while (ev.changes.any { it.pressed })

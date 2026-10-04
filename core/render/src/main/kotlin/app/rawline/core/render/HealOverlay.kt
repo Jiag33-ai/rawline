@@ -64,6 +64,9 @@ class HealOverlay(private val session: OverlaySink, srcW: Int, srcH: Int) {
         session.updateOverlay(x0, y0, rw, rh, out)
     }
 
+    /** Sends the whole overlay again (after the GL context was lost). */
+    fun resend() { session.setOverlay(buf.copyOf(), w, h) }
+
     fun clear() { buf.fill(0); session.setOverlay(buf.copyOf(), w, h) }
 }
 

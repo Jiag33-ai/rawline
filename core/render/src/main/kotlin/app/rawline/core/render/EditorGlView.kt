@@ -12,4 +12,10 @@ class EditorGlView(context: Context, val session: EditorSession) : GLSurfaceView
         setRenderer(session.renderer)
         renderMode = RENDERMODE_WHEN_DIRTY
     }
+
+    /** The GL thread stops in super, so the engine is torn down first while that thread can still run it. */
+    override fun onDetachedFromWindow() {
+        session.destroyEngine()
+        super.onDetachedFromWindow()
+    }
 }

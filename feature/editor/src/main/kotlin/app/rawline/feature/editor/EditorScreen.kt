@@ -18,13 +18,13 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.size
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.ui.semantics.contentDescription
@@ -67,6 +67,9 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.shape.CircleShape
@@ -151,6 +154,7 @@ fun EditorScreen(
     val ss by session.state.collectAsState()
     val hist by session.histogram.collectAsState()
     val status by session.status.collectAsState()
+    val outputRev by session.outputRevision.collectAsState()
     val scope = rememberCoroutineScope()
     var tab by remember { mutableStateOf("light") }
     var mode by remember { mutableStateOf(PhotoMode.NONE) }
@@ -179,7 +183,7 @@ fun EditorScreen(
     DisposableEffect(Unit) { onDispose { session.setCropMode(false); session.setBefore(false) } }
 
     // read the recipe so a crop, rotate or flip recomposes with the new output size
-    state.recipe.geometry
+    state.recipe.geometry; outputRev
     val ow = session.outputSize[0].coerceAtLeast(1).toFloat(); val oh = session.outputSize[1].coerceAtLeast(1).toFloat()
     fun clampView(z: Float, x: Float, y: Float): Triple<Float, Float, Float> {
         val zz = z.coerceIn(1f, 16f)
@@ -200,13 +204,14 @@ fun EditorScreen(
 
     val photoArea: @Composable (Modifier) -> Unit = { mod ->
         Box(mod.background(Lr.Black).onSizeChanged { viewW = it.width.toFloat(); viewH = it.height.toFloat() }) {
-            if (ss.stage != Stage.READY && placeholder != null) {
-                Image(placeholder.asImageBitmap(), photo.name, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+            // always composed under the GL surface: it is the shared element that morphs to and from the loupe and library thumbnail
+            if (placeholder != null) {
+                Image(placeholder.asImageBitmap(), photo.name, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize().then(app.rawline.core.ui.LocalSharedPhoto.current(photo.id)))
             }
             AndroidView(factory = { EditorGlView(it, session) }, modifier = Modifier.fillMaxSize())
             if (ss.stage == Stage.LOADING) {
                 Column(Modifier.align(Alignment.BottomCenter).padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    CircularProgressIndicator(Modifier.height(24.dp).width(24.dp), strokeWidth = 2.dp)
+                    app.rawline.core.ui.LocalLoader(size = 24.dp)
                     Text(ss.message, style = MaterialTheme.typography.labelSmall)
                 }
             }
@@ -325,7 +330,7 @@ fun EditorScreen(
             val fit = session.fitRect(viewW, viewH)
             if (isCrop) CropOverlay(state, fit, session.baseAspect())
             tabOverlay(if (open) tab else "", PhotoMapper(session, viewW, viewH, zoom, cx, cy))
-            status?.let { Text(it, color = Color.White, style = MaterialTheme.typography.labelMedium, modifier = Modifier.align(Alignment.TopStart).padding(8.dp).background(Color(0xAA000000), androidx.compose.foundation.shape.RoundedCornerShape(12.dp)).padding(horizontal = 10.dp, vertical = 4.dp)) }
+            status?.let { Text(it, color = Color.White, style = MaterialTheme.typography.labelMedium, modifier = Modifier.align(Alignment.TopStart).padding(8.dp).background(Lr.ValuePill, androidx.compose.foundation.shape.CircleShape).padding(horizontal = 10.dp, vertical = 4.dp)) }
             if (mode != PhotoMode.NONE) {
                 Text(
                     if (mode == PhotoMode.PICK_WB) "Tap something that should be grey" else "Drag up or down on a colour",
@@ -396,12 +401,22 @@ fun EditorScreen(
     val autoLight = { scope.launch { session.baseStats()?.let { st -> val a = AutoTools.autoLight(st)
         state.edit("Auto") { r -> r.copy(adjust = r.adjust.copy(exposure = a.exposure, contrast = a.contrast, highlights = a.highlights, shadows = a.shadows, whites = a.whites, blacks = a.blacks)) } } }; Unit }
     val inEdit = open && tab in sectionIds
-    // A portrait photo would shrink to a sliver above a full-height tray, so there the edit tray floats over the photo, see-through.
-    val overlayTray = inEdit && oh > ow
+    val screenH = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp
+    val trayMax = minOf(270.dp, screenH * 0.34f)
     val tray: @Composable (Float) -> Unit = { alpha ->
         Box(
-            Modifier.fillMaxWidth().background(Lr.Surface2.copy(alpha = alpha)).then(if (inEdit) Modifier.heightIn(max = if (alpha < 1f) 250.dp else 270.dp) else Modifier.height(300.dp)).animateContentSize(tween(LrMotion.panel, easing = LrMotion.standard)),
-        ) { Crossfade(tab, animationSpec = tween(LrMotion.fast + 20), label = "tray") { t -> panelBody(t) } }
+            Modifier.fillMaxWidth().background(Lr.Surface2.copy(alpha = alpha)).then(if (inEdit) Modifier.heightIn(max = trayMax) else Modifier.height(300.dp)).animateContentSize(tween(LrMotion.panel, easing = LrMotion.standard)),
+        ) {
+            // category switch: outgoing 100ms fade with a 4dp shift left, incoming 140ms fade from 4dp right (spec 9.5)
+            val shift = with(androidx.compose.ui.platform.LocalDensity.current) { 4.dp.roundToPx() }
+            androidx.compose.animation.AnimatedContent(
+                tab, label = "tray",
+                transitionSpec = {
+                    (fadeIn(tween(140, easing = LrMotion.enter)) + slideInHorizontally(tween(140, easing = LrMotion.enter)) { shift }) togetherWith
+                        (fadeOut(tween(100)) + slideOutHorizontally(tween(100)) { -shift })
+                },
+            ) { t -> panelBody(t) }
+        }
     }
     var entryGeo by remember { mutableStateOf(state.recipe.geometry) }
     LaunchedEffect(isCrop) { if (isCrop) entryGeo = state.recipe.geometry }
@@ -415,12 +430,13 @@ fun EditorScreen(
         if (open && (tab == id || (t.id == "edit" && tab in sectionIds))) open = false else { tab = id; open = true }
     }
     var aspectLock by remember { mutableStateOf(false) }
+    val dockReserve by androidx.compose.animation.core.animateDpAsState(if (open) 0.dp else LrDim.idleDock + 20.dp, tween(LrMotion.panel, easing = LrMotion.standard), label = "dockReserve")
 
     CompositionLocalProvider(LocalValueFeedback provides feedback) {
     Column(Modifier.fillMaxSize().background(Lr.Canvas).navigationBarsPadding()) {
         Box(Modifier.weight(1f).fillMaxWidth()) {
             // ---- canvas: pure black, contain fit. In idle state it leaves room for the dock. ----
-            photoArea(Modifier.fillMaxSize().statusBarsPadding().padding(bottom = if (open) 0.dp else LrDim.idleDock + 20.dp))
+            photoArea(Modifier.fillMaxSize().statusBarsPadding().padding(bottom = dockReserve))
 
             if (isCrop) {
                 // crop workspace: status pill centre, help right
@@ -452,18 +468,18 @@ fun EditorScreen(
                 }
             }
             if (open && tab == "light" && lightSub == "curve") {
-                Box(Modifier.fillMaxSize().statusBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp), contentAlignment = Alignment.Center) {
-                    CurveGraph(state, AdjustTarget.Global, hist, curveChannel, Modifier.fillMaxWidth().aspectRatio(1f))
+                val d = androidx.compose.ui.platform.LocalDensity.current
+                val fr = session.fitRect(viewW, viewH)
+                Box(Modifier.fillMaxSize().statusBarsPadding()) {
+                    with(d) {
+                        CurveGraph(state, AdjustTarget.Global, hist, curveChannel,
+                            Modifier.offset(fr[0].toDp(), fr[1].toDp()).size(fr[2].toDp(), fr[3].toDp()))
+                    }
                 }
             }
             ValueFeedbackPill(feedback, Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 14.dp))
             if (showHist && !isCrop) Histogram(hist, Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(top = 56.dp, end = 12.dp).width(120.dp).height(54.dp))
 
-            FlatVisibility(
-                overlayTray, Modifier.align(Alignment.BottomCenter),
-                enter = slideInVertically(tween(LrMotion.panel, easing = LrMotion.standard)) { it / 3 } + fadeIn(tween(LrMotion.normal, easing = LrMotion.enter)),
-                exit = slideOutVertically(tween(LrMotion.panel - 20, easing = LrMotion.standard)) { it / 3 } + fadeOut(tween(100)),
-            ) { tray(0.8f) }
             // ---- idle dock ----
             FlatVisibility(
                 !open, Modifier.align(Alignment.BottomCenter).padding(bottom = 8.dp),
@@ -494,8 +510,8 @@ fun EditorScreen(
                 exit = shrinkVertically(tween(LrMotion.panel - 20, easing = LrMotion.standard), shrinkTowards = Alignment.Bottom) + fadeOut(tween(100)),
             ) {
                 Column {
-                    // parameter tray: straight edge, no handle, open controls on the surface (floats over the photo instead for portrait photos)
-                    if (!overlayTray) tray(1f)
+                    // parameter tray: straight edge, no handle, open controls on the surface; the canvas resizes for every photo shape
+                    tray(1f)
                     if (inEdit) {
                         Box(Modifier.fillMaxWidth().height(1.dp).background(Lr.BorderSubtle))
                         CategoryRail(sections, tab, { mode = PhotoMode.NONE; tab = it.id }, { autoLight() })

@@ -37,6 +37,7 @@ import app.rawline.core.ui.ChipButton
 import app.rawline.core.ui.RawSlider
 import app.rawline.core.ui.SectionTitle
 import app.rawline.core.ui.LrTabs
+import app.rawline.core.ui.lrScrollbar
 import kotlin.math.log2
 import kotlin.math.pow
 
@@ -62,7 +63,8 @@ fun AdjSlider(
 
 @Composable
 fun PanelColumn(content: @Composable () -> Unit) {
-    Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 12.dp)) { content() }
+    val scroll = rememberScrollState()
+    Column(Modifier.fillMaxWidth().lrScrollbar(scroll).verticalScroll(scroll).padding(bottom = 12.dp)) { content() }
 }
 
 // ---------------- Light ----------------

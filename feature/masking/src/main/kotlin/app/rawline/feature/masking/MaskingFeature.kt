@@ -110,6 +110,13 @@ class MaskingFeature(
      */
     fun persist(recipe: EditRecipe) {
         scope.launch(Dispatchers.Default) {
+            prune(recipe)
+            // A key freed above may be wanted again (undo of a delete): AI layers come back from the store, brushes are redrawn below.
+            val live = session.layerIndex
+            recipe.masks.flatMap { it.components }.filter { it.type == MaskType.BITMAP && it.layerKey?.startsWith("brush_") != true }.forEach { c ->
+                val key = c.layerKey ?: return@forEach
+                if (key !in live) store.load(key)?.let { (a, w, h) -> upload(key, a, w, h) }
+            }
             recipe.masks.flatMap { it.components }.filter { it.type == MaskType.BITMAP && it.layerKey?.startsWith("brush_") == true }.forEach { c ->
                 val key = c.layerKey ?: return@forEach
                 val hash = c.strokes.hashCode()
@@ -120,6 +127,16 @@ class MaskingFeature(
                 upload(key, l.snapshot(), l.w, l.h)
                 savedHash[key] = hash
             }
+        }
+    }
+
+    /** Gives back the GPU layer slots (there are only a few) of masks that no longer exist: after delete, undo, redo, reset. */
+    private fun prune(recipe: EditRecipe) {
+        val used = recipe.masks.flatMap { it.components }.mapNotNull { it.layerKey }.toSet()
+        session.layerIndex.keys.filter { it !in used }.forEach { k ->
+            session.removeLayer(k)
+            synchronized(brushLayers) { brushLayers.remove(k) }
+            savedHash.remove(k)
         }
     }
 
@@ -268,6 +285,7 @@ class MaskingFeature(
             ChipButton("Duplicate", false, { if (masks.size < P.MAX_MASKS) { val d = MaskFactory.duplicate(m); state.edit("Duplicate mask") { it.copy(masks = it.masks + d) }; restore(state.recipe); select(masks.lastIndex) } })
             ChipButton("Delete", false, {
                 state.edit("Delete mask") { it.copy(masks = it.masks.filterIndexed { i, _ -> i != mi }) }
+                prune(state.recipe)
                 select(-1)
             })
         }
@@ -281,7 +299,7 @@ class MaskingFeature(
                 ChipButton(c.label.ifEmpty { c.type.name }, ui.selectedComp == ci, { ui.selectedComp = ci })
                 MaskOp.entries.forEach { op -> ChipButton(op.name.lowercase().replaceFirstChar { it.uppercase() }, c.op == op, { state.edit("Mask part ${op.name}") { it.withComponent(mi, ci) { cc -> cc.copy(op = op) } } }) }
                 ChipButton("Inv", c.invert, { state.edit("Invert part") { it.withComponent(mi, ci) { cc -> cc.copy(invert = !cc.invert) } } })
-                if (m.components.size > 1) ChipButton("X", false, { state.edit("Remove part") { it.withMask(mi) { mm -> mm.copy(components = mm.components.filterIndexed { i, _ -> i != ci }) } }; ui.selectedComp = 0 })
+                if (m.components.size > 1) ChipButton("X", false, { state.edit("Remove part") { it.withMask(mi) { mm -> mm.copy(components = mm.components.filterIndexed { i, _ -> i != ci }) } }; prune(state.recipe); ui.selectedComp = 0 })
             }
         }
         Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -366,7 +384,7 @@ class MaskingFeature(
                     val p = mapper.toImage(pos.x, pos.y)
                     if (p != null && dragging >= 0) { val f = pf(p); state.live { it.withComponent(mi, ci) { cc -> cc.copy(params = cc.params.toMutableList().also { l -> l[dragging * 2] = f.x; l[dragging * 2 + 1] = f.y }) } } }
                 },
-                onUp = { state.commit("Move gradient") },
+                onUp = { cancelled -> dragging = -1; if (cancelled) state.jump(state.historyIndex) else state.commit("Move gradient") },
             )
             MaskType.RADIAL -> ToolGestures(
                 onDown = { pos ->
@@ -393,7 +411,7 @@ class MaskingFeature(
                         }
                     }
                 },
-                onUp = { state.commit("Move radial") },
+                onUp = { cancelled -> dragging = -1; if (cancelled) state.jump(state.historyIndex) else state.commit("Move radial") },
             )
             MaskType.COLOR -> if (ui.pickingColour) ToolGestures(
                 onDown = { pos ->

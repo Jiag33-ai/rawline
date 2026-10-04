@@ -53,19 +53,19 @@ fun CurveGraph(state: EditorState, target: AdjustTarget, hist: IntArray?, channe
             .pointerInput(channel) {
                 detectTapGestures(
                     onTap = { p ->
-                        val w = size.width.toFloat()
+                        val w = size.width.toFloat(); val h = size.height.toFloat()
                         val pts = pointsOf(target.get(state.recipe).curves, channel).ifEmpty { listOf(CurvePoint(0f, 0f), CurvePoint(1f, 1f)) }
-                        val near = pts.indexOfFirst { hypot(it.x * w - p.x, (1 - it.y) * w - p.y) < 28f }
+                        val near = pts.indexOfFirst { hypot(it.x * w - p.x, (1 - it.y) * h - p.y) < 28f }
                         if (near < 0) {
-                            val x = (p.x / w).coerceIn(0f, 1f); val y = (1 - p.y / w).coerceIn(0f, 1f)
+                            val x = (p.x / w).coerceIn(0f, 1f); val y = (1 - p.y / h).coerceIn(0f, 1f)
                             update { (if (it.isEmpty()) pts else it) + CurvePoint(x, y) }
                             state.commit("Add curve point")
                         }
                     },
                     onDoubleTap = { p ->
-                        val w = size.width.toFloat()
+                        val w = size.width.toFloat(); val h = size.height.toFloat()
                         val pts = pointsOf(target.get(state.recipe).curves, channel)
-                        val near = pts.indexOfFirst { hypot(it.x * w - p.x, (1 - it.y) * w - p.y) < 28f }
+                        val near = pts.indexOfFirst { hypot(it.x * w - p.x, (1 - it.y) * h - p.y) < 28f }
                         if (near >= 0 && pts.size > 2) { update { l -> l.filterIndexed { i, _ -> i != near } }; state.commit("Remove curve point") }
                     },
                 )
@@ -73,42 +73,42 @@ fun CurveGraph(state: EditorState, target: AdjustTarget, hist: IntArray?, channe
             .pointerInput(channel) {
                 detectDragGestures(
                     onDragStart = { p ->
-                        val w = size.width.toFloat()
+                        val w = size.width.toFloat(); val h = size.height.toFloat()
                         val pts = pointsOf(target.get(state.recipe).curves, channel).ifEmpty { listOf(CurvePoint(0f, 0f), CurvePoint(1f, 1f)).also { l -> update { l } } }
-                        dragging = pts.indexOfFirst { hypot(it.x * w - p.x, (1 - it.y) * w - p.y) < 40f }
+                        dragging = pts.indexOfFirst { hypot(it.x * w - p.x, (1 - it.y) * h - p.y) < 40f }
                     },
                     onDragEnd = { dragging = -1; state.commit("Curve") },
                     onDragCancel = { dragging = -1; state.commit("Curve") },
                 ) { change, _ ->
                     if (dragging >= 0) {
-                        val w = size.width.toFloat()
-                        val x = (change.position.x / w).coerceIn(0f, 1f); val y = (1 - change.position.y / w).coerceIn(0f, 1f)
+                        val w = size.width.toFloat(); val h = size.height.toFloat()
+                        val x = (change.position.x / w).coerceIn(0f, 1f); val y = (1 - change.position.y / h).coerceIn(0f, 1f)
                         update { l -> l.mapIndexed { i, pt -> if (i == dragging) CurvePoint(if (pt.x <= 0f || pt.x >= 1f) pt.x else x.coerceIn(0.01f, 0.99f), y) else pt } }
                         change.consume()
                     }
                 }
             },
     ) {
-        val w = size.width
-        for (i in 1..3) { drawLine(Color(0x24FFFFFF), Offset(w * i / 4, 0f), Offset(w * i / 4, w), 1f); drawLine(Color(0x24FFFFFF), Offset(0f, w * i / 4), Offset(w, w * i / 4), 1f) }
-        drawRect(Color(0x33FFFFFF), Offset.Zero, androidx.compose.ui.geometry.Size(w, w), style = Stroke(1f))
+        val w = size.width; val h = size.height
+        for (i in 1..3) { drawLine(Color(0x24FFFFFF), Offset(w * i / 4, 0f), Offset(w * i / 4, h), 1f); drawLine(Color(0x24FFFFFF), Offset(0f, h * i / 4), Offset(w, h * i / 4), 1f) }
+        drawRect(Color(0x33FFFFFF), Offset.Zero, androidx.compose.ui.geometry.Size(w, h), style = Stroke(1f))
         if (hist != null) {
             val mx = (hist.maxOrNull() ?: 1).toFloat().coerceAtLeast(1f)
             for (i in 0 until 256) {
                 val v = (0 until 3).maxOf { hist[it * 256 + i] } / mx
-                drawLine(Color(0x1FFFFFFF), Offset(i / 255f * w, w), Offset(i / 255f * w, w - v * w * 0.5f))
+                drawLine(Color(0x1FFFFFFF), Offset(i / 255f * w, h), Offset(i / 255f * w, h - v * h * 0.5f))
             }
         }
-        drawLine(Color(0x40FFFFFF), Offset(0f, w), Offset(w, 0f), 1f)
+        drawLine(Color(0x40FFFFFF), Offset(0f, h), Offset(w, 0f), 1f)
         val lut = CurveMath.lut(shown)
         val path = Path()
         for (i in 0 until 256) {
-            val x = i / 255f * w; val y = w - lut[i] * w
+            val x = i / 255f * w; val y = h - lut[i] * h
             if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
         }
         drawPath(path, ChannelColors[channel], style = Stroke(1.5.dp.toPx()))
         if (pointsOf(curves, channel).isNotEmpty()) shown.forEachIndexed { i, pt ->
-            val c = Offset(pt.x * w, w - pt.y * w)
+            val c = Offset(pt.x * w, h - pt.y * h)
             drawCircle(if (i == dragging) Color(0xFFF2F2F2) else Color(0xFF1C1C1C), 4.5.dp.toPx(), c)
             drawCircle(Color(0xFFF2F2F2), 4.5.dp.toPx(), c, style = Stroke(1.5.dp.toPx()))
         }

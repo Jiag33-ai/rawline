@@ -16,6 +16,9 @@ import kotlin.math.min
 class Denoiser(private val context: Context, private val store: ModelStore) {
     private val model = lazy { TfModel(context, store.file("nafnet_denoise.tflite"), "denoise") }
 
+    /** Frees the model's interpreter and GPU delegate (only if it was ever started). */
+    fun release() { if (model.isInitialized()) model.value.release() }
+
     suspend fun run(handle: Long, amountPercent: Float, onProgress: (Float) -> Unit): Boolean {
         if (!store.ensure(Models.DENOISE)) return false
         val info = Native.rawInfo(handle)

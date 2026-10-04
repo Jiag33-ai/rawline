@@ -85,7 +85,16 @@ class EditorSession(
     @Volatile private var cy = 0.5f
     @Volatile private var params = FloatArray(P.TOTAL)
     @Volatile private var geometryOutSize = intArrayOf(1, 1)
+    private val _outputRevision = MutableStateFlow(0)
+    /** Bumps whenever the output size changes (crop, rotate, straighten) so the UI recomputes the fit rectangle. */
+    val outputRevision: StateFlow<Int> = _outputRevision
     private val layers = LinkedHashMap<String, Int>()
+    /** Layer bytes kept so a lost GL context can be refilled without the masking code. */
+    private class LayerData(val alpha: ByteArray, val w: Int, val h: Int)
+    private val layerData = HashMap<String, LayerData>()
+    /** Called on the GL thread after a lost context was rebuilt, so the owner of the heal overlay can send it again. */
+    @Volatile var onContextRestored: (() -> Unit)? = null
+    @Volatile private var released = false
     @Volatile private var fullRequested = false
     @Volatile private var generation = 0
 
@@ -143,10 +152,12 @@ class EditorSession(
         val idx = synchronized(layers) {
             layers[key] ?: (0 until P.MAX_LAYERS).firstOrNull { it !in layers.values }?.also { layers[key] = it }
         } ?: return
+        synchronized(layers) { layerData[key] = LayerData(alpha, w, h) }
         post { Native.engineSetLayer(engine, idx, alpha, w, h); rebuild(); requestRender() }
     }
 
-    fun removeLayer(key: String) { synchronized(layers) { layers.remove(key) } }
+    /** Frees the key's slot (there are only [P.MAX_LAYERS]) once no mask refers to it. */
+    fun removeLayer(key: String) { synchronized(layers) { layers.remove(key); layerData.remove(key) } }
 
     override fun updateOverlay(x: Int, y: Int, w: Int, h: Int, rgbaHalf: ShortArray) {
         post { Native.engineUpdateOverlay(engine, x, y, w, h, rgbaHalf); requestRender() }
@@ -355,8 +366,20 @@ class EditorSession(
     }
 
     fun release() {
+        released = true
         scope.cancel()
-        post { if (engine != 0L) { Native.engineDestroy(engine); engine = 0 } }
+        // If the view is already detached its GL thread has stopped and destroyEngine() ran from the detach.
+        if (glView?.isAttachedToWindow == true) destroyEngine()
+        synchronized(pending) { pending.clear() }
+    }
+
+    /** Destroys the engine on the GL thread and waits briefly for it. Must run before the GL thread stops (view detach). */
+    fun destroyEngine() {
+        val v = glView ?: return
+        synchronized(pending) { glReady = false }
+        val done = java.util.concurrent.CountDownLatch(1)
+        v.queueEvent { try { if (engine != 0L) { Native.engineDestroy(engine); engine = 0 } } finally { done.countDown() } }
+        done.await(500, java.util.concurrent.TimeUnit.MILLISECONDS)
     }
 
     // ---- internals ----
@@ -398,9 +421,11 @@ class EditorSession(
         val arr = RenderParams.build(r, orientation, layerIndex, showMask = if (before) -1 else showMask, overlayOn = overlayOn && !before, lens = if (before) null else lens)
         params = arr
         geometryOutSize = Native.engineOutputSize(engine, arr)
+        _outputRevision.value++
     }
 
     private fun onSurfaceCreated() {
+        if (released) return
         synchronized(pending) { glReady = false }
         if (engine != 0L) Native.engineDestroy(engine)
         engine = Native.engineCreate()
@@ -409,7 +434,12 @@ class EditorSession(
         val wasReady = _state.value.stage == Stage.READY
         val queued = synchronized(pending) { glReady = true; ArrayList(pending).also { pending.clear() } }
         queued.forEach { it() }
-        // A recreated context lost its textures: bring the photo back.
+        // A recreated context lost its textures: bring back the layers and heal overlay, then the photo.
+        if (wasReady) {
+            val saved = synchronized(layers) { layers.mapNotNull { (k, i) -> layerData[k]?.let { i to it } } }
+            saved.forEach { (i, d) -> Native.engineSetLayer(engine, i, d.alpha, d.w, d.h) }
+            onContextRestored?.invoke()
+        }
         photo?.let { if (wasReady) load(it) }
     }
 
