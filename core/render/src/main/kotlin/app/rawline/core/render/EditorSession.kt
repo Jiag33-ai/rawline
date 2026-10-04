@@ -414,7 +414,7 @@ class EditorSession(
     }
 
     private fun onDrawFrame() {
-        GLES20.glClearColor(0.165f, 0.165f, 0.165f, 1f)
+        GLES20.glClearColor(0f, 0f, 0f, 1f)
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
         if (engine == 0L || _state.value.stage != Stage.READY) return
         val ow = geometryOutSize[0].toFloat().coerceAtLeast(1f)

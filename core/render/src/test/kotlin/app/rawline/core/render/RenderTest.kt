@@ -133,9 +133,22 @@ class RenderTest {
         assertEquals(null, db.find(null, 20f, 3.5f))
     }
 
+    @Test fun lensNamesWithDifferentPunctuationStillMatch() {
+        val db = lensDb()
+        assertEquals("LUMIX S 70-300/F4.5-5.6", db.find("Lumix S 70-300mm f/4.5-5.6", 100f, 5f)!!.name)
+        assertEquals("Lumix S 50/F1.8", db.find("LUMIX S 50mm F1.8", 50f, 1.8f)!!.name)
+    }
+
+    @Test fun lensCorrectionIsOnByDefault() {
+        assertTrue(EditRecipe().optics.lensCorrection && EditRecipe().optics.removeCa)
+        // a recipe saved before profiles were automatic (no lensv) is read as on
+        val old = org.json.JSONObject(EditRecipe(optics = Optics(lensCorrection = false, removeCa = false)).toJson()).also { it.getJSONObject("optics").remove("lensv") }
+        assertTrue(EditRecipe.fromJson(old.toString()).optics.lensCorrection)
+    }
+
     @Test fun lensParamsReachTheShader() {
         val lens = lensDb().find("LUMIX S 20-60/F3.5-5.6", 20f, 5f)!!
-        val off = RenderParams.build(EditRecipe(), 1, lens = lens)
+        val off = RenderParams.build(EditRecipe(optics = Optics(lensCorrection = false, removeCa = false)), 1, lens = lens)
         assertEquals(0f, off[P.G_LDIST_ON]); assertEquals(0f, off[P.G_LVIG_ON]); assertEquals(0f, off[P.G_LTCA_ON])
         val on = RenderParams.build(EditRecipe(optics = Optics(lensCorrection = true, removeCa = true)), 1, lens = lens)
         assertEquals(1f, on[P.G_LDIST_ON]); assertEquals(1f, on[P.G_LVIG_ON]); assertEquals(1f, on[P.G_LTCA_ON])

@@ -30,8 +30,19 @@ class LensProfiles private constructor(private val lenses: List<Lens>) {
         val e = norm(exifLens)
         val l = lenses.firstOrNull { norm(it.model) == e || norm(it.maker + it.model) == e }
             ?: lenses.firstOrNull { val m = norm(it.model); m.length > 8 && (e.contains(m) || m.contains(e)) }
+            ?: bySignature(exifLens)
             ?: return null
         return LensCorrection(l.model, interpDist(l.dist, focal), interpTca(l.tca, focal), nearestVig(l.vig, focal, aperture))
+    }
+
+    /** "LUMIX S 20-60/F3.5-5.6", "Lumix S 20-60mm f/3.5-5.6" and the like differ in punctuation: match on the numbers and a shared brand word. */
+    private fun numbers(s: String) = Regex("\\d+(?:\\.\\d+)?").findAll(s.replace(Regex("(?i)\\bf\\s*/?\\s*(?=\\d)"), " ")).map { it.value.toFloat() }.toList()
+    private fun words(s: String) = Regex("[a-z]{3,}").findAll(s.lowercase()).map { it.value }.filter { it !in setOf("mm", "dg", "dn", "asph", "art", "lens") }.toSet()
+
+    private fun bySignature(exif: String): Lens? {
+        val n = numbers(exif); if (n.size < 2) return null
+        val w = words(exif)
+        return lenses.firstOrNull { l -> val full = l.maker + " " + l.model; numbers(l.model) == n && (w.isEmpty() || words(full).any { it in w }) }
     }
 
     private fun lerpArr(a: FloatArray, b: FloatArray, t: Float) = FloatArray(a.size) { a[it] + (b[it] - a[it]) * t }

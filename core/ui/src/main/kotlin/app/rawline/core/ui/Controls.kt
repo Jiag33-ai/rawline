@@ -8,6 +8,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitHorizontalTouchSlopOrCancellation
+import androidx.compose.foundation.gestures.horizontalDrag
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.ui.graphics.StrokeCap
@@ -108,18 +110,17 @@ private fun LrTrack(
             .pointerInput(range) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
-                    dragging = true
                     val pad = 12.dp.toPx()
                     fun at(x: Float) = range.start + ((x - pad) / (size.width - 2 * pad)).coerceIn(0f, 1f) * (range.endInclusive - range.start)
-                    currentChange(at(down.position.x))
-                    down.consume()
-                    do {
-                        val ev = awaitPointerEvent()
-                        val c = ev.changes.firstOrNull() ?: break
-                        if (c.pressed) { currentChange(at(c.position.x)); c.consume() }
-                    } while (ev.changes.any { it.pressed })
-                    dragging = false
-                    currentCommit()
+                    // Only a sideways drag moves the slider; a vertical drag is left alone so the panel can scroll.
+                    val slop = awaitHorizontalTouchSlopOrCancellation(down.id) { change, _ -> change.consume() }
+                    if (slop != null) {
+                        dragging = true
+                        currentChange(at(slop.position.x))
+                        horizontalDrag(slop.id) { c -> currentChange(at(c.position.x)); c.consume() }
+                        dragging = false
+                        currentCommit()
+                    }
                 }
             },
     ) {

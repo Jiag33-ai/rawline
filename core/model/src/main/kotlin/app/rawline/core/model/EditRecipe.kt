@@ -47,7 +47,7 @@ data class Effects(
     val grainAmount: Float = 0f, val grainSize: Float = 25f, val grainRoughness: Float = 50f,
 )
 
-data class Optics(val lensCorrection: Boolean = false, val removeCa: Boolean = false, val distortion: Float = 0f, val vignetting: Float = 0f)
+data class Optics(val lensCorrection: Boolean = true, val removeCa: Boolean = true, val distortion: Float = 0f, val vignetting: Float = 0f)
 
 data class Geometry(
     val cropX: Float = 0f, val cropY: Float = 0f, val cropW: Float = 1f, val cropH: Float = 1f,
@@ -168,7 +168,7 @@ object RecipeJson {
             put("grain", r.effects.grainAmount.toDouble()); put("grainSize", r.effects.grainSize.toDouble()); put("grainRough", r.effects.grainRoughness.toDouble())
         })
         put("optics", JSONObject().apply {
-            put("lens", r.optics.lensCorrection); put("ca", r.optics.removeCa)
+            put("lens", r.optics.lensCorrection); put("ca", r.optics.removeCa); put("lensv", 1)
             put("distortion", r.optics.distortion.toDouble()); put("vignetting", r.optics.vignetting.toDouble())
         })
         put("geometry", JSONObject().apply {
@@ -223,7 +223,8 @@ object RecipeJson {
                 e.optDouble("vigFeather", 50.0).toFloat(), e.optDouble("grain", 0.0).toFloat(), e.optDouble("grainSize", 25.0).toFloat(),
                 e.optDouble("grainRough", 50.0).toFloat(),
             ),
-            if (op == null) Optics() else Optics(op.optBoolean("lens"), op.optBoolean("ca"), op.optDouble("distortion", 0.0).toFloat(), op.optDouble("vignetting", 0.0).toFloat()),
+            if (op == null) Optics() else // recipes saved before profiles were automatic (no "lensv") get the new default of on
+                Optics(if (op.has("lensv")) op.optBoolean("lens") else true, if (op.has("lensv")) op.optBoolean("ca") else true, op.optDouble("distortion", 0.0).toFloat(), op.optDouble("vignetting", 0.0).toFloat()),
             if (g == null) Geometry() else Geometry(
                 g.optDouble("x", 0.0).toFloat(), g.optDouble("y", 0.0).toFloat(), g.optDouble("w", 1.0).toFloat(), g.optDouble("h", 1.0).toFloat(),
                 g.optDouble("angle", 0.0).toFloat(), g.optInt("rot", 0), g.optBoolean("flipH"), g.optBoolean("flipV"),
