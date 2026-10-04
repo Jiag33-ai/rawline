@@ -20,23 +20,30 @@ class DeviceScanner(private val context: Context, private val dao: PhotoDao, pri
     /** @return true when the MediaStore listing completed. */
     suspend fun scanDevice(): Boolean {
         val t0 = System.nanoTime()
-        val uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+        val imagesUri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+        // The Files table also lists RAW files that the phone did not classify as images (RW2 often is not), when All files access is on.
+        val filesUri = MediaStore.Files.getContentUri("external")
         val proj = arrayOf(
-            MediaStore.Images.Media._ID, MediaStore.Images.Media.DISPLAY_NAME, MediaStore.Images.Media.SIZE,
-            MediaStore.Images.Media.DATE_MODIFIED, MediaStore.Images.Media.DATE_TAKEN, MediaStore.Images.Media.BUCKET_DISPLAY_NAME,
-            MediaStore.Images.Media.WIDTH, MediaStore.Images.Media.HEIGHT,
+            MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.SIZE,
+            MediaStore.MediaColumns.DATE_MODIFIED, MediaStore.MediaColumns.DATE_TAKEN, MediaStore.MediaColumns.BUCKET_DISPLAY_NAME,
+            MediaStore.MediaColumns.WIDTH, MediaStore.MediaColumns.HEIGHT, MediaStore.Files.FileColumns.MEDIA_TYPE,
         )
+        val exts = listOf("rw2", "dng", "orf", "cr2", "nef", "arw", "raf")
+        val sel = "${MediaStore.Files.FileColumns.MEDIA_TYPE}=${MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE} OR " +
+            exts.joinToString(" OR ") { "${MediaStore.MediaColumns.DISPLAY_NAME} LIKE '%.$it'" }
         val rows = ArrayList<PhotoEntity>()
-        val cursor = runCatching { context.contentResolver.query(uri, proj, null, null, "${MediaStore.Images.Media.DATE_MODIFIED} DESC") }.getOrNull() ?: return false
+        val cursor = runCatching { context.contentResolver.query(filesUri, proj, sel, null, "${MediaStore.MediaColumns.DATE_MODIFIED} DESC") }.getOrNull() ?: return false
         cursor.use { c ->
             while (c.moveToNext()) {
                 val id = c.getLong(0); val name = c.getString(1) ?: continue
-                val kind = FileTypes.kindOf(name) ?: Kind.IMAGE
+                val kind = FileTypes.kindOf(name) ?: if (c.getInt(8) == MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE) Kind.IMAGE else continue
                 val modified = c.getLong(3) * 1000L
                 val taken = c.getLong(4)
                 val bucket = c.getString(5) ?: "Other"
+                // keep the Images uri for images (thumbnails and earlier rows), the Files uri for RAW the phone calls "other"
+                val base = if (c.getInt(8) == MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE) imagesUri else filesUri
                 rows.add(PhotoEntity(
-                    folderUri = "device:$bucket", uri = ContentUris.withAppendedId(uri, id).toString(), name = name, size = c.getLong(2), modified = modified,
+                    folderUri = "device:$bucket", uri = ContentUris.withAppendedId(base, id).toString(), name = name, size = c.getLong(2), modified = modified,
                     isRaw = kind == Kind.RAW, indexed = false, takenAt = if (taken > 0) taken else modified, width = c.getInt(6), height = c.getInt(7),
                 ))
             }

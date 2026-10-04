@@ -87,6 +87,7 @@ class LibraryActions(
     val onImportFiles: () -> Unit,
     val onAddFolder: () -> Unit,
     val onRequestPermission: () -> Unit,
+    val onRequestAllFiles: () -> Unit,
     val hasCopied: Boolean,
 )
 
@@ -103,6 +104,7 @@ fun LibraryScreen(
     sources: List<SourceItem>,
     selectedSource: String,
     permissionGranted: Boolean,
+    allFilesGranted: Boolean,
     actions: LibraryActions,
 ) {
     var columns by remember { mutableIntStateOf(5) }
@@ -163,6 +165,12 @@ fun LibraryScreen(
         }
         if (showFilters && !selecting) FilterBar(filter, cameras, actions.onFilter)
 
+        if (!allFilesGranted && permissionGranted && !selecting) {
+            Row(Modifier.fillMaxWidth().background(Lr.Panel).clickable { actions.onRequestAllFiles() }.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("RAW files such as RW2 are hidden by Android until you allow all files access.", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                Text("Allow", color = Lr.Accent, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(start = 12.dp))
+            }
+        }
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when {
                 !permissionGranted && selectedSource.startsWith("device:") && photos.isEmpty() -> PermissionPrompt(actions.onRequestPermission, actions.onImportFiles)

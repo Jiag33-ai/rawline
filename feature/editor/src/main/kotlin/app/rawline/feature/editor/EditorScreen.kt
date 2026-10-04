@@ -163,6 +163,12 @@ fun EditorScreen(
         return Triple(zz, x.coerceIn(visW / 2, 1 - visW / 2), y.coerceIn(visH / 2, 1 - visH / 2))
     }
 
+    val tabNow by androidx.compose.runtime.rememberUpdatedState(tab)
+    val modeNow by androidx.compose.runtime.rememberUpdatedState(mode)
+    val zoomNow by androidx.compose.runtime.rememberUpdatedState(zoom)
+    val gesturesNow by androidx.compose.runtime.rememberUpdatedState(toolGestures)
+    fun swipeAllowed() = modeNow == PhotoMode.NONE && zoomNow <= 1.01f && tabNow != "geometry" && gesturesNow(tabNow, PhotoMapper(session, viewW, viewH)) == null
+
     val photoArea: @Composable (Modifier) -> Unit = { mod ->
         Box(mod.background(Lr.Black).onSizeChanged { viewW = it.width.toFloat(); viewH = it.height.toFloat() }) {
             if (ss.stage != Stage.READY && placeholder != null) {
@@ -198,6 +204,7 @@ fun EditorScreen(
                                     }
                                 },
                                 onTap = { p ->
+                                    if (mode == PhotoMode.NONE && tab != "geometry" && open && toolGestures(tab, PhotoMapper(session, viewW, viewH)) == null) open = false
                                     if (mode == PhotoMode.PICK_WB) {
                                         val m = session.mapPoint(p.x, p.y, viewW, viewH) ?: return@detectTapGestures
                                         scope.launch {
@@ -210,6 +217,21 @@ fun EditorScreen(
                                     }
                                 },
                             )
+                        }
+                        // One finger swipe sideways = next / previous photo. Watches the raw events first and never consumes them,
+                        // so nothing else on the photo can swallow it.
+                        .pointerInput(Unit) {
+                            awaitEachGesture {
+                                awaitFirstDown(requireUnconsumed = false, pass = androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                                var dx = 0f; var dy = 0f; var multi = false
+                                do {
+                                    val ev = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                                    if (ev.changes.size >= 2) multi = true
+                                    ev.changes.firstOrNull()?.let { dx += it.position.x - it.previousPosition.x; dy += it.position.y - it.previousPosition.y }
+                                } while (ev.changes.any { it.pressed })
+                                val far = kotlin.math.abs(dx) > 90.dp.toPx() && kotlin.math.abs(dx) > 1.6f * kotlin.math.abs(dy)
+                                if (far && !multi && swipeAllowed()) onSwipePhoto(if (dx < 0) 1 else -1)
+                            }
                         }
                         .pointerInput(ow, oh, mode) {
                             awaitEachGesture {
@@ -261,8 +283,6 @@ fun EditorScreen(
                                     }
                                 } while (ev.changes.any { it.pressed })
                                 if (toolClaimed) tool?.onUp(false)
-                                else if (!multiSeen && mode == PhotoMode.NONE && tool == null && zoom <= 1.01f && tab != "geometry" &&
-                                    kotlin.math.abs(swipeDx) > 160f && kotlin.math.abs(swipeDx) > 2.2f * kotlin.math.abs(swipeDy)) onSwipePhoto(if (swipeDx < 0) 1 else -1)
                                 if (mode == PhotoMode.TARGET_MIXER) state.commit("Colour mixer target")
                             }
                         },

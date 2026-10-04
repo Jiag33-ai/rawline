@@ -58,9 +58,11 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
     val message = MutableStateFlow<String?>(null)
     val recentFolders = MutableStateFlow(graph.prefs.getStringSet("folders", emptySet())!!.toList())
     val permissionGranted = MutableStateFlow(hasMediaPermission())
+    /** All files access lets the list include RAW files (RW2) that the phone does not classify as images. */
+    val allFilesGranted = MutableStateFlow(hasAllFiles())
 
     /** Key of the shown source: "device:*" (all device photos), "device:<album>", "imported" or a folder uri. */
-    val source = MutableStateFlow(graph.prefs.getString("source", null) ?: "device:Camera")
+    val source = MutableStateFlow(graph.prefs.getString("source", null) ?: "device:*")
 
     val sources: StateFlow<List<SourceItem>> = graph.db.photos().sources().map { rows ->
         val counts = rows.associate { it.source to it.n }
@@ -98,13 +100,22 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
         // First run: no saved choice. Show the camera roll (falls back to everything on the phone if there is no "Camera" album).
         viewModelScope.launch {
             if (graph.prefs.getString("source", null) == null) {
-                sources.first { it.isNotEmpty() }.let { s -> if (s.none { it.key == "device:Camera" }) source.value = "device:*" }
+                sources.first { it.isNotEmpty() }; source.value = "device:*"
             }
         }
         if (permissionGranted.value) startDeviceWatch()
         graph.prefs.getString("folder", null)?.let { rescanFolder(Uri.parse(it)) }
         viewModelScope.launch { graph.indexer.indexPendingLike("imported") }
     }
+
+    private fun hasAllFiles() = android.os.Build.VERSION.SDK_INT < 30 || android.os.Environment.isExternalStorageManager()
+
+    fun onResume() {
+        val now = hasAllFiles()
+        if (now != allFilesGranted.value) { allFilesGranted.value = now; if (permissionGranted.value) rescanDevice() }
+    }
+
+    fun allFilesIntent() = Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:${app.packageName}"))
 
     private fun hasMediaPermission(): Boolean {
         val perm = if (android.os.Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_IMAGES else Manifest.permission.READ_EXTERNAL_STORAGE

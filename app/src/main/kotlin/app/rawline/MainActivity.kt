@@ -26,6 +26,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -86,6 +87,7 @@ private fun RawlineRoot() {
     val sources by vm.sources.collectAsStateWithLifecycle()
     val source by vm.source.collectAsStateWithLifecycle()
     val permission by vm.permissionGranted.collectAsStateWithLifecycle()
+    val allFiles by vm.allFilesGranted.collectAsStateWithLifecycle()
     val overlay by vm.overlay.collectAsStateWithLifecycle()
     val xmp by vm.xmp.collectAsStateWithLifecycle()
     val copied by vm.copied.collectAsStateWithLifecycle()
@@ -102,6 +104,12 @@ private fun RawlineRoot() {
     val backupOut = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri -> if (uri != null) vm.backupTo(uri) }
     val backupIn = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.restoreFrom(uri) }
 
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val o = androidx.lifecycle.LifecycleEventObserver { _, e -> if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) vm.onResume() }
+        lifecycleOwner.lifecycle.addObserver(o)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(o) }
+    }
     // The camera roll shows up by itself: ask for access on first launch.
     LaunchedEffect(Unit) {
         if (!permission) mediaPermission.launch(vm.mediaPermission)
@@ -131,7 +139,7 @@ private fun RawlineRoot() {
                     Box(Modifier.statusBarsPadding()) {
                         LibraryScreen(
                             photos = photos, allCount = allPhotos.size, cameras = cameras, filter = filter, thumbs = graph.thumbs, progress = progress,
-                            sources = sources, selectedSource = source, permissionGranted = permission,
+                            sources = sources, selectedSource = source, permissionGranted = permission, allFilesGranted = allFiles,
                             actions = LibraryActions(
                                 onOpen = { p ->
                                     val i = photos.indexOfFirst { it.id == p.id }
@@ -144,9 +152,10 @@ private fun RawlineRoot() {
                                 onCopyEdits = { vm.copyEdits(it) }, onPasteEdits = { l, s -> vm.pasteEdits(l, s) }, onSyncEdits = { f, t -> vm.syncEdits(f, t) },
                                 onExport = { vm.enqueueExport(it) },
                                 onSelectSource = { vm.selectSource(it) },
-                                onImportFiles = { filePicker.launch(arrayOf("image/*", "application/octet-stream")) },
+                                onImportFiles = { filePicker.launch(arrayOf("*/*")) },
                                 onAddFolder = { folderPicker.launch(null) },
                                 onRequestPermission = { mediaPermission.launch(vm.mediaPermission) },
+                                onRequestAllFiles = { runCatching { context.startActivity(vm.allFilesIntent()) }.onFailure { context.startActivity(android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)) } },
                                 hasCopied = copied != null,
                             ),
                         )
