@@ -54,7 +54,9 @@ class RemoveFeature(
     private var source by mutableStateOf<Pair<Float, Float>?>(null)
     private val live = mutableStateListOf<Offset>()
 
-    val tab = EditorTab("remove", "Remove") { Content() }
+    /** Leaving the Remove tool drops the unfinished stroke and the set-source mode. */
+    fun onExit() { settingSource = false; live.clear() }
+    val tab = EditorTab("remove", "Remove", onExit = ::onExit) { Content() }
 
     private fun pf(p: Offset): Offset {
         val g = state.recipe.geometry

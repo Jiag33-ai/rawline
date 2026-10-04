@@ -128,6 +128,7 @@ fun LibraryScreen(
         if (gridState.isScrollInProgress) FrameMonitor.start() else FrameMonitor.stop("grid")
     }
     val selecting = selected.value.isNotEmpty()
+    androidx.activity.compose.BackHandler(enabled = selecting) { selected.value = emptySet() }
     val sel = photos.filter { it.id in selected.value }
     val current = sources.firstOrNull { it.key == selectedSource }
 

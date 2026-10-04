@@ -188,10 +188,21 @@ class MaskingFeature(
 
     // ---------------- Tab ----------------
 
-    val tab = EditorTab("masking", "Masking") { Content() }
+    /** Leaving the masking tool (switch, close, Back) removes the tint and drops pick modes so nothing leaks into the next tool. */
+    fun onExit() {
+        session.setShowMask(-1)
+        if (ui.pickingObject) ui.busy = null
+        ui.pickingObject = false; ui.pickingColour = false
+    }
+    val tab = EditorTab("masking", "Masking", onExit = ::onExit) { Content() }
 
     @Composable
     private fun Content() {
+        // entering, and any change to the mask list (undo, redo, reset, delete): keep the selection and the tint pointing at a mask that exists
+        LaunchedEffect(masks.size) {
+            if (ui.selected !in masks.indices) { ui.selected = if (masks.isEmpty()) -1 else masks.lastIndex; ui.selectedComp = 0 }
+            session.setShowMask(if (ui.showOverlay && ui.selected in masks.indices) ui.selected else -1)
+        }
         LaunchedEffect(Unit) {
             ensureReference()
             if (ai != null) scope.launch(Dispatchers.Default) { runCatching { ai.prepare() } }

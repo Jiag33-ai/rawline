@@ -92,6 +92,7 @@ fun LoupeScreen(
     var info by remember { mutableStateOf(false) }
     var chrome by remember { mutableStateOf(true) }
     var stars by remember { mutableStateOf(false) }
+    androidx.activity.compose.BackHandler(enabled = info || stars) { info = false; stars = false }
     LaunchedEffect(pager.currentPage) {
         kotlinx.coroutines.delay(1500)
         photos.getOrNull(pager.currentPage)?.let(onDwell)

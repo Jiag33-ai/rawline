@@ -101,7 +101,12 @@ import kotlin.math.abs
 /** Everything a tab needs. Tabs provided by other features (masking, remove) receive this too. */
 class TabContext(val state: EditorState, val hist: IntArray?)
 
-class EditorTab(val id: String, val title: String, val content: @Composable (TabContext) -> Unit)
+class EditorTab(
+    val id: String, val title: String,
+    /** Runs when the tab stops being the active one (tool switch, panel close, Back, leaving the editor): clear tool-local state and previews. */
+    val onExit: () -> Unit = {},
+    val content: @Composable (TabContext) -> Unit,
+)
 
 /** Converts between view pixels and normalised positions in the shown (output) image. */
 class PhotoMapper(private val session: app.rawline.core.render.EditorSession, val viewW: Float, val viewH: Float, val zoom: Float = 1f, val cx: Float = .5f, val cy: Float = .5f) {
@@ -159,9 +164,16 @@ fun EditorScreen(
     var showHist by remember { mutableStateOf(false) }
     // idle = floating dock over the canvas; open = focused editing (tray, category rail, master rail) or the crop workspace
     var open by remember { mutableStateOf(false) }
+    var lightSub by remember { mutableStateOf("basic") }
     val isCrop = open && tab == "geometry"
     val feedback = remember { ValueFeedback() }
 
+    LaunchedEffect(open, tab) { mode = PhotoMode.NONE }
+    val extraTabsNow by androidx.compose.runtime.rememberUpdatedState(extraTabs)
+    DisposableEffect(open, tab) {
+        val id = if (open) tab else ""
+        onDispose { extraTabsNow.firstOrNull { it.id == id }?.onExit?.invoke() }
+    }
     LaunchedEffect(isCrop) { session.setCropMode(isCrop); if (isCrop) { zoom = 1f; cx = .5f; cy = .5f; session.setView(1f, .5f, .5f) } }
     LaunchedEffect(Unit) { session.requestHistogram() }
     DisposableEffect(Unit) { onDispose { session.setCropMode(false); session.setBefore(false) } }
@@ -182,7 +194,9 @@ fun EditorScreen(
     val modeNow by androidx.compose.runtime.rememberUpdatedState(mode)
     val zoomNow by androidx.compose.runtime.rememberUpdatedState(zoom)
     val gesturesNow by androidx.compose.runtime.rememberUpdatedState(toolGestures)
-    fun swipeAllowed() = modeNow == PhotoMode.NONE && zoomNow <= 1.01f && !(openNow && tabNow == "geometry") && gesturesNow(tabNow, PhotoMapper(session, viewW, viewH)) == null
+    // a tool owns the photo only while its panel is open; closing the panel hands the photo back (tool gestures, handles, hold-for-before, swipe)
+    fun activeTabNow() = if (open) tab else ""
+    fun swipeAllowed() = modeNow == PhotoMode.NONE && zoomNow <= 1.01f && !(openNow && tabNow == "geometry") && gesturesNow(activeTabNow(), PhotoMapper(session, viewW, viewH)) == null
 
     val photoArea: @Composable (Modifier) -> Unit = { mod ->
         Box(mod.background(Lr.Black).onSizeChanged { viewW = it.width.toFloat(); viewH = it.height.toFloat() }) {
@@ -212,14 +226,14 @@ fun EditorScreen(
                                     session.setView(zoom, cx, cy)
                                 },
                                 onPress = {
-                                    if (mode == PhotoMode.NONE && toolGestures(tab, PhotoMapper(session, viewW, viewH)) == null) {
+                                    if (mode == PhotoMode.NONE && toolGestures(activeTabNow(), PhotoMapper(session, viewW, viewH)) == null) {
                                         // hold for a moment to see the original; a quick tap or pinch start does nothing
                                         val released = kotlinx.coroutines.withTimeoutOrNull(350) { tryAwaitRelease() }
-                                        if (released == null) { session.setBefore(true); tryAwaitRelease(); session.setBefore(false) }
+                                        if (released == null) { session.setBefore(true); try { tryAwaitRelease() } finally { session.setBefore(false) } }
                                     }
                                 },
                                 onTap = { p ->
-                                    if (mode == PhotoMode.NONE && !isCrop && open && toolGestures(tab, PhotoMapper(session, viewW, viewH)) == null) open = false
+                                    if (mode == PhotoMode.NONE && !isCrop && open && !(tab == "light" && lightSub == "curve") && toolGestures(activeTabNow(), PhotoMapper(session, viewW, viewH)) == null) open = false
                                     if (mode == PhotoMode.PICK_WB) {
                                         val m = session.mapPoint(p.x, p.y, viewW, viewH) ?: return@detectTapGestures
                                         scope.launch {
@@ -252,9 +266,10 @@ fun EditorScreen(
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false)
                                 var targetBand = -1
-                                val tool = toolGestures(tab, PhotoMapper(session, viewW, viewH))
+                                val tool = toolGestures(activeTabNow(), PhotoMapper(session, viewW, viewH))
                                 var toolClaimed = tool != null && mode == PhotoMode.NONE && tool.onDown(down.position)
                                 if (toolClaimed) down.consume()
+                                try {
                                 var swipeDx = 0f; var swipeDy = 0f; var multiSeen = false
                                 if (mode == PhotoMode.TARGET_MIXER) {
                                     val m = session.mapPoint(down.position.x, down.position.y, viewW, viewH)
@@ -297,15 +312,19 @@ fun EditorScreen(
                                         ev.changes.forEach { if (it.positionChanged()) it.consume() }
                                     }
                                 } while (ev.changes.any { it.pressed })
-                                if (toolClaimed) tool?.onUp(false)
+                                if (toolClaimed) { toolClaimed = false; tool?.onUp(false) }
                                 if (mode == PhotoMode.TARGET_MIXER) state.commit("Colour mixer target")
+                                } finally {
+                                    // the gesture coroutine can be cancelled mid-drag (mode or size change): release the tool
+                                    if (toolClaimed) tool?.onUp(true)
+                                }
                             }
                         },
                 )
             }
             val fit = session.fitRect(viewW, viewH)
             if (isCrop) CropOverlay(state, fit, session.baseAspect())
-            tabOverlay(tab, PhotoMapper(session, viewW, viewH, zoom, cx, cy))
+            tabOverlay(if (open) tab else "", PhotoMapper(session, viewW, viewH, zoom, cx, cy))
             status?.let { Text(it, color = Color.White, style = MaterialTheme.typography.labelMedium, modifier = Modifier.align(Alignment.TopStart).padding(8.dp).background(Color(0xAA000000), androidx.compose.foundation.shape.RoundedCornerShape(12.dp)).padding(horizontal = 10.dp, vertical = 4.dp)) }
             if (mode != PhotoMode.NONE) {
                 Text(
@@ -325,7 +344,6 @@ fun EditorScreen(
     }
     val sections = listOf(Tool("light", "Light", LrIcon.LIGHT), Tool("colour", "Color", LrIcon.COLOR), Tool("effects", "Effects", LrIcon.EFFECTS), Tool("detail", "Detail", LrIcon.DETAIL), Tool("optics", "Optics", LrIcon.OPTICS))
     val sectionIds = sections.map { it.id }
-    var lightSub by remember { mutableStateOf("basic") }
     var curveChannel by remember { mutableIntStateOf(0) }
     var colourSub by remember { mutableStateOf("basic") }
     var menu by remember { mutableStateOf(false) }
