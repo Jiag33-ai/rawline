@@ -25,6 +25,7 @@ object Native {
     external fun engineInit(h: Long): String?          // null on success, else the GL error text
     external fun engineDestroy(h: Long)
     external fun engineSetSource(h: Long, raw: Long): Boolean
+    external fun engineSetBaseCurve(h: Long, enabled: Boolean)
     external fun engineSetLayer(h: Long, index: Int, alpha: ByteArray, w: Int, hgt: Int)
     external fun engineSetOverlay(h: Long, rgbaHalf: ShortArray?, w: Int, hgt: Int)
     external fun engineOutputSize(h: Long, params: FloatArray): IntArray

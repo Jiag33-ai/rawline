@@ -107,6 +107,14 @@ JNIEXPORT void JNICALL Java_app_rawline_core_nativelib_Native_engineUpdateOverla
     env->ReleaseShortArrayElements(data, p, JNI_ABORT);
 }
 
+// Raw files get the camera-look base tone curve; finished pictures (JPEG, HEIC, PNG) must not, or they come out far too bright.
+JNIEXPORT void JNICALL Java_app_rawline_core_nativelib_Native_engineSetBaseCurve(JNIEnv *, jobject, jlong h, jboolean enabled) {
+    if (enabled) { reinterpret_cast<Engine *>(h)->setBaseCurve(kBaseCurve); return; }
+    float identity[256];
+    for (int i = 0; i < 256; i++) identity[i] = i / 255.0f;
+    reinterpret_cast<Engine *>(h)->setBaseCurve(identity);
+}
+
 JNIEXPORT jfloatArray JNICALL Java_app_rawline_core_nativelib_Native_baseCurve(JNIEnv *env, jobject) {
     jfloatArray a = env->NewFloatArray(256);
     env->SetFloatArrayRegion(a, 0, 256, kBaseCurve);

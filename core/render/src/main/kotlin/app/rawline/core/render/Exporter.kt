@@ -80,6 +80,7 @@ class Exporter(
                 kotlinx.coroutines.runBlocking { denoise.invoke(handle, recipe.detail.aiDenoiseAmount) { onProgress(it * 0.4f) } }
             }
             if (!Native.engineSetSource(engine, handle)) throw IllegalStateException("GPU upload failed")
+            Native.engineSetBaseCurve(engine, photo.kind == Kind.RAW)
             handle = 0L
 
             // Mask layers (brush and AI) and heal overlay
@@ -102,7 +103,7 @@ class Exporter(
                 overlayOn = true
             }
             val lens = LensProfiles.get(context).find(photo.lens, photo.focal.toFloat(), photo.aperture.toFloat())
-            val params = RenderParams.build(recipe, info[2], layers, overlayOn = overlayOn, lens = lens)
+            val params = RenderParams.build(recipe, info[2], layers, overlayOn = overlayOn, lens = lens, useBaseline = photo.kind == Kind.RAW)
             params[P.G_DETAIL] += outputSharpening(s)
             val size = Native.engineOutputSize(engine, params)
             var tw = size[0]; var th = size[1]

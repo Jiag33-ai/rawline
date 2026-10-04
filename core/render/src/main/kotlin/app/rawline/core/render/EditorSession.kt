@@ -95,6 +95,8 @@ class EditorSession(
     /** Called on the GL thread after a lost context was rebuilt, so the owner of the heal overlay can send it again. */
     @Volatile var onContextRestored: (() -> Unit)? = null
     @Volatile private var released = false
+    /** A finished picture (JPEG, HEIC, PNG) already has its tone curve baked in, so the raw base curve and baseline look must not be applied. */
+    @Volatile private var finishedPicture = false
     @Volatile private var fullRequested = false
     @Volatile private var generation = 0
 
@@ -104,6 +106,7 @@ class EditorSession(
 
     fun load(p: Photo) {
         photo = p
+        finishedPicture = p.kind != Kind.RAW
         lens = LensProfiles.get(context).find(p.lens, p.focal.toFloat(), p.aperture.toFloat())
         generation++
         fullRequested = false
@@ -123,7 +126,7 @@ class EditorSession(
                 post {
                     if (gen != generation || engine == 0L) { Native.freeRaw(handle); return@post }
                     val u0 = System.nanoTime()
-                    val ok = Native.engineSetSource(engine, handle)
+                    val ok = Native.engineSetSource(engine, handle).also { Native.engineSetBaseCurve(engine, !finishedPicture) }
                     val upMs = (System.nanoTime() - u0) / 1_000_000
                     onTiming("edit_upload_ms", upMs)
                     if (!ok) { _state.value = SessionState(Stage.ERROR, "GPU upload failed"); return@post }
@@ -177,7 +180,7 @@ class EditorSession(
     suspend fun renderSource(x: Float, y: Float, w: Float, h: Float, pw: Int, ph: Int): android.graphics.Bitmap? {
         val d = CompletableDeferred<android.graphics.Bitmap?>()
         post {
-            val arr = RenderParams.build(EditRecipe(), 1, emptyMap(), overlayOn = false)
+            val arr = RenderParams.build(EditRecipe(), 1, emptyMap(), overlayOn = false, useBaseline = !finishedPicture)
             val buf = ByteArray(pw * ph * 4)
             if (!Native.engineRenderRegion(engine, arr, pw, ph, x, y, w, h, buf)) { d.complete(null); return@post }
             val px = IntArray(pw * ph) { i -> (0xFF shl 24) or ((buf[i * 4].toInt() and 0xFF) shl 16) or ((buf[i * 4 + 1].toInt() and 0xFF) shl 8) or (buf[i * 4 + 2].toInt() and 0xFF) }
@@ -207,7 +210,7 @@ class EditorSession(
             maybeDenoise(handle)
             post {
                 if (gen != generation || engine == 0L) { Native.freeRaw(handle); return@post }
-                Native.engineSetSource(engine, handle)
+                Native.engineSetSource(engine, handle).also { Native.engineSetBaseCurve(engine, !finishedPicture) }
                 rebuild()
                 _state.value = _state.value.copy(usingFull = true, outW = geometryOutSize[0], outH = geometryOutSize[1])
                 requestRender()
@@ -221,7 +224,7 @@ class EditorSession(
     suspend fun baseStats(): ImageStats? {
         val d = CompletableDeferred<ImageStats?>()
         post {
-            val arr = RenderParams.build(EditRecipe(geometry = recipe.geometry.copy(cropX = 0f, cropY = 0f, cropW = 1f, cropH = 1f, angle = 0f)), orientation, emptyMap())
+            val arr = RenderParams.build(EditRecipe(geometry = recipe.geometry.copy(cropX = 0f, cropY = 0f, cropW = 1f, cropH = 1f, angle = 0f)), orientation, emptyMap(), useBaseline = !finishedPicture)
             val w = 160
             val ow = Native.engineOutputSize(engine, arr)
             val h = (w * ow[1].toFloat() / ow[0]).toInt().coerceIn(16, 400)
@@ -268,7 +271,7 @@ class EditorSession(
         val d = CompletableDeferred<android.graphics.Bitmap?>()
         post {
             val g = recipe.geometry.copy(cropX = 0f, cropY = 0f, cropW = 1f, cropH = 1f, keystoneV = recipe.geometry.keystoneV, keystoneH = recipe.geometry.keystoneH)
-            val arr = RenderParams.build(EditRecipe(geometry = g), orientation, emptyMap())
+            val arr = RenderParams.build(EditRecipe(geometry = g), orientation, emptyMap(), useBaseline = !finishedPicture)
             val ow = Native.engineOutputSize(engine, arr)
             val s = maxEdge.toFloat() / maxOf(ow[0], ow[1])
             val w = (ow[0] * s).toInt().coerceAtLeast(8); val h = (ow[1] * s).toInt().coerceAtLeast(8)
@@ -357,7 +360,7 @@ class EditorSession(
                 if (!d.aiDenoise) { _status.value = null }
                 post {
                     if (gen != generation || engine == 0L) { Native.freeRaw(handle); return@post }
-                    Native.engineSetSource(engine, handle)
+                    Native.engineSetSource(engine, handle).also { Native.engineSetBaseCurve(engine, !finishedPicture) }
                     srcW = info[0]; srcH = info[1]
                     rebuild(); requestRender()
                 }
@@ -418,10 +421,10 @@ class EditorSession(
         if (engine == 0L) return
         var r = if (before) EditRecipe() else recipe
         if (cropMode && !before) r = r.copy(geometry = r.geometry.copy(cropX = 0f, cropY = 0f, cropW = 1f, cropH = 1f))
-        val arr = RenderParams.build(r, orientation, layerIndex, showMask = if (before) -1 else showMask, overlayOn = overlayOn && !before, lens = if (before) null else lens)
+        val arr = RenderParams.build(r, orientation, layerIndex, showMask = if (before) -1 else showMask, overlayOn = overlayOn && !before, lens = if (before) null else lens, useBaseline = !finishedPicture)
         params = arr
-        geometryOutSize = Native.engineOutputSize(engine, arr)
-        _outputRevision.value++
+        val size = Native.engineOutputSize(engine, arr)
+        if (!size.contentEquals(geometryOutSize)) { geometryOutSize = size; _outputRevision.value++ }
     }
 
     private fun onSurfaceCreated() {
