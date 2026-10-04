@@ -13,11 +13,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
+import app.rawline.core.ui.LrButton as Button
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
+import app.rawline.core.ui.LrSwitch as Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import app.rawline.core.ui.LrTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -126,13 +126,10 @@ fun DetailPanel(state: EditorState, onAiDenoiseChanged: (Boolean) -> Unit = {}) 
                 }
                 "noise" -> {
                     DetailSlider(state, "Luminance", 0f..100f, 0f, { it.nrLuminance }, { d, v -> d.copy(nrLuminance = v) })
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Denoise with on-device AI", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                        Switch(state.recipe.detail.aiDenoise, { on ->
-                            state.edit(if (on) "AI denoise on" else "AI denoise off") { it.copy(detail = it.detail.copy(aiDenoise = on)) }
-                            onAiDenoiseChanged(on)
-                        })
-                    }
+                    app.rawline.core.ui.ToggleRow("Denoise with on-device AI", state.recipe.detail.aiDenoise, { on ->
+                        state.edit(if (on) "AI denoise on" else "AI denoise off") { it.copy(detail = it.detail.copy(aiDenoise = on)) }
+                        onAiDenoiseChanged(on)
+                    })
                     if (state.recipe.detail.aiDenoise)
                         DetailSlider(state, "AI amount", 0f..100f, 50f, { it.aiDenoiseAmount }, { d, v -> d.copy(aiDenoiseAmount = v) })
                 }
@@ -158,14 +155,8 @@ fun OpticsPanel(state: EditorState, lensName: String?, photoLens: String?) = Pan
         if (lensName != null) "Profile found: $lensName" else if (photoLens.isNullOrBlank()) "No lens name in this photo, so no profile can be chosen." else "No profile for \"$photoLens\" in the lens database.",
         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
     )
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-        Text("Fix distortion and vignetting", modifier = Modifier.weight(1f))
-        Switch(o.lensCorrection, { on -> state.edit(if (on) "Lens profile on" else "Lens profile off") { it.copy(optics = it.optics.copy(lensCorrection = on)) } }, enabled = lensName != null)
-    }
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-        Text("Remove chromatic aberration", modifier = Modifier.weight(1f))
-        Switch(o.removeCa, { on -> state.edit(if (on) "Remove CA on" else "Remove CA off") { it.copy(optics = it.optics.copy(removeCa = on)) } }, enabled = lensName != null)
-    }
+    app.rawline.core.ui.ToggleRow("Fix distortion and vignetting", o.lensCorrection, { on -> state.edit(if (on) "Lens profile on" else "Lens profile off") { it.copy(optics = it.optics.copy(lensCorrection = on)) } }, enabled = lensName != null)
+    app.rawline.core.ui.ToggleRow("Remove chromatic aberration", o.removeCa, { on -> state.edit(if (on) "Remove CA on" else "Remove CA off") { it.copy(optics = it.optics.copy(removeCa = on)) } }, enabled = lensName != null)
     SectionTitle("Manual")
     OpticSlider(state, "Distortion", -100f..100f, { it.distortion }, { o2, v -> o2.copy(distortion = v) })
     OpticSlider(state, "Vignetting", -100f..100f, { it.vignetting }, { o2, v -> o2.copy(vignetting = v) })
@@ -211,8 +202,8 @@ fun ColourBasicsPanel(state: EditorState, target: AdjustTarget, onAutoWb: (() ->
             }
         }
     }
-    AdjSlider(state, target, "Temperature", -100f..100f, { it.temp }, { a, v -> a.copy(temp = v) }, trackColors = listOf(Color(0xFF3B7DDD), Color(0xFFDDDDDD), Color(0xFFE8A33D)), format = { "${(tempToKelvin(it) / 10).toInt() * 10} K" })
-    AdjSlider(state, target, "Tint", -100f..100f, { it.tint }, { a, v -> a.copy(tint = v) }, trackColors = listOf(Color(0xFF3DB06B), Color(0xFFDDDDDD), Color(0xFFC95CC9)))
+    AdjSlider(state, target, "Temperature", -100f..100f, { it.temp }, { a, v -> a.copy(temp = v) }, trackColors = listOf(Color(0xFF3C53CE), Color(0xFF74799E), Color(0xFFA5A19B), Color(0xFFAFAA58), Color(0xFFC4BE3F)), format = { "${(tempToKelvin(it) / 10).toInt() * 10} K" })
+    AdjSlider(state, target, "Tint", -100f..100f, { it.tint }, { a, v -> a.copy(tint = v) }, trackColors = listOf(Color(0xFF4F9B63), Color(0xFFA5A19B), Color(0xFFA25EA2)))
     AdjSlider(state, target, "Vibrance", -100f..100f, { it.vibrance }, { a, v -> a.copy(vibrance = v) })
     AdjSlider(state, target, "Saturation", -100f..100f, { it.saturation }, { a, v -> a.copy(saturation = v) })
 }

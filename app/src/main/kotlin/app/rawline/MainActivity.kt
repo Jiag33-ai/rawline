@@ -27,6 +27,14 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import app.rawline.core.ui.LrDim
+import app.rawline.core.ui.LrMotion
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.border
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -67,7 +75,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        setContent { RawlineTheme { Surface(color = Lr.Black) { RawlineRoot() } } }
+        setContent { RawlineTheme { Surface(color = Lr.Canvas) { RawlineRoot() } } }
     }
 }
 
@@ -93,6 +101,8 @@ private fun RawlineRoot() {
     val copied by vm.copied.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
     val jobs by graph.db.exports().observe().collectAsStateWithLifecycle(emptyList())
+    var toast by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(toast) { if (toast != null) { kotlinx.coroutines.delay(2500); toast = null } }
     val nav = rememberNavController()
     val route by nav.currentBackStackEntryAsState()
     var exportSettingsFor by remember { mutableStateOf<Pair<Boolean, Photo?>?>(null) }
@@ -116,7 +126,7 @@ private fun RawlineRoot() {
         if (android.os.Build.VERSION.SDK_INT >= 33) notifPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
     }
     LaunchedEffect(message) {
-        message?.let { if (it.isNotEmpty() && nav.currentDestination?.route != "settings") { Toast.makeText(context, it, Toast.LENGTH_SHORT).show(); vm.message.value = null } }
+        message?.let { if (it.isNotEmpty() && nav.currentDestination?.route != "settings") { toast = it; vm.message.value = null } }
     }
 
     fun openEditor(from: Photo, delta: Int) {
@@ -128,12 +138,30 @@ private fun RawlineRoot() {
     val currentRoute = route?.destination?.route
     Column(Modifier.fillMaxSize()) {
         Box(Modifier.weight(1f)) {
+            ToastHost(toast, Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp))
+            // Library to editor and back is a horizontal move (320 ms, no bounce); the tabs and photo to photo swipes do not slide.
+            val slide = tween<androidx.compose.ui.unit.IntOffset>(LrMotion.page, easing = LrMotion.standard)
+            fun androidx.navigation.NavBackStackEntry.top() = destination.route in TopLevel
             NavHost(
                 nav, startDestination = "photos",
-                enterTransition = { androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(220)) + androidx.compose.animation.scaleIn(androidx.compose.animation.core.tween(220), initialScale = 0.97f) },
-                exitTransition = { androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(140)) },
-                popEnterTransition = { androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(200)) },
-                popExitTransition = { androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(140)) + androidx.compose.animation.scaleOut(androidx.compose.animation.core.tween(160), targetScale = 0.97f) },
+                enterTransition = {
+                    if (initialState.destination.route == targetState.destination.route) androidx.compose.animation.EnterTransition.None
+                    else if (initialState.top() && targetState.top()) androidx.compose.animation.fadeIn(tween(LrMotion.fast))
+                    else androidx.compose.animation.slideInHorizontally(slide) { it }
+                },
+                exitTransition = {
+                    if (initialState.destination.route == targetState.destination.route) androidx.compose.animation.ExitTransition.None
+                    else if (initialState.top() && targetState.top()) androidx.compose.animation.fadeOut(tween(LrMotion.instant))
+                    else androidx.compose.animation.slideOutHorizontally(slide) { -it * 8 / 100 }
+                },
+                popEnterTransition = {
+                    if (initialState.top() && targetState.top()) androidx.compose.animation.fadeIn(tween(LrMotion.fast))
+                    else androidx.compose.animation.slideInHorizontally(slide) { -it * 8 / 100 }
+                },
+                popExitTransition = {
+                    if (initialState.top() && targetState.top()) androidx.compose.animation.fadeOut(tween(LrMotion.instant))
+                    else androidx.compose.animation.slideOutHorizontally(slide) { it }
+                },
             ) {
                 composable("photos") {
                     Box(Modifier.statusBarsPadding()) {
@@ -209,7 +237,7 @@ private fun RawlineRoot() {
                                 val v = "Rawline ${BuildConfig.VERSION_NAME} build ${BuildConfig.BUILD_NUMBER} (${BuildConfig.BUILD_DATE})"
                                 val text = PerfLog.report(context, v, "Photos in this source: ${allPhotos.size}")
                                 (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Rawline report", text))
-                                Toast.makeText(context, "Report copied", Toast.LENGTH_SHORT).show()
+                                toast = "Report copied"
                             },
                             lastCrash = remember { CrashStore.last(context) },
                             xmpOn = xmp, onXmpChange = vm::setXmp,
@@ -222,7 +250,7 @@ private fun RawlineRoot() {
             }
         }
         if (currentRoute in TopLevel) {
-            Row(Modifier.fillMaxWidth().background(Lr.Background).navigationBarsPadding().height(60.dp)) {
+            Row(Modifier.fillMaxWidth().background(Lr.Surface1).navigationBarsPadding().height(LrDim.bottomNav)) {
                 NavItem(LrIcon.PHOTOS, "Photos", currentRoute == "photos", 0, Modifier.weight(1f)) { nav.navigate("photos") { popUpTo("photos") { inclusive = false }; launchSingleTop = true } }
                 NavItem(LrIcon.QUEUE, "Queue", currentRoute == "queue", jobs.count { it.status == 0 || it.status == 1 }, Modifier.weight(1f)) { nav.navigate("queue") { popUpTo("photos"); launchSingleTop = true } }
                 NavItem(LrIcon.SETTINGS, "Settings", currentRoute == "settings", 0, Modifier.weight(1f)) { nav.navigate("settings") { popUpTo("photos"); launchSingleTop = true } }
@@ -234,11 +262,27 @@ private fun RawlineRoot() {
 
 @Composable
 private fun NavItem(icon: LrIcon, label: String, selected: Boolean, badge: Int, modifier: Modifier, onClick: () -> Unit) {
+    val col = if (selected) Lr.Accent else Color(0xFFBDBDBD)
     Column(modifier.fillMaxSize().clickable(onClick = onClick).semantics { contentDescription = label }, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center) {
         Box {
-            LrIconView(icon, if (selected) Lr.Accent else Lr.TextDim, size = 26.dp)
-            if (badge > 0) Box(Modifier.align(Alignment.TopEnd).background(Lr.Accent, CircleShape).padding(horizontal = 5.dp)) { Text("$badge", style = MaterialTheme.typography.labelSmall, color = Color.White) }
+            LrIconView(icon, col, size = 22.dp)
+            if (badge > 0) Box(Modifier.align(Alignment.TopEnd).padding(start = 14.dp).background(Lr.Accent, CircleShape).padding(horizontal = 4.dp)) { Text("$badge", style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, lineHeight = 11.sp), color = Color.White) }
         }
-        Text(label, style = MaterialTheme.typography.labelSmall, color = if (selected) Lr.Accent else Lr.TextDim)
+        Text(label, style = MaterialTheme.typography.labelMedium, color = col)
+    }
+}
+
+/** Quiet toast above the navigation: #292929, 6 dp, 13 sp, 160 ms in and 120 ms out. */
+@Composable
+private fun ToastHost(text: String?, modifier: Modifier) {
+    androidx.compose.animation.AnimatedVisibility(
+        text != null, modifier,
+        enter = androidx.compose.animation.fadeIn(tween(160)) + androidx.compose.animation.slideInVertically(tween(160)) { 6 },
+        exit = androidx.compose.animation.fadeOut(tween(120)),
+    ) {
+        val shown = remember(text) { text ?: "" }
+        Box(Modifier.widthIn(max = 320.dp).defaultMinSize(minHeight = 36.dp).background(Color(0xFF292929), RoundedCornerShape(6.dp)).border(1.dp, Lr.BorderSubtle, RoundedCornerShape(6.dp)).padding(horizontal = 12.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
+            Text(shown, style = MaterialTheme.typography.bodySmall, color = Lr.TextPrimary)
+        }
     }
 }

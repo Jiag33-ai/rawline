@@ -16,7 +16,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import app.rawline.core.ui.LrTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,10 +42,10 @@ fun QueueScreen(
 ) {
     val active = jobs.count { it.status == 0 || it.status == 1 }
     Column(Modifier.fillMaxSize().background(Lr.Black)) {
-        Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().height(app.rawline.core.ui.LrDim.libraryHeader).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("Export queue", style = MaterialTheme.typography.titleLarge)
-                Text(if (active > 0) "$active waiting or running" else "Nothing waiting", style = MaterialTheme.typography.bodySmall, color = Lr.TextDim)
+                Text("Export queue", style = MaterialTheme.typography.titleMedium)
+                Text(if (active > 0) "$active waiting or running" else "Nothing waiting", style = MaterialTheme.typography.labelSmall, color = Lr.TextMuted)
             }
             TextButton(onClick = onSettings) { Text("Settings", color = Lr.Accent) }
         }
@@ -55,27 +55,24 @@ fun QueueScreen(
         }
         if (jobs.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
-                    LrIconView(LrIcon.QUEUE, Lr.TrackOff, size = 56.dp)
-                    Text("Photos you export wait here and are saved one by one in the background.", color = Lr.TextDim, modifier = Modifier.padding(top = 12.dp))
-                }
+                app.rawline.core.ui.EmptyState(LrIcon.QUEUE, "Nothing in the queue", "Photos you export wait here and are saved one by one in the background.")
             }
         } else LazyColumn(Modifier.fillMaxSize()) {
             items(jobs, key = { it.id }) { j ->
-                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     val (icon, tint) = when (j.status) {
                         1 -> LrIcon.REFRESH to Lr.Accent
-                        2 -> LrIcon.CHECK to Color(0xFF66BB6A)
-                        3 -> LrIcon.ERROR to Color(0xFFE57373)
+                        2 -> LrIcon.CHECK to Lr.Success
+                        3 -> LrIcon.ERROR to Lr.Error
                         4 -> LrIcon.CLOSE to Lr.TextDim
                         else -> LrIcon.PAUSE to Lr.TextDim
                     }
                     LrIconView(icon, tint, size = 24.dp)
                     Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                        Text(j.photoName, style = MaterialTheme.typography.bodyLarge, maxLines = 1)
+                        Text(j.photoName, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
                         val line = when (j.status) { 0 -> "Waiting"; 1 -> "Saving ${(j.progress * 100).toInt()}%"; 2 -> "Saved"; 3 -> j.message ?: "Failed"; else -> "Cancelled" }
-                        Text(line, style = MaterialTheme.typography.bodySmall, color = if (j.status == 3) Color(0xFFE57373) else Lr.TextDim)
-                        if (j.status == 1) LinearProgressIndicator(progress = { j.progress.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp), color = Lr.Accent)
+                        Text(line, style = MaterialTheme.typography.bodySmall, color = if (j.status == 3) Lr.Error else Lr.TextMuted)
+                        if (j.status == 1) LinearProgressIndicator(progress = { j.progress.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp), color = Lr.Accent, trackColor = Lr.SurfaceSelected, gapSize = 0.dp, drawStopIndicator = {})
                     }
                     when (j.status) {
                         0 -> TextButton(onClick = { onCancel(j) }) { Text("Cancel", color = Lr.TextDim) }

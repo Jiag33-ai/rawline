@@ -22,3 +22,11 @@
 - Edits, ratings, snapshots, presets are keyed by `name|size|modified`, so they survive re-indexing and a restore from backup on a new install.
 - Tags: the sandbox git proxy rejects tag pushes, so milestone tags are not pushed.
 - Release signing: a committed sideload keystore (not secret; personal app) signs every build so updates install over the top. Actions secrets, if set, take precedence.
+
+## UI: locked specification (docs/UI_SPEC.md)
+- The whole interface follows docs/UI_SPEC.md: black canvas, #1C1C1C surfaces, one blue accent (#437EE4), 0 to 6 dp radii, Roboto, short direct motion, no springs.
+- Tokens live in core/ui (LrTheme.kt: Lr, LrSpace, LrRadius, LrDim, LrMotion). Material buttons, switches and checkboxes are replaced by drop-in Lr versions (import aliases), so no Material look leaks through.
+- Editor shell: black canvas on top; idle state is a floating 66 dp dock; opening a tool turns it into a fixed stack (parameter tray, category rail, compact master rail). The tray takes layout space, so the photo is refitted rather than covered. Tap the photo or Back to return to the dock.
+- Crop is its own workspace (status pill, ruler, circular utilities, Aspect | Geometry tray, X / check bar). X restores the crop from when it was opened.
+- Tone curve is drawn over the photo; the tray holds Done, channel selectors and the parametric sliders.
+- Known gaps against the spec: the canvas refit when a panel opens is a snap (no FLIP animation, because resizing the GL surface every frame is too costly); no tablet or desktop recomposition; no shared-element return to the library thumbnail.

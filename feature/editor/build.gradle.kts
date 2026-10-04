@@ -23,6 +23,7 @@ dependencies {
     implementation(project(":core:cache"))
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.activity.compose)
     testImplementation(libs.junit)
     testImplementation(libs.json)
 }

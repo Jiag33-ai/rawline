@@ -27,6 +27,13 @@ import app.rawline.feature.editor.EditorTab
 import app.rawline.feature.editor.Preset
 import app.rawline.feature.editor.Snapshot
 import kotlinx.coroutines.Dispatchers
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.Modifier
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -72,7 +79,11 @@ fun EditorHost(photo: Photo, graph: Graph, neighbors: List<Photo>, onExport: (Ph
     }
 
     val st = state ?: return
-    androidx.activity.compose.BackHandler { saveJob?.cancel(); graph.appScope.launch { graph.catalog.saveRecipe(photo, st.recipe) }; onBack() }
+    // Leaving the editor waits for the edit to be written; a dimmed canvas with a spinner shows only if that takes noticeable time.
+    var saving by remember { mutableStateOf(false) }
+    val showSaving by androidx.compose.runtime.produceState(false, saving) { if (saving) { delay(150); value = true } else value = false }
+    val leave = { if (!saving) { saving = true; saveJob?.cancel(); scope.launch { graph.catalog.saveRecipe(photo, st.recipe); onBack() } }; Unit }
+    androidx.activity.compose.BackHandler { leave() }
     val mk = masking ?: return
     val rm = remove ?: return
     val ss by session.state.collectAsState()
@@ -80,6 +91,7 @@ fun EditorHost(photo: Photo, graph: Graph, neighbors: List<Photo>, onExport: (Ph
     // Once this photo is on screen, decode its neighbours quietly so swiping to them opens fast.
     LaunchedEffect(ss.stage, neighbors) { if (ss.stage == app.rawline.core.render.Stage.READY) neighbors.forEach { graph.rawPrefetch.prefetch(it) } }
     LaunchedEffect(st.recipe.heals, ss.stage) { if (ss.stage == app.rawline.core.render.Stage.READY) healer?.sync(st.recipe.heals) }
+    Box(Modifier.fillMaxSize()) {
     EditorScreen(
         photo = photo, state = st, placeholder = placeholder, extraTabs = listOf(mk.tab, rm.tab),
         tabOverlay = { id, mapper -> with(mk) { Overlay(id, mapper) }; with(rm) { Overlay(id, mapper) } },
@@ -91,8 +103,15 @@ fun EditorHost(photo: Photo, graph: Graph, neighbors: List<Photo>, onExport: (Ph
         onExport = { saveJob?.cancel(); graph.appScope.launch { graph.catalog.saveRecipe(photo, st.recipe); kotlinx.coroutines.withContext(Dispatchers.Main) { onExport(photo) } } },
         onExportSettings = { onExportSettings(photo) },
         onSwipePhoto = { d -> saveJob?.cancel(); graph.appScope.launch { graph.catalog.saveRecipe(photo, st.recipe) }; onSwipe(d) },
-        onBack = { saveJob?.cancel(); graph.appScope.launch { graph.catalog.saveRecipe(photo, st.recipe) }; onBack() },
+        onBack = { leave() },
     )
+    if (showSaving) Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color(0xB8000000)).clickable(enabled = true, indication = null, interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }) {}, contentAlignment = androidx.compose.ui.Alignment.Center) {
+        androidx.compose.foundation.layout.Column(horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
+            app.rawline.core.ui.LocalLoader(size = 32.dp, color = androidx.compose.ui.graphics.Color.White)
+            androidx.compose.material3.Text("Saving your edits…", color = androidx.compose.ui.graphics.Color.White, style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 12.dp))
+        }
+    }
+    }
 }
 
 private fun toSoftware(b: Bitmap): Bitmap = if (b.config == Bitmap.Config.HARDWARE) b.copy(Bitmap.Config.ARGB_8888, false) else b

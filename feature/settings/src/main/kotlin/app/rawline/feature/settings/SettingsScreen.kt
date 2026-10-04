@@ -11,11 +11,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
+import app.rawline.core.ui.LrButton as Button
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
+import app.rawline.core.ui.LrSwitch as Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import app.rawline.core.ui.LrTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier

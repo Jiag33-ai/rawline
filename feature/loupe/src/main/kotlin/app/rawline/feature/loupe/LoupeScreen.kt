@@ -10,6 +10,10 @@ import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.border
+import app.rawline.core.ui.LrDim
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -34,7 +38,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import app.rawline.core.ui.LrTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -93,7 +97,7 @@ fun LoupeScreen(
         photos.getOrNull(pager.currentPage)?.let(onDwell)
     }
     val p = photos.getOrNull(pager.currentPage)
-    Box(Modifier.fillMaxSize().background(Color.Black).pointerInput(Unit) {
+    Box(Modifier.fillMaxSize().background(Lr.Canvas).pointerInput(Unit) {
         // Swipe up opens the info panel, swipe down closes it
         var total = 0f
         detectVerticalDragGestures(
@@ -105,10 +109,10 @@ fun LoupeScreen(
             LoupePage(photos[page], previews, thumbs, isCurrent = page == pager.currentPage, onTap = { chrome = !chrome; stars = false })
         }
         if (chrome && p != null) {
-            Row(Modifier.align(Alignment.TopStart).fillMaxWidth().background(Color(0x66000000)).safeDrawingPadding().padding(horizontal = 4.dp).height(52.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(48.dp).clickable(onClick = onBack), contentAlignment = Alignment.Center) { LrIconView(LrIcon.BACK, Color.White) }
+            Row(Modifier.align(Alignment.TopStart).fillMaxWidth().statusBarsPadding().height(52.dp).padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                app.rawline.core.ui.LrIconButton(LrIcon.BACK, "Back", onBack)
                 Column(Modifier.weight(1f)) {
-                    Text(p.name, color = Color.White, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                    Text(p.name, color = Lr.TextPrimary, style = MaterialTheme.typography.bodySmall, maxLines = 1)
                     Text("${pager.currentPage + 1} of ${photos.size}", color = Lr.TextDim, style = MaterialTheme.typography.labelSmall)
                 }
                 if (showOverlay) {
@@ -119,22 +123,22 @@ fun LoupeScreen(
             }
         }
         if (chrome && p != null) {
-            Column(Modifier.align(Alignment.BottomStart).fillMaxWidth().background(Color(0x99000000)).safeDrawingPadding()) {
+            Column(Modifier.align(Alignment.BottomStart).fillMaxWidth().background(Lr.Surface1).navigationBarsPadding()) {
                 if (stars) Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                    for (i in 1..5) Box(Modifier.size(52.dp).clickable { onRate(p, if (p.rating == i) 0 else i) }, contentAlignment = Alignment.Center) {
-                        LrIconView(if (i <= p.rating) LrIcon.STAR_FILLED else LrIcon.STAR, Color.White, size = 30.dp)
+                    for (i in 1..5) Box(Modifier.size(44.dp).clickable { onRate(p, if (p.rating == i) 0 else i) }, contentAlignment = Alignment.Center) {
+                        LrIconView(if (i <= p.rating) LrIcon.STAR_FILLED else LrIcon.STAR, Lr.IconPrimary, size = 24.dp)
                     }
                 }
-                Text(exifLine(p), color = Lr.TextDim, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp))
-                Row(Modifier.fillMaxWidth().height(56.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+                Text(exifLine(p), color = Lr.TextMuted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp))
+                Row(Modifier.fillMaxWidth().height(LrDim.confirmBar), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
                     BarIcon(LrIcon.INFO, "Info", info) { info = !info }
                     BarIcon(if (p.flag == 1) LrIcon.FLAG_FILLED else LrIcon.FLAG, "Pick", p.flag == 1) { onFlag(p, if (p.flag == 1) 0 else 1) }
                     BarIcon(if (p.rating > 0) LrIcon.STAR_FILLED else LrIcon.STAR, "Rating", stars) { stars = !stars }
                     BarIcon(LrIcon.REJECT, "Reject", p.flag == -1) { onFlag(p, if (p.flag == -1) 0 else -1) }
                     BarIcon(LrIcon.SHARE, "Add to export queue", false) { onExport(p) }
-                    Box(Modifier.height(40.dp).clip(RoundedCornerShape(20.dp)).background(Lr.Accent).clickable { onEdit(p) }.padding(horizontal = 20.dp), contentAlignment = Alignment.Center) {
+                    Box(Modifier.height(40.dp).clip(RoundedCornerShape(4.dp)).background(Lr.Accent).clickable { onEdit(p) }.padding(horizontal = 16.dp), contentAlignment = Alignment.Center) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            LrIconView(LrIcon.EDIT, Color.White, size = 20.dp)
+                            LrIconView(LrIcon.EDIT, Color.White, size = 18.dp)
                             Text("  Edit", color = Color.White, style = MaterialTheme.typography.labelLarge)
                         }
                     }
@@ -147,8 +151,8 @@ fun LoupeScreen(
 
 @Composable
 private fun BarIcon(icon: LrIcon, description: String, active: Boolean, onClick: () -> Unit) {
-    Box(Modifier.size(48.dp).clickable(onClick = onClick).semantics { contentDescription = description }, contentAlignment = Alignment.Center) {
-        LrIconView(icon, if (active) Lr.Accent else Color.White, size = 26.dp)
+    Box(Modifier.size(44.dp).clickable(onClick = onClick).semantics { contentDescription = description }, contentAlignment = Alignment.Center) {
+        LrIconView(icon, if (active) Lr.Accent else Lr.IconPrimary, size = 22.dp)
     }
 }
 
@@ -219,7 +223,7 @@ private fun LoupePage(p: Photo, previews: PreviewCache, thumbs: ThumbStore, isCu
 @Composable
 private fun InfoSheet(p: Photo, preview: android.graphics.Bitmap?, modifier: Modifier) {
     val hist = remember(preview) { preview?.let { histogram(it) } }
-    Column(modifier.padding(24.dp).background(Color(0xE61E1E1E), androidx.compose.foundation.shape.RoundedCornerShape(12.dp)).padding(16.dp)) {
+    Column(modifier.padding(24.dp).background(Lr.Modal, androidx.compose.foundation.shape.RoundedCornerShape(6.dp)).border(1.dp, Lr.BorderSubtle, androidx.compose.foundation.shape.RoundedCornerShape(6.dp)).padding(16.dp)) {
         Text(p.name, color = Color.White, style = MaterialTheme.typography.titleMedium)
         Text("${p.width} x ${p.height} px   ${p.size / 1024 / 1024} MB", color = Color(0xFFB8B8B8), style = MaterialTheme.typography.bodySmall)
         p.camera?.let { Text(it, color = Color.White, style = MaterialTheme.typography.bodyMedium) }

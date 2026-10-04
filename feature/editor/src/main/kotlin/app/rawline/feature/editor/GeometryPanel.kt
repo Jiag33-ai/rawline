@@ -23,6 +23,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.Box
+import app.rawline.core.ui.LrIcon
+import app.rawline.core.ui.LrOutlineButton
 import app.rawline.core.model.Geometry
 import app.rawline.core.ui.ChipButton
 import app.rawline.core.ui.LrTabs
@@ -34,39 +37,40 @@ import kotlin.math.hypot
 /** Aspect presets as width / height. null = free, 0 = original. */
 private val Aspects = listOf(
     "Original" to 0f, "Free" to -1f, "1:1" to 1f, "4:5" to 0.8f, "5:4" to 1.25f, "3:2" to 1.5f, "2:3" to 2f / 3f, "16:9" to 16f / 9f, "9:16" to 9f / 16f, "3:1" to 3f,
+    "10:16" to 10f / 16f, "8.5:11" to 8.5f / 11f, "5:7" to 5f / 7f, "3:4" to 0.75f, "1:2" to 0.5f,
 )
 
+/** Crop options tray: Aspect | Geometry, open on the tray surface. */
 @Composable
 fun GeometryPanel(state: EditorState, imageAspect: Float, onAutoLevel: (() -> Unit)?, onAutoPerspective: (() -> Unit)?) {
     val g = state.recipe.geometry
     var sub by remember { mutableStateOf("aspect") }
+    var ratios by remember { mutableStateOf(false) }
     fun upd(label: String, f: (Geometry) -> Geometry) = state.edit(label) { it.copy(geometry = f(it.geometry)) }
+    fun pick(name: String) { val a = Aspects.firstOrNull { it.first.equals(name, true) }?.second ?: -1f; upd("Crop $name") { gg -> gg.copy(aspect = name).let { fitAspect(it, a, imageAspect) } } }
     Column {
         LrTabs(listOf("aspect" to "Aspect", "geometry" to "Geometry"), sub, { sub = it })
-        PanelColumn {
-            if (sub == "aspect") {
-                Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Aspects.forEach { (name, a) ->
-                        ChipButton(name, g.aspect.equals(name, ignoreCase = true), {
-                            upd("Crop $name") { gg -> gg.copy(aspect = name).let { fitAspect(it, a, imageAspect) } }
-                        })
-                    }
-                    ChipButton("Reset crop", false, { upd("Reset crop") { it.copy(cropX = 0f, cropY = 0f, cropW = 1f, cropH = 1f, aspect = "original") } })
+        if (sub == "aspect") {
+            Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                AspectOptionTile(LrIcon.ORIGINAL, "Original", g.aspect.equals("original", true), { pick("Original") })
+                AspectOptionTile(LrIcon.FREE_CROP, "Free", g.aspect.equals("free", true), { pick("Free") })
+                Box {
+                    AspectOptionTile(LrIcon.RATIOS, "Ratios", g.aspect in listOf("10:16", "9:16", "8.5:11", "5:7", "4:5", "3:4", "2:3", "1:2", "1:1"), { ratios = true })
+                    RatioPopover(ratios, { ratios = false }, g.aspect, { pick(it) })
                 }
-                Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ChipButton("Rotate left", false, { upd("Rotate left") { it.copy(rotate90 = (it.rotate90 + 3) % 4) } })
-                    ChipButton("Rotate right", false, { upd("Rotate right") { it.copy(rotate90 = (it.rotate90 + 1) % 4) } })
-                    ChipButton("Flip H", g.flipH, { upd("Flip horizontal") { it.copy(flipH = !it.flipH) } })
-                    ChipButton("Flip V", g.flipV, { upd("Flip vertical") { it.copy(flipV = !it.flipV) } })
+                AspectOptionTile(LrIcon.ORIGINAL, "16:9", g.aspect == "16:9", { pick("16:9") })
+                AspectOptionTile(LrIcon.ORIGINAL, "3:2", g.aspect == "3:2", { pick("3:2") })
+                AspectOptionTile(LrIcon.RESET, "Reset", false, { upd("Reset crop") { it.copy(cropX = 0f, cropY = 0f, cropW = 1f, cropH = 1f, aspect = "original") } })
+            }
+        } else {
+            PanelColumn {
+                Row(Modifier.padding(horizontal = 14.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (onAutoLevel != null) LrOutlineButton("Auto level", onAutoLevel, small = true)
+                    if (onAutoPerspective != null) LrOutlineButton("Auto perspective", onAutoPerspective, small = true)
                 }
-                RawSlider("Straighten", g.angle, -45f..45f, 0f, decimals = 1, unit = "°",
-                    onChange = { v -> state.live { it.copy(geometry = it.geometry.copy(angle = v)) } }, onCommit = { state.commit("Straighten") })
-                Row(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (onAutoLevel != null) ChipButton("Auto level", false, onAutoLevel)
-                }
-            } else {
-                Row(Modifier.padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (onAutoPerspective != null) ChipButton("Auto perspective", false, onAutoPerspective)
+                Row(Modifier.padding(horizontal = 14.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LrOutlineButton("Flip H", { upd("Flip horizontal") { it.copy(flipH = !it.flipH) } }, small = true, active = g.flipH)
+                    LrOutlineButton("Flip V", { upd("Flip vertical") { it.copy(flipV = !it.flipV) } }, small = true, active = g.flipV)
                 }
                 RawSlider("Vertical", g.keystoneV, -100f..100f, 0f,
                     onChange = { v -> state.live { it.copy(geometry = it.geometry.copy(keystoneV = v)) } }, onCommit = { state.commit("Vertical perspective") })
@@ -152,11 +156,19 @@ fun CropOverlay(state: EditorState, fit: FloatArray, imageAspect: Float, modifie
         drawRect(shade, Offset(fit[0], t + h), Size(fit[2], fit[1] + fit[3] - t - h))
         drawRect(shade, Offset(fit[0], t), Size(l - fit[0], h))
         drawRect(shade, Offset(l + w, t), Size(fit[0] + fit[2] - l - w, h))
-        drawRect(Color.White, Offset(l, t), Size(w, h), style = Stroke(2.5f))
+        drawRect(Color.White, Offset(l, t), Size(w, h), style = Stroke(1.dp.toPx()))
         for (i in 1..2) {
-            drawLine(Color(0x88FFFFFF), Offset(l + w * i / 3, t), Offset(l + w * i / 3, t + h), 1.5f)
-            drawLine(Color(0x88FFFFFF), Offset(l, t + h * i / 3), Offset(l + w, t + h * i / 3), 1.5f)
+            drawLine(Color(0x33FFFFFF), Offset(l + w * i / 3, t), Offset(l + w * i / 3, t + h), 1f)
+            drawLine(Color(0x33FFFFFF), Offset(l, t + h * i / 3), Offset(l + w, t + h * i / 3), 1f)
         }
-        listOf(Offset(l, t), Offset(l + w, t), Offset(l, t + h), Offset(l + w, t + h)).forEach { drawCircle(Color.White, 14f, it) }
+        // clean white handles: 16 dp corners, 24 dp side middles, 2 dp
+        val sw = 2.dp.toPx(); val cl = 16.dp.toPx(); val sl = 24.dp.toPx()
+        fun seg(a: Offset, b: Offset) = drawLine(Color.White, a, b, sw, androidx.compose.ui.graphics.StrokeCap.Square)
+        seg(Offset(l, t), Offset(l + cl, t)); seg(Offset(l, t), Offset(l, t + cl))
+        seg(Offset(l + w, t), Offset(l + w - cl, t)); seg(Offset(l + w, t), Offset(l + w, t + cl))
+        seg(Offset(l, t + h), Offset(l + cl, t + h)); seg(Offset(l, t + h), Offset(l, t + h - cl))
+        seg(Offset(l + w, t + h), Offset(l + w - cl, t + h)); seg(Offset(l + w, t + h), Offset(l + w, t + h - cl))
+        seg(Offset(l + w / 2 - sl / 2, t), Offset(l + w / 2 + sl / 2, t)); seg(Offset(l + w / 2 - sl / 2, t + h), Offset(l + w / 2 + sl / 2, t + h))
+        seg(Offset(l, t + h / 2 - sl / 2), Offset(l, t + h / 2 + sl / 2)); seg(Offset(l + w, t + h / 2 - sl / 2), Offset(l + w, t + h / 2 + sl / 2))
     }
 }

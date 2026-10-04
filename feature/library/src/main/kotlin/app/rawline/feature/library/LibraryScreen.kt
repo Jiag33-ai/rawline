@@ -29,12 +29,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Checkbox
+import app.rawline.core.ui.LrCheckbox as Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import app.rawline.core.ui.LrTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -57,6 +57,15 @@ import androidx.compose.ui.unit.dp
 import app.rawline.core.cache.FrameMonitor
 import app.rawline.core.cache.ThumbStore
 import app.rawline.core.data.IndexProgress
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.border
+import app.rawline.core.ui.LrDim
+import app.rawline.core.ui.LrDropdown
+import app.rawline.core.ui.LrMenuItem
+import app.rawline.core.ui.LrIconButton
+import app.rawline.core.ui.EmptyState
+import app.rawline.core.ui.PrimaryButton
+import app.rawline.core.ui.SecondaryButton
 import app.rawline.core.model.EditedFilter
 import app.rawline.core.model.FlagFilter
 import app.rawline.core.model.Kind
@@ -124,41 +133,44 @@ fun LibraryScreen(
 
     Column(Modifier.fillMaxSize().background(Lr.Black)) {
         // ---- top bar: source picker on the left, tools on the right ----
-        Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().height(LrDim.libraryHeader).padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             if (selecting) {
                 IconTap(LrIcon.CLOSE, "Clear selection") { selected.value = emptySet() }
                 Text("${sel.size} selected", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f).padding(start = 4.dp))
                 IconTap(LrIcon.SELECT, "Select all") { selected.value = photos.map { it.id }.toSet() }
             } else {
-                Row(Modifier.weight(1f).clickable { sourceMenu = true }.padding(start = 12.dp).height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.weight(1f).clickable { sourceMenu = true }.padding(start = 10.dp).height(LrDim.libraryHeader), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f, fill = false)) {
-                        Text(current?.label ?: "Photos", style = MaterialTheme.typography.titleLarge, maxLines = 1)
+                        Text(current?.label ?: "Photos", style = MaterialTheme.typography.titleMedium, maxLines = 1)
                         val sub = when {
                             progress.running -> "Reading ${progress.done} of ${progress.total}"
                             filter.isActive -> "${photos.size} of $allCount (filtered)"
                             else -> "${photos.size} photos"
                         }
-                        Text(sub, style = MaterialTheme.typography.bodySmall, color = Lr.TextDim)
+                        Text(sub, style = MaterialTheme.typography.labelSmall, color = Lr.TextMuted)
                     }
-                    LrIconView(LrIcon.CHEVRON_DOWN, Lr.Text, Modifier.padding(start = 6.dp), 20.dp)
-                    DropdownMenu(sourceMenu, { sourceMenu = false }) {
+                    LrIconView(LrIcon.CHEVRON_DOWN, Lr.IconSecondary, Modifier.padding(start = 6.dp), 18.dp)
+                    LrDropdown(sourceMenu, { sourceMenu = false }, width = 200.dp) {
                         sources.forEach { s ->
-                            DropdownMenuItem(
-                                text = { Text("${s.label}   ${s.count}", color = if (s.key == selectedSource) Lr.Accent else Lr.Text) },
-                                leadingIcon = { LrIconView(s.icon, if (s.key == selectedSource) Lr.Accent else Lr.TextDim, size = 22.dp) },
-                                onClick = { sourceMenu = false; actions.onSelectSource(s.key) },
-                            )
+                            LrMenuItem("${s.label}   ${s.count}", { sourceMenu = false; actions.onSelectSource(s.key) }, s.icon)
                         }
                     }
                 }
-                IconTap(LrIcon.FILTER, "Filter", tint = if (filter.isActive) Lr.Accent else Lr.Text) { showFilters = !showFilters }
                 Box {
-                    IconTap(LrIcon.MORE, "More") { moreMenu = true }
-                    DropdownMenu(moreMenu, { moreMenu = false }) {
-                        DropdownMenuItem(text = { Text("Newest first") }, onClick = { moreMenu = false; actions.onFilter(filter.copy(sort = SortOrder.NEWEST)) })
-                        DropdownMenuItem(text = { Text("Oldest first") }, onClick = { moreMenu = false; actions.onFilter(filter.copy(sort = SortOrder.OLDEST)) })
-                        DropdownMenuItem(text = { Text("By name") }, onClick = { moreMenu = false; actions.onFilter(filter.copy(sort = SortOrder.NAME)) })
-                        DropdownMenuItem(text = { Text("By rating") }, onClick = { moreMenu = false; actions.onFilter(filter.copy(sort = SortOrder.RATING)) })
+                    IconTap(LrIcon.ADD, "Add photos") { addMenu = true }
+                    LrDropdown(addMenu, { addMenu = false }) {
+                        LrMenuItem("Import from files", { addMenu = false; actions.onImportFiles() }, LrIcon.IMPORT)
+                        LrMenuItem("Add a folder", { addMenu = false; actions.onAddFolder() }, LrIcon.FOLDER)
+                    }
+                }
+                IconTap(LrIcon.FILTER, "Filter", tint = if (filter.isActive) Lr.Accent else Lr.IconPrimary) { showFilters = !showFilters }
+                Box {
+                    IconTap(LrIcon.SORT, "Sort") { moreMenu = true }
+                    LrDropdown(moreMenu, { moreMenu = false }) {
+                        LrMenuItem("Newest first", { moreMenu = false; actions.onFilter(filter.copy(sort = SortOrder.NEWEST)) })
+                        LrMenuItem("Oldest first", { moreMenu = false; actions.onFilter(filter.copy(sort = SortOrder.OLDEST)) })
+                        LrMenuItem("By name", { moreMenu = false; actions.onFilter(filter.copy(sort = SortOrder.NAME)) })
+                        LrMenuItem("By rating", { moreMenu = false; actions.onFilter(filter.copy(sort = SortOrder.RATING)) })
                     }
                 }
             }
@@ -166,30 +178,31 @@ fun LibraryScreen(
         if (showFilters && !selecting) FilterBar(filter, cameras, actions.onFilter)
 
         if (!allFilesGranted && permissionGranted && !selecting) {
-            Row(Modifier.fillMaxWidth().background(Lr.Panel).clickable { actions.onRequestAllFiles() }.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("RAW files such as RW2 are hidden by Android until you allow all files access.", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                Text("Allow", color = Lr.Accent, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(start = 12.dp))
+            Row(Modifier.fillMaxWidth().background(Lr.AccentSoft).clickable { actions.onRequestAllFiles() }.padding(start = 0.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.width(2.dp).height(44.dp).background(Lr.Accent))
+                Text("RAW files such as RW2 are hidden by Android until you allow all files access.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f).padding(horizontal = 12.dp, vertical = 8.dp))
+                Text("Allow", color = Lr.Accent, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(end = 14.dp))
             }
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when {
                 !permissionGranted && selectedSource.startsWith("device:") && photos.isEmpty() -> PermissionPrompt(actions.onRequestPermission, actions.onImportFiles)
                 photos.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(if (filter.isActive) "No photos match this filter." else "Nothing here yet. Tap + to import photos.", color = Lr.TextDim, modifier = Modifier.padding(32.dp))
+                    EmptyState(LrIcon.PHOTOS, if (filter.isActive) "No photos match" else "Nothing here yet", if (filter.isActive) "Change or clear the filter to see more." else "Tap + to import photos or a folder.")
                 }
                 else -> {
                 val rows = remember(photos, filter.sort) { gridRows(photos, filter.sort) }
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(columns), state = gridState,
-                    horizontalArrangement = Arrangement.spacedBy(1.dp), verticalArrangement = Arrangement.spacedBy(1.dp),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp), verticalArrangement = Arrangement.spacedBy(2.dp),
                     modifier = Modifier.fillMaxSize().pinchColumns(columns) { columns = it },
                 ) {
                     items(rows, key = { r -> if (r is GridRow.Head) "h${r.label}" else (r as GridRow.Pic).p.id }, span = { r -> if (r is GridRow.Head) GridItemSpan(maxLineSpan) else GridItemSpan(1) },
                         contentType = { r -> if (r is GridRow.Head) "head" else "photo" }) { r ->
                         if (r is GridRow.Head) {
-                            Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 18.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text(r.label, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-                                Text(r.count.toString(), style = MaterialTheme.typography.titleMedium, color = Lr.TextDim)
+                            Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 14.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(r.label, style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, lineHeight = 16.sp), color = Lr.TextSecondary, modifier = Modifier.weight(1f))
+                                Text(r.count.toString(), style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, lineHeight = 16.sp), color = Lr.TextMuted)
                             }
                         } else {
                             val p = (r as GridRow.Pic).p
@@ -206,17 +219,6 @@ fun LibraryScreen(
                 }
                 }
             }
-            if (!selecting) {
-                Box(Modifier.align(Alignment.BottomEnd).padding(20.dp)) {
-                    Box(Modifier.size(56.dp).clip(CircleShape).background(Lr.Accent).clickable { addMenu = true }.semantics { contentDescription = "Add photos" }, contentAlignment = Alignment.Center) {
-                        LrIconView(LrIcon.ADD, Color.White, size = 28.dp, strokeWidth = 2.4f)
-                    }
-                    DropdownMenu(addMenu, { addMenu = false }) {
-                        DropdownMenuItem(text = { Text("Import from files") }, leadingIcon = { LrIconView(LrIcon.IMPORT, Lr.Text, size = 22.dp) }, onClick = { addMenu = false; actions.onImportFiles() })
-                        DropdownMenuItem(text = { Text("Add a folder") }, leadingIcon = { LrIconView(LrIcon.FOLDER, Lr.Text, size = 22.dp) }, onClick = { addMenu = false; actions.onAddFolder() })
-                    }
-                }
-            }
         }
         if (selecting) SelectionBar(sel, actions, onPaste = { pasting = true })
     }
@@ -224,26 +226,20 @@ fun LibraryScreen(
 }
 
 @Composable
-private fun IconTap(icon: LrIcon, description: String, tint: Color = Lr.Text, onClick: () -> Unit) {
-    Box(Modifier.size(48.dp).clickable(onClick = onClick).semantics { contentDescription = description }, contentAlignment = Alignment.Center) { LrIconView(icon, tint, size = 24.dp) }
-}
+private fun IconTap(icon: LrIcon, description: String, tint: Color = Lr.IconPrimary, onClick: () -> Unit) = LrIconButton(icon, description, onClick, tint = tint)
 
 @Composable
 private fun PermissionPrompt(onAllow: () -> Unit, onImport: () -> Unit) {
-    Column(Modifier.fillMaxSize().padding(32.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-        LrIconView(LrIcon.CAMERA, Lr.TextDim, size = 56.dp)
-        Spacer(Modifier.height(16.dp))
-        Text("Show your camera roll", style = MaterialTheme.typography.titleMedium)
-        Text("Allow access to photos so Rawline can list what is on your phone.", color = Lr.TextDim, modifier = Modifier.padding(vertical = 8.dp))
-        ChipButton("Allow access", true, onAllow)
-        Spacer(Modifier.height(8.dp))
-        ChipButton("Import files instead", false, onImport)
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        EmptyState(LrIcon.CAMERA, "Show your camera roll", "Allow access to photos so Rawline can list what is on your phone.") {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { PrimaryButton("Allow access", onAllow); SecondaryButton("Import files", onImport) }
+        }
     }
 }
 
 @Composable
 private fun FilterBar(f: LibraryFilter, cameras: List<String>, onChange: (LibraryFilter) -> Unit) {
-    Column(Modifier.fillMaxWidth().background(Lr.Panel).padding(horizontal = 8.dp, vertical = 4.dp)) {
+    Column(Modifier.fillMaxWidth().background(Lr.Surface1).padding(horizontal = 8.dp, vertical = 4.dp)) {
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Rating", style = MaterialTheme.typography.labelMedium, color = Lr.TextDim)
             (0..5).forEach { r -> ChipButton(if (r == 0) "Any" else "$r+", f.minRating == r, { onChange(f.copy(minRating = r)) }) }
@@ -300,7 +296,7 @@ private fun PasteDialog(onDismiss: () -> Unit, onPaste: (Set<PasteScope>) -> Uni
 @Composable
 private fun Thumb(p: Photo, thumbs: ThumbStore, selected: Boolean, selecting: Boolean, modifier: Modifier) {
     val bmp by produceState(thumbs.peek(p.id), p.id) { if (value == null) value = thumbs.obtain(p) }
-    Box(modifier.background(Lr.Surface).semantics { contentDescription = p.name + (if (p.rating > 0) ", ${p.rating} stars" else "") + (if (p.edited) ", edited" else "") }) {
+    Box(modifier.background(Lr.Surface2).semantics { contentDescription = p.name + (if (p.rating > 0) ", ${p.rating} stars" else "") + (if (p.edited) ", edited" else "") }) {
         bmp?.let { b ->
             val img = remember(b) { b.asImageBitmap() }
             Image(img, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
@@ -309,13 +305,13 @@ private fun Thumb(p: Photo, thumbs: ThumbStore, selected: Boolean, selecting: Bo
         if (p.flag == 1) Box(Modifier.align(Alignment.TopStart).padding(4.dp)) { LrIconView(LrIcon.FLAG_FILLED, Color.White, size = 14.dp) }
         if (p.flag == -1) Box(Modifier.align(Alignment.TopStart).padding(4.dp)) { LrIconView(LrIcon.REJECT, Color(0xFFE57373), size = 14.dp) }
         if (p.label in 1..5) Box(Modifier.align(Alignment.BottomEnd).padding(end = 24.dp, bottom = 7.dp).size(9.dp).background(LabelColors[p.label], CircleShape))
-        if (p.kind == Kind.RAW && !selecting) Text("RAW", color = Color.Black, style = MaterialTheme.typography.labelSmall, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-            modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).background(Color(0xE6FFFFFF), androidx.compose.foundation.shape.RoundedCornerShape(3.dp)).padding(horizontal = 4.dp))
+        if (p.kind == Kind.RAW && !selecting) Text("RAW", color = Lr.TextPrimary, style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, lineHeight = 11.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium),
+            modifier = Modifier.align(Alignment.TopEnd).padding(3.dp).background(Color(0xB3000000), androidx.compose.foundation.shape.RoundedCornerShape(2.dp)).padding(horizontal = 3.dp, vertical = 1.dp))
         if (p.edited) Box(Modifier.align(Alignment.BottomEnd).padding(4.dp)) { LrIconView(LrIcon.EDIT, Color.White, size = 14.dp) }
         if (selecting) Box(Modifier.align(Alignment.TopEnd).padding(6.dp).size(20.dp).clip(CircleShape).background(if (selected) Lr.Accent else Color(0x66000000))) {
             if (selected) LrIconView(LrIcon.CHECK, Color.White, size = 20.dp)
         }
-        if (selected) Box(Modifier.fillMaxSize().background(Lr.AccentDim))
+        if (selected) Box(Modifier.fillMaxSize().border(2.dp, Lr.Accent))
     }
 }
 

@@ -1,6 +1,9 @@
 package app.rawline.feature.editor
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.foundation.border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -61,12 +64,12 @@ fun MixerPanel(state: EditorState, target: AdjustTarget, activeBand: Int, onBand
         listOf("Hue", "Saturation", "Luminance").forEachIndexed { i, n -> ChipButton(n, mode == i, { onMode(i) }) }
         if (onTarget != null) ChipButton("Target on photo", false, onTarget)
     }
-    Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+    Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 14.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
         for (i in 0 until 8) {
-            Box(
-                Modifier.size(if (i == activeBand) 40.dp else 32.dp).background(BandColors[i], CircleShape)
-                    .pointerInput(i) { detectTapGestures { onBand(i) } },
-            )
+            Box(Modifier.size(32.dp).pointerInput(i) { detectTapGestures { onBand(i) } }.semantics { contentDescription = BandNames[i] + if (i == activeBand) ", selected" else "" }, contentAlignment = Alignment.Center) {
+                Box(Modifier.size(14.dp).background(BandColors[i], CircleShape))
+                if (i == activeBand) Box(Modifier.size(24.dp).border(1.5.dp, Color(0xFFF2F2F2), CircleShape))
+            }
         }
     }
     val i = activeBand
@@ -128,29 +131,21 @@ private fun Wheel(h: Hsl, onChange: (Hsl) -> Unit, onCommit: () -> Unit, size: a
 }
 
 @Composable
-fun GradingPanel(state: EditorState, target: AdjustTarget) = PanelColumn {
+fun GradingPanel(state: EditorState, target: AdjustTarget) {
     val g = target.get(state.recipe).grading
+    var which by remember { mutableStateOf("mid") }
     fun update(f: (Grading) -> Grading) = state.live { r -> target.set(r, target.get(r).copy(grading = f(target.get(r).grading))) }
-    Row(Modifier.fillMaxWidth().padding(8.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-        WheelBlock("Shadows", g.shadows, { h -> update { it.copy(shadows = h) } }, { state.commit("Grade shadows") })
-        WheelBlock("Midtones", g.mid, { h -> update { it.copy(mid = h) } }, { state.commit("Grade midtones") })
-        WheelBlock("Highlights", g.highlights, { h -> update { it.copy(highlights = h) } }, { state.commit("Grade highlights") })
-    }
-    Row(Modifier.fillMaxWidth().padding(8.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-        WheelBlock("Global", g.global, { h -> update { it.copy(global = h) } }, { state.commit("Grade global") })
-    }
-    RawSlider("Blending", g.blending, 0f..100f, 50f, onChange = { v -> update { it.copy(blending = v) } }, onCommit = { state.commit("Grade blending") })
-    RawSlider("Balance", g.balance, -100f..100f, 0f, onChange = { v -> update { it.copy(balance = v) } }, onCommit = { state.commit("Grade balance") })
-}
-
-@Composable
-private fun WheelBlock(name: String, h: Hsl, onChange: (Hsl) -> Unit, onCommit: () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(4.dp)) {
-        Text(name, style = MaterialTheme.typography.labelMedium)
-        Wheel(h, onChange, onCommit, size = 96.dp)
-        androidx.compose.material3.Slider(
-            h.lum, { onChange(h.copy(lum = it)) }, onValueChangeFinished = onCommit, valueRange = -100f..100f,
-            modifier = Modifier.size(width = 110.dp, height = 28.dp),
-        )
+    PanelColumn {
+        app.rawline.core.ui.LrTabs(listOf("shadows" to "Shadows", "mid" to "Midtones", "highlights" to "Highlights", "global" to "Global"), which, { which = it })
+        val (h, setH, label) = when (which) {
+            "shadows" -> Triple(g.shadows, { x: Hsl -> update { it.copy(shadows = x) } }, "Grade shadows")
+            "highlights" -> Triple(g.highlights, { x: Hsl -> update { it.copy(highlights = x) } }, "Grade highlights")
+            "global" -> Triple(g.global, { x: Hsl -> update { it.copy(global = x) } }, "Grade global")
+            else -> Triple(g.mid, { x: Hsl -> update { it.copy(mid = x) } }, "Grade midtones")
+        }
+        Box(Modifier.fillMaxWidth().padding(vertical = 10.dp), contentAlignment = Alignment.Center) { Wheel(h, setH, { state.commit(label) }, size = 152.dp) }
+        RawSlider("Luminance", h.lum, -100f..100f, 0f, onChange = { v -> setH(h.copy(lum = v)) }, onCommit = { state.commit(label) })
+        RawSlider("Blending", g.blending, 0f..100f, 50f, onChange = { v -> update { it.copy(blending = v) } }, onCommit = { state.commit("Grade blending") })
+        RawSlider("Balance", g.balance, -100f..100f, 0f, onChange = { v -> update { it.copy(balance = v) } }, onCommit = { state.commit("Grade balance") })
     }
 }

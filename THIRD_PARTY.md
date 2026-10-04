@@ -28,3 +28,6 @@ All inference is on the phone. The files are only downloaded (HTTPS GET) into th
 | Select subject | ML Kit Subject Segmentation | Google Play services | ML Kit terms | n/a |
 
 No model was converted by us: the official TFLite releases are used as published, so `tools/models/` only fetches and verifies them.
+
+## Roboto (core/ui/src/main/res/font)
+Roboto Regular and Medium, Apache License 2.0, Google. Bundled so the interface type does not depend on the phone maker's system font.

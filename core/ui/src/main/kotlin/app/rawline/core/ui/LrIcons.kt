@@ -24,11 +24,12 @@ enum class LrIcon {
     PHOTOS, QUEUE, SETTINGS, ADD, FILTER, SORT, CHECK, BACK, UNDO, REDO, SHARE, MORE, INFO, STAR, STAR_FILLED, FLAG, FLAG_FILLED, REJECT,
     EDIT, PRESETS, CROP, LIGHT, COLOR, EFFECTS, DETAIL, OPTICS, GEOMETRY, MASKING, HEALING, AUTO, CURVE, CLOSE, CHEVRON_DOWN, HISTOGRAM,
     VERSIONS, RESET, FOLDER, IMPORT, CAMERA, SELECT, TRASH, DOWNLOAD, ERROR, PAUSE, REFRESH,
+    LOCK, UNLOCK, ROTATE, HELP, ORIGINAL, RATIOS, FREE_CROP, EYEDROPPER, COPY, SEARCH,
 }
 
 @Composable
 fun LrIconView(icon: LrIcon, tint: Color, modifier: Modifier = Modifier, size: Dp = 24.dp, strokeWidth: Float = 1.8f) {
-    Canvas(modifier.size(size)) { draw(icon, tint, strokeWidth * density / 2f * 1.3f) }
+    Canvas(modifier.size(size)) { draw(icon, tint, strokeWidth * this.size.width / (24f * density) * density) }
 }
 
 private fun DrawScope.draw(icon: LrIcon, c: Color, sw: Float) {
@@ -68,7 +69,8 @@ private fun DrawScope.draw(icon: LrIcon, c: Color, sw: Float) {
         }
         LrIcon.FLAG, LrIcon.FLAG_FILLED -> { line(0.25f, 0.12f, 0.25f, 0.9f); poly(0.25f, 0.15f, 0.8f, 0.15f, 0.65f, 0.38f, 0.8f, 0.6f, 0.25f, 0.6f, close = true, fill = icon == LrIcon.FLAG_FILLED) }
         LrIcon.REJECT -> { line(0.25f, 0.25f, 0.75f, 0.75f); line(0.75f, 0.25f, 0.25f, 0.75f) }
-        LrIcon.EDIT, LrIcon.PRESETS -> { for (k in 0 until 3) { val y = 0.25f + k * 0.25f; line(0.12f, y, 0.88f, y); circle(0.3f + ((k * 3) % 5) * 0.1f, y, 0.075f, fill = true) } }
+        LrIcon.PRESETS -> { circle(0.4f, 0.45f, 0.26f); circle(0.6f, 0.55f, 0.26f) }
+        LrIcon.EDIT -> { for (k in 0 until 3) { val y = 0.25f + k * 0.25f; line(0.12f, y, 0.88f, y); circle(0.3f + ((k * 3) % 5) * 0.1f, y, 0.075f, fill = true) } }
         LrIcon.CROP -> { poly(0.3f, 0.1f, 0.3f, 0.7f, 0.9f, 0.7f); poly(0.1f, 0.3f, 0.7f, 0.3f, 0.7f, 0.9f) }
         LrIcon.LIGHT -> { circle(0.5f, 0.5f, 0.17f); for (i in 0 until 8) { val a = i * PI / 4; line(0.5f + 0.27f * cos(a).toFloat(), 0.5f + 0.27f * sin(a).toFloat(), 0.5f + 0.4f * cos(a).toFloat(), 0.5f + 0.4f * sin(a).toFloat()) } }
         LrIcon.COLOR -> { poly(0.5f, 0.1f, 0.78f, 0.52f); drawArc(c, -30f, 240f, false, Offset(0.22f * w, 0.32f * h), Size(0.56f * w, 0.56f * h), style = st); poly(0.22f, 0.52f, 0.5f, 0.1f) }
@@ -94,5 +96,14 @@ private fun DrawScope.draw(icon: LrIcon, c: Color, sw: Float) {
         LrIcon.ERROR -> { circle(0.5f, 0.5f, 0.38f); line(0.5f, 0.28f, 0.5f, 0.56f); circle(0.5f, 0.72f, 0.035f, true) }
         LrIcon.PAUSE -> { line(0.35f, 0.2f, 0.35f, 0.8f); line(0.65f, 0.2f, 0.65f, 0.8f) }
         LrIcon.REFRESH -> { drawArc(c, -60f, 300f, false, Offset(0.15f * w, 0.15f * h), Size(0.7f * w, 0.7f * h), style = st); poly(0.62f, 0.08f, 0.72f, 0.2f, 0.58f, 0.26f) }
+        LrIcon.LOCK, LrIcon.UNLOCK -> { rrect(0.2f, 0.45f, 0.6f, 0.4f, 0.06f); if (icon == LrIcon.LOCK) poly(0.32f, 0.45f, 0.32f, 0.3f, 0.4f, 0.15f, 0.6f, 0.15f, 0.68f, 0.3f, 0.68f, 0.45f) else poly(0.32f, 0.45f, 0.32f, 0.3f, 0.4f, 0.15f, 0.6f, 0.15f, 0.68f, 0.28f) }
+        LrIcon.ROTATE -> { drawArc(c, -50f, 280f, false, Offset(0.15f * w, 0.15f * h), Size(0.7f * w, 0.7f * h), style = st); poly(0.7f, 0.1f, 0.82f, 0.25f, 0.65f, 0.3f) }
+        LrIcon.HELP -> { circle(0.5f, 0.5f, 0.4f); drawArc(c, 200f, 220f, false, Offset(0.36f * w, 0.28f * h), Size(0.28f * w, 0.26f * h), style = st); line(0.5f, 0.52f, 0.5f, 0.62f); circle(0.5f, 0.74f, 0.035f, true) }
+        LrIcon.ORIGINAL -> { rrect(0.12f, 0.2f, 0.76f, 0.6f); circle(0.34f, 0.4f, 0.07f); poly(0.15f, 0.76f, 0.4f, 0.52f, 0.58f, 0.68f, 0.7f, 0.55f, 0.85f, 0.72f) }
+        LrIcon.RATIOS -> { rrect(0.22f, 0.3f, 0.6f, 0.5f, 0.04f); line(0.12f, 0.2f, 0.62f, 0.2f); line(0.12f, 0.2f, 0.12f, 0.62f) }
+        LrIcon.FREE_CROP -> { poly(0.2f, 0.4f, 0.2f, 0.2f, 0.4f, 0.2f); poly(0.6f, 0.2f, 0.8f, 0.2f, 0.8f, 0.4f); poly(0.8f, 0.6f, 0.8f, 0.8f, 0.6f, 0.8f); poly(0.4f, 0.8f, 0.2f, 0.8f, 0.2f, 0.6f) }
+        LrIcon.EYEDROPPER -> { line(0.2f, 0.8f, 0.6f, 0.4f); rrect(0.55f, 0.15f, 0.3f, 0.3f, 0.08f); line(0.2f, 0.8f, 0.12f, 0.88f) }
+        LrIcon.COPY -> { rrect(0.3f, 0.3f, 0.55f, 0.58f, 0.05f); poly(0.2f, 0.7f, 0.15f, 0.7f, 0.15f, 0.12f, 0.58f, 0.12f, 0.58f, 0.2f) }
+        LrIcon.SEARCH -> { circle(0.43f, 0.43f, 0.28f); line(0.65f, 0.65f, 0.85f, 0.85f) }
     }
 }
