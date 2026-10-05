@@ -55,6 +55,8 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
     val filter = MutableStateFlow(LibraryFilter())
     val progress: StateFlow<IndexProgress> = graph.indexer.progress
     val copied = MutableStateFlow<EditRecipe?>(null)
+    /** The look of the photo most recently edited and left, for "Paste from last". */
+    val lastEdited = MutableStateFlow<EditRecipe?>(null)
     val message = MutableStateFlow<String?>(null)
     val recentFolders = MutableStateFlow(graph.prefs.getStringSet("folders", emptySet())!!.toList())
     val permissionGranted = MutableStateFlow(hasMediaPermission())
@@ -204,7 +206,7 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
 
     fun syncEdits(from: Photo, to: List<Photo>) = viewModelScope.launch {
         val src = catalog.loadRecipe(from) ?: EditRecipe()
-        to.forEach { t -> catalog.saveRecipe(t, RecipeMerge.paste(catalog.loadRecipe(t) ?: EditRecipe(), src, PasteScope.entries.toSet() - PasteScope.GEOMETRY - PasteScope.MASKS - PasteScope.HEALS)) }
+        to.forEach { t -> catalog.saveRecipe(t, RecipeMerge.paste(catalog.loadRecipe(t) ?: EditRecipe(), src, RecipeMerge.QUICK)) }
         message.value = "Synced ${to.size} photos from ${from.name}"
     }
 

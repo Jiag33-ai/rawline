@@ -36,6 +36,16 @@ class ModelTest {
         assertEquals(8, r.adjust.mixHue.size)
     }
 
+    @Test fun quickPasteCarriesLookButNotGeometryMasksOrHeals() {
+        val src = busyRecipe()
+        val target = EditRecipe()
+        val out = RecipeMerge.paste(target, src, RecipeMerge.QUICK)
+        assertEquals(src.adjust.exposure, out.adjust.exposure)
+        assertEquals(target.geometry, out.geometry)
+        assertEquals(target.masks, out.masks)
+        assertEquals(target.heals, out.heals)
+    }
+
     @Test fun pasteOnlyChosenPanels() {
         val src = busyRecipe()
         val out = RecipeMerge.paste(EditRecipe(), src, setOf(PasteScope.LIGHT))

@@ -104,7 +104,8 @@ object RenderParams {
         out[P.G_FX] = e.vignetteAmount; out[P.G_FX + 1] = e.vignetteMidpoint; out[P.G_FX + 2] = e.vignetteRoundness; out[P.G_FX + 3] = e.vignetteFeather
         out[P.G_FX2] = e.grainAmount; out[P.G_FX2 + 1] = e.grainSize; out[P.G_FX2 + 2] = e.grainRoughness
         out[P.G_OVERLAY] = if (overlayOn) 1f else 0f
-        out[P.G_SHOWMASK] = showMask.toFloat()
+        // the shader indexes the visible masks only, so map the selected mask to its place in that list (-1 when hidden)
+        out[P.G_SHOWMASK] = (if (showMask in recipe.masks.indices && recipe.masks[showMask].visible) recipe.masks.take(showMask).count { it.visible } else -1).toFloat()
 
         val base = if (useBaseline) recipe.adjust.copy(
             saturation = recipe.adjust.saturation + Baseline.SATURATION,

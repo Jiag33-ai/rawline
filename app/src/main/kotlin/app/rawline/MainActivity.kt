@@ -99,6 +99,7 @@ private fun RawlineRoot() {
     val overlay by vm.overlay.collectAsStateWithLifecycle()
     val xmp by vm.xmp.collectAsStateWithLifecycle()
     val copied by vm.copied.collectAsStateWithLifecycle()
+    val lastEdited by vm.lastEdited.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
     val jobs by graph.db.exports().observe().collectAsStateWithLifecycle(emptyList())
     var toast by remember { mutableStateOf<String?>(null) }
@@ -229,7 +230,11 @@ private fun RawlineRoot() {
                         val i = photos.indexOfFirst { it.id == id }
                         EditorHost(
                             photo, graph,
-                            neighbors = listOfNotNull(photos.getOrNull(i + 1), photos.getOrNull(i - 1)),
+                            neighbors = listOfNotNull(photos.getOrNull(i + 1), photos.getOrNull(i + 2), photos.getOrNull(i - 1)),
+                            copied = copied, lastEdited = lastEdited,
+                            onCopied = { vm.copied.value = it },
+                            onLeftEdited = { r -> if (r != app.rawline.core.model.EditRecipe()) vm.lastEdited.value = r },
+                            onNotify = { vm.message.value = it },
                             onExport = { vm.enqueueExport(listOf(it)) },
                             onExportSettings = { exportSettingsFor = true to it },
                             onSwipe = { delta -> openEditor(photo, delta) },

@@ -478,10 +478,10 @@ class MaskingFeature(
                 if (s != null && !cancelled) {
                     upload(key, l.snapshot(), l.w, l.h)
                     state.edit("Brush stroke") { it.withComponent(mi, ci) { cc -> cc.copy(strokes = cc.strokes + s) } }
-                    savedHash[key] = state.recipe.masks[mi].components[ci].strokes.hashCode()
+                    savedHash[key] = state.recipe.masks.getOrNull(mi)?.components?.getOrNull(ci)?.strokes.hashCode()
                     val snapshot = l.alpha.copyOf()
                     scope.launch(Dispatchers.IO) { store.save(key, snapshot, l.w, l.h) }
-                } else if (s != null) { l.renderAll(state.recipe.masks[mi].components[ci].strokes); upload(key, l.snapshot(), l.w, l.h) }
+                } else if (s != null) { l.renderAll(state.recipe.masks.getOrNull(mi)?.components?.getOrNull(ci)?.strokes ?: emptyList()); upload(key, l.snapshot(), l.w, l.h) }
             },
         )
     }

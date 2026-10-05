@@ -37,6 +37,9 @@ enum class PasteScope(val label: String) {
 }
 
 object RecipeMerge {
+    /** What a one tap paste carries: every look setting, but not crop, masks or repairs (those belong to one photo's content). */
+    val QUICK: Set<PasteScope> = PasteScope.entries.toSet() - PasteScope.GEOMETRY - PasteScope.MASKS - PasteScope.HEALS
+
     fun paste(target: EditRecipe, source: EditRecipe, scopes: Set<PasteScope>): EditRecipe {
         var t = target
         val sa = source.adjust

@@ -14,7 +14,7 @@ import kotlinx.coroutines.launch
  * Decodes half size raws ahead of time (when the user lingers on a photo, and for the neighbours of the photo being edited)
  * so Edit and swiping between edited photos open quickly. Holds at most [capacity] results (about 100 MB each).
  */
-class RawPrefetch(private val context: Context, private val capacity: Int = 2) {
+class RawPrefetch(private val context: Context, private val capacity: Int = 3) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
     private val lock = Any()
     private val ready = LinkedHashMap<Long, Long>()   // photo id -> native handle, oldest first

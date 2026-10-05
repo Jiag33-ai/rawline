@@ -35,6 +35,14 @@ class RenderTest {
             "G_FX2" to P.G_FX2, "G_NUM_MASKS" to P.G_NUM_MASKS, "G_OVERLAY" to P.G_OVERLAY, "G_SHOWMASK" to P.G_SHOWMASK, "G_COUNT" to P.G_COUNT)) assertEquals(n, const(h, n), v)
     }
 
+    @Test fun maskTintIndexSkipsHiddenMasks() {
+        fun m(id: String, visible: Boolean) = Mask(id, id, emptyList(), visible = visible)
+        val r = EditRecipe(masks = listOf(m("a", false), m("b", true), m("c", true)))
+        assertEquals(0f, RenderParams.build(r, 1, showMask = 1)[P.G_SHOWMASK])
+        assertEquals(1f, RenderParams.build(r, 1, showMask = 2)[P.G_SHOWMASK])
+        assertEquals(-1f, RenderParams.build(r, 1, showMask = 0)[P.G_SHOWMASK])
+    }
+
     @Test fun curveLutIsIdentityWithoutPoints_andMonotone() {
         val id = CurveMath.lut(emptyList())
         assertEquals(0f, id[0]); assertEquals(1f, id[255]); assertEquals(0.5f, id[128], 0.01f)

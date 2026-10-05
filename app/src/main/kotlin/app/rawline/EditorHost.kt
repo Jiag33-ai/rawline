@@ -16,6 +16,7 @@ import androidx.compose.ui.platform.LocalContext
 import app.rawline.core.cache.PerfLog
 import app.rawline.core.model.EditRecipe
 import app.rawline.core.model.Photo
+import app.rawline.core.model.RecipeMerge
 import app.rawline.core.render.EditorSession
 import app.rawline.core.ml.AiMasksImpl
 import app.rawline.core.ml.Healer
@@ -41,7 +42,7 @@ import kotlinx.coroutines.withContext
 
 /** Loads the saved edit, runs the editor and writes edits back to the catalogue. */
 @Composable
-fun EditorHost(photo: Photo, graph: Graph, neighbors: List<Photo>, onExport: (Photo) -> Unit, onExportSettings: (Photo) -> Unit, onSwipe: (Int) -> Unit, onBack: () -> Unit) {
+fun EditorHost(photo: Photo, graph: Graph, neighbors: List<Photo>, copied: EditRecipe?, lastEdited: EditRecipe?, onCopied: (EditRecipe) -> Unit, onLeftEdited: (EditRecipe) -> Unit, onNotify: (String) -> Unit, onExport: (Photo) -> Unit, onExportSettings: (Photo) -> Unit, onSwipe: (Int) -> Unit, onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val denoiser = remember(photo.id) { app.rawline.core.ml.Denoiser(context, graph.modelStore) }
@@ -97,8 +98,9 @@ fun EditorHost(photo: Photo, graph: Graph, neighbors: List<Photo>, onExport: (Ph
     val st = state ?: return
     // Leaving the editor waits for the edit to be written; a dimmed canvas with a spinner shows only if that takes noticeable time.
     var saving by remember { mutableStateOf(false) }
+    var lastSwipe by remember { mutableStateOf(0L) }
     val showSaving by androidx.compose.runtime.produceState(false, saving) { if (saving) { delay(150); value = true } else value = false }
-    val leave = { if (!saving) { saving = true; saveJob?.cancel(); scope.launch { graph.catalog.saveRecipe(photo, st.recipe); onBack() } }; Unit }
+    val leave = { if (!saving) { saving = true; saveJob?.cancel(); onLeftEdited(st.recipe); scope.launch { try { graph.catalog.saveRecipe(photo, st.recipe) } finally { onBack() } } }; Unit }
     androidx.activity.compose.BackHandler { leave() }
     val mk = masking ?: return
     val rm = remove ?: return
@@ -118,7 +120,11 @@ fun EditorHost(photo: Photo, graph: Graph, neighbors: List<Photo>, onExport: (Ph
         onSnapshot = { name -> scope.launch { val id = graph.catalog.addSnapshot(photo, name, st.recipe); st.addSnapshot(id, name) } },
         onExport = { saveJob?.cancel(); graph.appScope.launch { graph.catalog.saveRecipe(photo, st.recipe); kotlinx.coroutines.withContext(Dispatchers.Main) { onExport(photo) } } },
         onExportSettings = { onExportSettings(photo) },
-        onSwipePhoto = { d -> saveJob?.cancel(); scope.launch { graph.catalog.saveRecipe(photo, st.recipe); onSwipe(d) } },
+        // Swiping never waits for the database: the write runs in the app scope while the next photo opens.
+        onSwipePhoto = { d -> val now = System.nanoTime(); if (now - lastSwipe > 300_000_000L) { lastSwipe = now; saveJob?.cancel(); val r = st.recipe; onLeftEdited(r); graph.appScope.launch { graph.catalog.saveRecipe(photo, r) }; onSwipe(d) } },
+        copied = copied, lastEdited = lastEdited,
+        onCopy = { onCopied(st.recipe); onNotify("Copied edits") },
+        onPaste = { src, msg -> st.edit("Paste edits") { RecipeMerge.paste(it, src, RecipeMerge.QUICK) }; onNotify(msg) },
         onBack = { leave() },
     )
     if (showSaving) Box(Modifier.fillMaxSize().background(app.rawline.core.ui.Lr.OverlayHeavy).clickable(enabled = true, indication = null, interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }) {}, contentAlignment = androidx.compose.ui.Alignment.Center) {

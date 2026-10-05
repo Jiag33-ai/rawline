@@ -1,8 +1,13 @@
 name: build
 on:
   push:
-    branches: [main]
+    branches: [main, 'claude/**']
+  pull_request:
   workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -73,9 +78,15 @@ jobs:
           ./gradlew assembleRelease --no-daemon
           cp app/build/outputs/apk/release/app-release.apk rawline.apk
       - name: Publish release
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="v0.1.${{ github.run_number }}"
           NOTE="Build ${{ github.run_number }}, commit ${GITHUB_SHA::7}. Signed: ${{ steps.key.outputs.signed }}"
-          gh release create "$TAG" rawline.apk --title "Rawline $TAG" --notes "$NOTE"
+          # Re-running a job keeps the run number, so update the release if it exists; always tag the built commit.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" rawline.apk --clobber
+          else
+            gh release create "$TAG" rawline.apk --target "$GITHUB_SHA" --title "Rawline $TAG" --notes "$NOTE"
+          fi

@@ -52,7 +52,8 @@ class DeviceScanner(private val context: Context, private val dao: PhotoDao, pri
         val seen = HashSet<String>(rows.size)
         val fresh = ArrayList<PhotoEntity>()
         rows.forEach { r -> seen.add(r.uri); if (known[r.uri] == null) fresh.add(r) }
-        val gone = known.values.filter { it.uri !in seen }.map { it.id }
+        // An empty listing means permission was lost or the query failed, not that every photo was deleted.
+        val gone = if (rows.isEmpty()) emptyList() else known.values.filter { it.uri !in seen }.map { it.id }
         gone.chunked(500).forEach { dao.delete(it) }
         fresh.chunked(300).forEach { dao.insertAll(it) }
         catalog?.reapply("device:%")

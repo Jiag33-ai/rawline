@@ -147,6 +147,11 @@ fun EditorScreen(
     onExportSettings: () -> Unit = {},
     /** +1 next photo, -1 previous. Swipe sideways on the photo when nothing else is using one finger. */
     onSwipePhoto: (Int) -> Unit = {},
+    /** Copy / paste of looks from the top right menu. Null recipes mean nothing to paste yet. */
+    copied: EditRecipe? = null,
+    lastEdited: EditRecipe? = null,
+    onCopy: () -> Unit = {},
+    onPaste: (EditRecipe, String) -> Unit = { _, _ -> },
     onBack: () -> Unit,
     onAiDenoiseChanged: (Boolean) -> Unit = {},
 ) {
@@ -458,6 +463,10 @@ fun EditorScreen(
                     Box {
                         LrIconButton(LrIcon.MORE, "More", { menu = true })
                         LrDropdown(menu, { menu = false }) {
+                            LrMenuItem("Copy edits", { menu = false; onCopy() }, LrIcon.COPY)
+                            if (copied != null) LrMenuItem("Paste edits", { menu = false; onPaste(copied, "Pasted edits") }, LrIcon.COPY)
+                            if (lastEdited != null) LrMenuItem("Paste from last", { menu = false; onPaste(lastEdited, "Pasted from last edit") }, LrIcon.COPY)
+                            Box(Modifier.fillMaxWidth().height(1.dp).background(Lr.Divider))
                             LrMenuItem(if (showHist) "Hide histogram" else "Show histogram", { menu = false; showHist = !showHist }, LrIcon.HISTOGRAM)
                             LrMenuItem("Versions and history", { menu = false; tab = "history"; open = true }, LrIcon.VERSIONS)
                             LrMenuItem("Export settings", { menu = false; onExportSettings() }, LrIcon.DOWNLOAD)

@@ -64,7 +64,10 @@ class Healer(
      * @param stroke stroke in the frame (size is a fraction of frame height)
      * @param source for clone and heal, the point in the frame to copy from
      */
-    suspend fun add(kind: String, stroke: BrushStroke, source: Pair<Float, Float>?): HealOp? {
+    suspend fun add(kind: String, stroke: BrushStroke, source: Pair<Float, Float>?): HealOp? =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { addOffMain(kind, stroke, source) }
+
+    private suspend fun addOffMain(kind: String, stroke: BrushStroke, source: Pair<Float, Float>?): HealOp? {
         val s = session.currentRecipe
         val sw = session.sourceWidth; val sh = session.sourceHeight
         if (sw <= 1) return null
