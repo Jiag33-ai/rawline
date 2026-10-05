@@ -10,7 +10,7 @@ inline uint16_t floatToHalf(float f) {
     uint32_t sign = (x >> 16) & 0x8000u;
     int32_t exp = int32_t((x >> 23) & 0xFF) - 127 + 15;
     uint32_t mant = x & 0x7FFFFFu;
-    if (exp >= 31) return uint16_t(sign | 0x7C00u);
+    if (exp >= 31) return (((x >> 23) & 0xFF) == 0xFF && mant) ? uint16_t(0) : uint16_t(sign | 0x7BFFu);  // NaN to 0, overflow and Inf to the largest finite half
     if (exp <= 0) {
         if (exp < -10) return uint16_t(sign);
         mant |= 0x800000u;

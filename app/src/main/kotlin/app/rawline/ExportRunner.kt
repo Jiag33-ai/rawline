@@ -30,7 +30,7 @@ class ExportRunner(private val context: Context, private val graph: Graph) {
     val progress = MutableStateFlow(ExportProgress())
     @Volatile var cancelled = false
 
-    private val exporter = Exporter(context, graph.maskStore, graph.patchStore) { h, a, p -> Denoiser(context, graph.modelStore).run(h, a, p) }
+    private val exporter = Exporter(context, graph.maskStore, graph.patchStore) { h, a, p -> Denoiser(context, graph.modelStore).let { d -> try { d.run(h, a, p) } finally { d.release() } } }
 
     /** Adds photos to the export queue (kept in the database) and makes sure the service is working through it. */
     suspend fun enqueue(photos: List<Photo>, settings: ExportSettings) {
@@ -111,8 +111,8 @@ class ExportRunner(private val context: Context, private val graph: Graph) {
         val res = exporter.render(p, recipe, s, if (s.format == ExportFormat.TIFF16) out else null, { onFraction?.invoke(it) }, { cancelled }) ?: return null
         val bmp = res.bitmap ?: return Unit
         when (s.format) {
-            ExportFormat.JPEG -> bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, s.quality, out)
-            ExportFormat.PNG -> bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+            ExportFormat.JPEG -> if (!bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, s.quality, out)) throw java.io.IOException("Could not encode the JPEG")
+            ExportFormat.PNG -> if (!bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)) throw java.io.IOException("Could not encode the PNG")
             ExportFormat.TIFF16 -> {}
         }
         bmp.recycle()

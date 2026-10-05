@@ -45,6 +45,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -317,21 +318,26 @@ private fun Thumb(p: Photo, thumbs: ThumbStore, selected: Boolean, selecting: Bo
 }
 
 /** Two-finger pinch changes the column count (4 to 6) without blocking one-finger scrolling. */
-private fun Modifier.pinchColumns(current: Int, set: (Int) -> Unit): Modifier = pointerInput(current) {
+private fun Modifier.pinchColumns(current: Int, set: (Int) -> Unit): Modifier = composed {
+  // Keyed on Unit so changing the column count does not cancel the pinch that caused it.
+  val now by androidx.compose.runtime.rememberUpdatedState(current)
+  val setNow by androidx.compose.runtime.rememberUpdatedState(set)
+  pointerInput(Unit) {
     awaitEachGesture {
         awaitFirstDown(requireUnconsumed = false)
         var acc = 1f
-        var cols = current
+        var cols = now
         do {
             val ev = awaitPointerEvent(PointerEventPass.Initial)
             if (ev.changes.size >= 2 && ev.changes.all { it.pressed }) {
                 acc *= ev.calculateZoom()
                 ev.changes.forEach { it.consume() }
-                if (acc > 1.3f && cols > 4) { cols--; acc = 1f; set(cols) }
-                else if (acc < 0.77f && cols < 6) { cols++; acc = 1f; set(cols) }
+                if (acc > 1.3f && cols > 4) { cols--; acc = 1f; setNow(cols) }
+                else if (acc < 0.77f && cols < 6) { cols++; acc = 1f; setNow(cols) }
             }
         } while (ev.changes.any { it.pressed })
     }
+  }
 }
 
 private sealed interface GridRow {

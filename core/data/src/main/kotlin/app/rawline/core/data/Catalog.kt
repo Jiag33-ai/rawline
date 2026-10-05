@@ -21,6 +21,9 @@ class Catalog(private val context: Context, private val db: RawlineDb, private v
     suspend fun loadRecipe(p: Photo): EditRecipe? = edits.get(p.key)?.let { runCatching { EditRecipe.fromJson(it.json) }.getOrNull() }
 
     suspend fun saveRecipe(p: Photo, r: EditRecipe) {
+        // A stored recipe we could not read (for example written by a newer build) must not be deleted just because
+        // the editor opened with defaults and the user changed nothing.
+        if (r.isDefault && edits.get(p.key)?.let { runCatching { EditRecipe.fromJson(it.json) }.isFailure } == true) return
         if (r.isDefault) { edits.delete(p.key); photos.setEdited(p.id, false) }
         else { edits.put(EditEntity(p.key, r.toJson(), System.currentTimeMillis())); photos.setEdited(p.id, true) }
     }

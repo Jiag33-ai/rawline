@@ -79,9 +79,11 @@ class Exporter(
             if (recipe.detail.aiDenoise && denoise != null) {
                 kotlinx.coroutines.runBlocking { denoise.invoke(handle, recipe.detail.aiDenoiseAmount) { onProgress(it * 0.4f) } }
             }
-            if (!Native.engineSetSource(engine, handle)) throw IllegalStateException("GPU upload failed")
-            Native.engineSetBaseCurve(engine, photo.kind == Kind.RAW)
+            // engineSetSource frees the CPU image whether or not the upload worked, so drop our handle before checking.
+            val uploaded = Native.engineSetSource(engine, handle)
             handle = 0L
+            if (!uploaded) throw IllegalStateException("GPU upload failed")
+            Native.engineSetBaseCurve(engine, photo.kind == Kind.RAW)
 
             // Mask layers (brush and AI) and heal overlay
             val layers = HashMap<String, Int>()
