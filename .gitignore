@@ -9,3 +9,4 @@ local.properties
 .idea/
 .cxx/
 .android-sdk/
+.kotlin/
