@@ -204,10 +204,10 @@ class EditorSession(
         val gen = generation
         scope.launch {
             val t0 = System.nanoTime()
-            val handle = decodeFor(p, half = false)
-            if (handle == 0L) return@launch
+            val handle = try { decodeFor(p, half = false) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; 0L }
+            if (handle == 0L) { if (gen == generation) fullRequested = false; return@launch }  // let a later zoom try again
             onTiming("full_decode_ms", (System.nanoTime() - t0) / 1_000_000)
-            maybeDenoise(handle)
+            try { maybeDenoise(handle) } catch (e: Throwable) { Native.freeRaw(handle); throw e }
             post {
                 if (gen != generation || engine == 0L) { Native.freeRaw(handle); return@post }
                 Native.engineSetSource(engine, handle).also { Native.engineSetBaseCurve(engine, !finishedPicture) }

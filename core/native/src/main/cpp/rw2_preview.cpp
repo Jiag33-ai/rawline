@@ -11,6 +11,8 @@ namespace {
 struct Reader {
     int fd;
     bool le = true;
+    int64_t size = 0;           // file size, so claimed lengths can be checked
+    mutable int visits = 0;     // IFDs walked so far: malformed files can point IFDs at each other
 
     bool read(int64_t off, void *buf, size_t len) const {
         auto *p = static_cast<uint8_t *>(buf);
@@ -35,7 +37,7 @@ struct Entry {
 };
 
 void consider(const Reader &r, int64_t off, int64_t len, PreviewInfo &best) {
-    if (len < 1024 || len <= best.length) return;
+    if (len < 1024 || len <= best.length || off <= 0 || len > (int64_t(128) << 20) || off + len > r.size) return;
     uint8_t m[2];
     if (!r.read(off, m, 2) || m[0] != 0xFF || m[1] != 0xD8) return;
     best.offset = off;
@@ -43,7 +45,7 @@ void consider(const Reader &r, int64_t off, int64_t len, PreviewInfo &best) {
 }
 
 void walkIfd(const Reader &r, int64_t ifdOff, int depth, bool isIfd0, PreviewInfo &best) {
-    if (depth > 3 || ifdOff <= 0) return;
+    if (depth > 3 || ifdOff <= 0 || ++r.visits > 64) return;
     uint8_t cnt[2];
     if (!r.read(ifdOff, cnt, 2)) return;
     int n = r.u16(cnt);
@@ -98,6 +100,9 @@ void walkIfd(const Reader &r, int64_t ifdOff, int depth, bool isIfd0, PreviewInf
 
 bool findEmbeddedPreview(int fd, PreviewInfo &out) {
     Reader r{fd};
+    off_t end = lseek(fd, 0, SEEK_END);
+    if (end <= 0) return false;
+    r.size = end;
     uint8_t h[8];
     if (!r.read(0, h, 8)) return false;
     if (h[0] == 'I' && h[1] == 'I') r.le = true;

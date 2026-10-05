@@ -38,10 +38,12 @@ class ExportService : Service() {
                 running.set(false)
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 nm.cancel(NOTIF_ID)
+                // a job queued after the last check but before running was cleared would otherwise wait for the next export
+                if (runCatching { runBlockingActive() }.getOrDefault(false)) runCatching { androidx.core.content.ContextCompat.startForegroundService(this, Intent(this, ExportService::class.java)) }
             }
             if (ok > 0) nm.notify(NOTIF_ID + 1, NotificationCompat.Builder(this, CHANNEL).setSmallIcon(android.R.drawable.stat_sys_download_done)
                 .setContentTitle("Export finished").setContentText("$ok photos saved").setAutoCancel(true).build())
-            stopSelf()
+            stopSelf(startId)
         }
         return START_NOT_STICKY
     }

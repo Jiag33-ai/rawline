@@ -24,7 +24,8 @@ class RawPrefetch(private val context: Context, private val capacity: Int = 3) {
         if (p.kind != Kind.RAW) return
         synchronized(lock) { if (ready.containsKey(p.id) || !wanted.add(p.id)) return }
         scope.launch {
-            val h = context.contentResolver.openFileDescriptor(Uri.parse(p.uri), "r")?.use { Native.decodeRaw(it.fd, true) } ?: 0L
+            // a deleted file or an unplugged card must not take the app down, and must not leave the photo marked as wanted
+            val h = runCatching { context.contentResolver.openFileDescriptor(Uri.parse(p.uri), "r")?.use { Native.decodeRaw(it.fd, true) } }.getOrNull() ?: 0L
             synchronized(lock) {
                 wanted.remove(p.id)
                 if (h == 0L) return@synchronized

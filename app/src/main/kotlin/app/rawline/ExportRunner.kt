@@ -30,7 +30,7 @@ class ExportRunner(private val context: Context, private val graph: Graph) {
     val progress = MutableStateFlow(ExportProgress())
     @Volatile var cancelled = false
 
-    private val exporter = Exporter(context, graph.maskStore, graph.patchStore) { h, a, p -> Denoiser(context, graph.modelStore).run(h, a, p) }
+    private val exporter = Exporter(context, graph.maskStore, graph.patchStore) { h, a, p -> Denoiser(context, graph.modelStore).let { d -> try { d.run(h, a, p) } finally { d.release() } } }
 
     /** Adds photos to the export queue (kept in the database) and makes sure the service is working through it. */
     suspend fun enqueue(photos: List<Photo>, settings: ExportSettings) {
@@ -85,6 +85,7 @@ class ExportRunner(private val context: Context, private val graph: Graph) {
     fun exportForShare(p: Photo, s: ExportSettings): File? {
         val dir = File(context.cacheDir, "share").apply { mkdirs(); listFiles()?.forEach { it.delete() } }
         val f = File(dir, fileName(p, s, 1))
+        cancelled = false  // a cancel aimed at an earlier queue job must not abort this share
         f.outputStream().use { out -> write(p, s.copy(destination = null), out, f.toURI().toString(), null) ?: return null }
         applyExif(f, p, s)
         return f
@@ -98,6 +99,7 @@ class ExportRunner(private val context: Context, private val graph: Graph) {
         if (s.format == ExportFormat.JPEG && s.metadata != MetadataMode.NONE) runCatching {
             context.contentResolver.openFileDescriptor(uri, "rw")?.use { pfd -> writeExif(ExifInterface(pfd.fileDescriptor), p, s) }
         }
+        if (uri.authority == MediaStore.AUTHORITY) runCatching { context.contentResolver.update(uri, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null) }
         return uri
     }
 
@@ -110,8 +112,8 @@ class ExportRunner(private val context: Context, private val graph: Graph) {
         val res = exporter.render(p, recipe, s, if (s.format == ExportFormat.TIFF16) out else null, { onFraction?.invoke(it) }, { cancelled }) ?: return null
         val bmp = res.bitmap ?: return Unit
         when (s.format) {
-            ExportFormat.JPEG -> bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, s.quality, out)
-            ExportFormat.PNG -> bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+            ExportFormat.JPEG -> if (!bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, s.quality, out)) throw java.io.IOException("Could not encode the JPEG")
+            ExportFormat.PNG -> if (!bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)) throw java.io.IOException("Could not encode the PNG")
             ExportFormat.TIFF16 -> {}
         }
         bmp.recycle()
@@ -163,6 +165,7 @@ class ExportRunner(private val context: Context, private val graph: Graph) {
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, name); put(MediaStore.Images.Media.MIME_TYPE, mime)
             put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Rawline")
+            put(MediaStore.Images.Media.IS_PENDING, 1)  // hidden from the gallery until fully written, so a kill never leaves a truncated photo
         }
         val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return null
         return (context.contentResolver.openOutputStream(uri, "wt") ?: return null) to uri

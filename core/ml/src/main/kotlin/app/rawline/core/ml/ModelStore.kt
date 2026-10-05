@@ -22,20 +22,22 @@ class ModelPack(
     /** zip entry name -> local file name; empty when [url] is the tflite file itself */
     val files: Map<String, String>, val localName: String? = null,
     val licence: String,
+    /** SHA-256 of the downloaded file (the zip, for zip packs). Null only for a link that is not versioned. */
+    val sha256: String? = null,
 )
 
 object Models {
     private const val AI_HUB = "https://qaihub-public-assets.s3.us-west-2.amazonaws.com/qai-hub-models/models"
     val SKY = ModelPack("sky", "Sky selection (SegFormer-B0, ADE20K)", 14, "$AI_HUB/segformer_base/releases/v0.63.0/segformer_base-tflite-float.zip",
-        mapOf("segformer_base-tflite-float/segformer_base.tflite" to "segformer_base.tflite"), licence = "Apache-2.0 (weights: NVIDIA SegFormer, ADE20K)")
+        mapOf("segformer_base-tflite-float/segformer_base.tflite" to "segformer_base.tflite"), licence = "Apache-2.0 (weights: NVIDIA SegFormer, ADE20K)", sha256 = "b0e33bf0f570d7914cef1aeac32cf29ddaaf2a7a8f8d7c1bbbfd79c4b5ae8f91")
     val PEOPLE = ModelPack("people", "People parts (MediaPipe selfie multiclass)", 16, "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite",
         emptyMap(), localName = "selfie_multiclass.tflite", licence = "Apache-2.0 (Google MediaPipe)")
     val SAM = ModelPack("sam", "Select object (MobileSAM)", 40, "$AI_HUB/mobilesam/releases/v0.63.0/mobilesam-tflite-float.zip",
-        mapOf("mobilesam-tflite-float/encoder.tflite" to "sam_encoder.tflite", "mobilesam-tflite-float/decoder.tflite" to "sam_decoder.tflite"), licence = "Apache-2.0 (MobileSAM)")
+        mapOf("mobilesam-tflite-float/encoder.tflite" to "sam_encoder.tflite", "mobilesam-tflite-float/decoder.tflite" to "sam_decoder.tflite"), licence = "Apache-2.0 (MobileSAM)", sha256 = "45e320f177fe4ce552b47f0ef47e5b071f1942cb3116e97fd4396efc7a7d956e")
     val LAMA = ModelPack("lama", "Remove objects (LaMa)", 170, "$AI_HUB/lama_dilated/releases/v0.63.0/lama_dilated-tflite-float.zip",
-        mapOf("lama_dilated-tflite-float/lama_dilated.tflite" to "lama_dilated.tflite"), licence = "Apache-2.0 (LaMa)")
+        mapOf("lama_dilated-tflite-float/lama_dilated.tflite" to "lama_dilated.tflite"), licence = "Apache-2.0 (LaMa)", sha256 = "dfa642cdbf04d04d8968752f4b90cae9e7a3219da3a8512a855fcf596d6c808f")
     val DENOISE = ModelPack("denoise", "AI denoise (NAFNet)", 430, "$AI_HUB/nafnet_denoise/releases/v0.63.0/nafnet_denoise-tflite-float.zip",
-        mapOf("nafnet_denoise-tflite-float/nafnet_denoise.tflite" to "nafnet_denoise.tflite"), licence = "MIT (NAFNet)")
+        mapOf("nafnet_denoise-tflite-float/nafnet_denoise.tflite" to "nafnet_denoise.tflite"), licence = "MIT (NAFNet)", sha256 = "07fb400df30fe54f0a4c51c3d790a82768953c9c77c86695046ebe2d82e8be03")
     val ALL = listOf(SKY, PEOPLE, SAM, LAMA, DENOISE)
 }
 
@@ -82,37 +84,55 @@ class ModelStore(context: Context) {
     }
 
     private fun download(p: ModelPack) {
-        var conn = URL(p.url).openConnection() as HttpURLConnection
-        conn.connectTimeout = 20000; conn.readTimeout = 30000
+        fun open(u: String): HttpURLConnection {
+            require(u.startsWith("https://")) { "Refusing a non-https model link" }
+            return (URL(u).openConnection() as HttpURLConnection).apply { connectTimeout = 20000; readTimeout = 30000; instanceFollowRedirects = false }
+        }
+        var conn = open(p.url)
         var redirects = 0
         while (conn.responseCode in 300..399 && redirects++ < 5) {
             val loc = conn.getHeaderField("Location") ?: break
-            conn = URL(loc).openConnection() as HttpURLConnection
-            conn.connectTimeout = 20000; conn.readTimeout = 30000
+            conn = open(URL(URL(p.url), loc).toString())
         }
         if (conn.responseCode != 200) throw IllegalStateException("HTTP ${conn.responseCode}")
         val total = conn.contentLengthLong.takeIf { it > 0 } ?: (p.approxMb * 1_000_000L)
         var read = 0L
         val progress = { n: Int -> read += n; set(p, PackState(false, true, (read.toFloat() / total).coerceIn(0f, 1f))) }
-        conn.inputStream.use { raw ->
-            if (p.files.isEmpty()) {
-                val tmp = File(dir, p.localName + ".part")
-                tmp.outputStream().use { out -> copy(raw, out, progress) }
-                if (!tmp.renameTo(file(p.localName!!))) throw IllegalStateException("rename failed")
-            } else {
-                ZipInputStream(raw).use { z ->
-                    var e = z.nextEntry
-                    while (e != null) {
-                        val local = p.files[e.name]
-                        if (local != null) {
-                            val tmp = File(dir, "$local.part")
-                            tmp.outputStream().use { out -> copy(z, out, progress) }
-                            if (!tmp.renameTo(file(local))) throw IllegalStateException("rename failed")
+        val declared = conn.contentLengthLong
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        val parts = ArrayList<Pair<File, File>>()   // finished .part file -> final name, renamed only after the checksum matches
+        try {
+            conn.inputStream.use { rawIn ->
+                val raw = java.security.DigestInputStream(rawIn, digest)
+                if (p.files.isEmpty()) {
+                    val tmp = File(dir, p.localName + ".part")
+                    tmp.outputStream().use { out -> copy(raw, out, progress) }
+                    parts += tmp to file(p.localName!!)
+                } else {
+                    ZipInputStream(raw).use { z ->
+                        var e = z.nextEntry
+                        while (e != null) {
+                            val local = p.files[e.name]
+                            if (local != null) {
+                                val tmp = File(dir, "$local.part")
+                                tmp.outputStream().use { out -> copy(z, out, progress) }
+                                parts += tmp to file(local)
+                            }
+                            e = z.nextEntry
                         }
-                        e = z.nextEntry
+                        copy(raw, java.io.OutputStream.nullOutputStream()) {}   // the checksum covers the whole zip, including its trailer
                     }
                 }
             }
+            val received = parts.sumOf { it.first.length() }
+            if (p.files.isEmpty() && declared > 0 && received != declared) throw IllegalStateException("download cut short ($received of $declared bytes)")
+            val got = digest.digest().joinToString("") { "%02x".format(it) }
+            if (p.sha256 != null && !got.equals(p.sha256, ignoreCase = true)) throw IllegalStateException("download does not match the expected checksum")
+            parts.forEach { (tmp, final) -> if (!tmp.renameTo(final)) throw IllegalStateException("rename failed") }
+        } catch (e: Exception) {
+            // never leave half written files behind: they would count as ready models on the next launch
+            dir.listFiles { f -> f.name.endsWith(".part") }?.forEach { it.delete() }
+            throw e
         }
         if (!isReady(p)) throw IllegalStateException("files missing after download")
     }

@@ -21,6 +21,9 @@ class Catalog(private val context: Context, private val db: RawlineDb, private v
     suspend fun loadRecipe(p: Photo): EditRecipe? = edits.get(p.key)?.let { runCatching { EditRecipe.fromJson(it.json) }.getOrNull() }
 
     suspend fun saveRecipe(p: Photo, r: EditRecipe) {
+        // A stored recipe we could not read (for example written by a newer build) must not be deleted just because
+        // the editor opened with defaults and the user changed nothing.
+        if (r.isDefault && edits.get(p.key)?.let { runCatching { EditRecipe.fromJson(it.json) }.isFailure } == true) return
         if (r.isDefault) { edits.delete(p.key); photos.setEdited(p.id, false) }
         else { edits.put(EditEntity(p.key, r.toJson(), System.currentTimeMillis())); photos.setEdited(p.id, true) }
     }
@@ -168,6 +171,9 @@ object Xmp {
         val parent = DocumentsContract.buildDocumentUriUsingTree(tree, parentId)
         val name = sidecarName(p.name)
         val existing = DocumentsContract.buildDocumentUriUsingTree(tree, "$parentId/$name")
+        // A sidecar from Lightroom or another editor holds develop settings we do not write: leave it alone.
+        val old = runCatching { context.contentResolver.openInputStream(existing)?.use { String(it.readBytes(), Charsets.UTF_8) } }.getOrNull()
+        if (old != null && !old.contains("rawline:")) return false
         val target = runCatching { context.contentResolver.openOutputStream(existing, "wt")?.also { } }.getOrNull()
             ?: DocumentsContract.createDocument(context.contentResolver, parent, "application/rdf+xml", name)?.let { context.contentResolver.openOutputStream(it, "wt") }
             ?: return false

@@ -100,7 +100,8 @@ fun EditorHost(photo: Photo, graph: Graph, neighbors: List<Photo>, copied: EditR
     var saving by remember { mutableStateOf(false) }
     var lastSwipe by remember { mutableStateOf(0L) }
     val showSaving by androidx.compose.runtime.produceState(false, saving) { if (saving) { delay(150); value = true } else value = false }
-    val leave = { if (!saving) { saving = true; saveJob?.cancel(); onLeftEdited(st.recipe); scope.launch { try { graph.catalog.saveRecipe(photo, st.recipe) } finally { onBack() } } }; Unit }
+    // If the write fails (disk full, database error) stay in the editor so Back can try again instead of freezing.
+    val leave = { if (!saving) { saving = true; saveJob?.cancel(); onLeftEdited(st.recipe); scope.launch { try { graph.catalog.saveRecipe(photo, st.recipe); onBack() } catch (e: kotlin.coroutines.cancellation.CancellationException) { throw e } catch (e: Throwable) { app.rawline.core.cache.PerfLog.error("save ${photo.name}: ${e.message}"); saving = false } } }; Unit }
     androidx.activity.compose.BackHandler { leave() }
     val mk = masking ?: return
     val rm = remove ?: return
