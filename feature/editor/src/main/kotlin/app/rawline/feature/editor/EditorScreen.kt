@@ -200,6 +200,7 @@ fun EditorScreen(
 
     val tabNow by androidx.compose.runtime.rememberUpdatedState(tab)
     val openNow by androidx.compose.runtime.rememberUpdatedState(open)
+    val lightSubNow by androidx.compose.runtime.rememberUpdatedState(lightSub)
     val modeNow by androidx.compose.runtime.rememberUpdatedState(mode)
     val zoomNow by androidx.compose.runtime.rememberUpdatedState(zoom)
     val gesturesNow by androidx.compose.runtime.rememberUpdatedState(toolGestures)
@@ -243,7 +244,7 @@ fun EditorScreen(
                                     }
                                 },
                                 onTap = { p ->
-                                    if (mode == PhotoMode.NONE && !isCrop && open && !(tab == "light" && lightSub == "curve") && toolGestures(activeTabNow(), PhotoMapper(session, viewW, viewH)) == null) open = false
+                                    if (mode == PhotoMode.NONE && !isCrop && openNow && !(tabNow == "light" && lightSubNow == "curve") && toolGestures(activeTabNow(), PhotoMapper(session, viewW, viewH)) == null) open = false
                                     if (mode == PhotoMode.PICK_WB) {
                                         val m = session.mapPoint(p.x, p.y, viewW, viewH) ?: return@detectTapGestures
                                         scope.launch {

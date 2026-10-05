@@ -27,6 +27,7 @@ SAMPLE="$W/P1055415.RW2"
 SCENES=(
   "base|"
   "tone|exposure=0.8 shadows=60 highlights=-40 contrast=15"
+  "curve|curve=0.3"
   "colour|temp=25 tint=-10 saturation=20 vibrance=30"
   "local|clarity=40 texture=30 dehaze=25"
   "mask|maskexp=-1.5"

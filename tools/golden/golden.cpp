@@ -95,6 +95,10 @@ int main(int argc, char **argv) {
             p[G_LTCA] = 1.0005613f; p[G_LTCA + 2] = -0.0002213f; p[G_LTCA + 3] = 0.9996489f; p[G_LTCA + 5] = 0.0002051f; p[G_LTCA_ON] = v;
             p[G_LVIG] = -0.8703127f; p[G_LVIG + 1] = 0.1721043f; p[G_LVIG + 2] = -0.1557695f; p[G_LVIG_ON] = v;
         }
+        else if (k == "curve") {   // master tone curve: an S (contrast up), switched on through the block flag exactly as the app does
+            p[kOffBlocks + 60] = 1.f;
+            for (int i = 0; i < kCurveSize; i++) { float x = i / 255.f; p[kOffCurves + i] = std::min(1.f, std::max(0.f, (getenv("CURVE_SQ") ? x * x : getenv("CURVE_LIN") ? x * v : x - 0.15f * v * float(std::sin(6.2831853 * x))))); }
+        }
         else if (k == "maskexp") {   // linear gradient mask 0 with exposure delta
             float *m = p.data() + kOffMasks;
             m[0] = 1; m[1] = 1; m[2] = 0; m[3] = 0;                 // header: 1 component, amount 1

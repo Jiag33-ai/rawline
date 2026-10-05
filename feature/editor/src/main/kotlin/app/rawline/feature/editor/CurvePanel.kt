@@ -75,7 +75,13 @@ fun CurveGraph(state: EditorState, target: AdjustTarget, hist: IntArray?, channe
                     onDragStart = { p ->
                         val w = size.width.toFloat(); val h = size.height.toFloat()
                         val pts = pointsOf(target.get(state.recipe).curves, channel).ifEmpty { listOf(CurvePoint(0f, 0f), CurvePoint(1f, 1f)).also { l -> update { l } } }
-                        dragging = pts.indexOfFirst { hypot(it.x * w - p.x, (1 - it.y) * h - p.y) < 40f }
+                        val near = pts.indexOfFirst { hypot(it.x * w - p.x, (1 - it.y) * h - p.y) < 40f }
+                        if (near >= 0) dragging = near else {
+                            // pressing on empty graph and dragging makes a new point under the finger, so a curve can be shaped in one move
+                            val nx = (p.x / w).coerceIn(0.01f, 0.99f); val ny = (1 - p.y / h).coerceIn(0f, 1f)
+                            update { l -> (if (l.isEmpty()) pts else l) + CurvePoint(nx, ny) }
+                            dragging = pts.size
+                        }
                     },
                     onDragEnd = { dragging = -1; state.commit("Curve") },
                     onDragCancel = { dragging = -1; state.commit("Curve") },

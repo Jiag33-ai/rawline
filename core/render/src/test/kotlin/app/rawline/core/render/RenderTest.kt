@@ -43,6 +43,31 @@ class RenderTest {
         assertEquals(-1f, RenderParams.build(r, 1, showMask = 0)[P.G_SHOWMASK])
     }
 
+    @Test fun baseCurveTableMatchesTheEngineHeader() {
+        val text = listOf("../core/native/src/main/cpp/engine/base_curve.h", "../native/src/main/cpp/engine/base_curve.h", "core/native/src/main/cpp/engine/base_curve.h").map(::File).first { it.exists() }.readText().substringAfter('{')
+        val nums = Regex("""\d\.\d+""").findAll(text).map { it.value.toFloat() }.toList()
+        assertEquals(256, nums.size)
+        for (i in 0 until 256) assertEquals(nums[i], BaseCurve.TABLE[i], 1e-6f)
+    }
+
+    @Test fun curveActsOnTheDisplayValueNotTheLinearOne() {
+        val id = FloatArray(256) { it / 255f }
+        for (withBase in listOf(true, false)) {
+            val w = BaseCurve.toWorking(id, withBase)
+            for (k in 0 until 256) assertEquals("identity curve must not move $k (base=$withBase)", k / 255f, w[k], 0.012f)
+        }
+        // a curve that halves display brightness: after the engine's own base curve the shown value must be half of what it was
+        val half = FloatArray(256) { it / 255f * 0.5f }
+        val w = BaseCurve.toWorking(half, true)
+        fun enc(l: Double) = if (l <= 0.0031308) 12.92 * l else 1.055 * Math.pow(l, 1 / 2.4) - 0.055
+        fun base(s: Double): Double { val p = s * 255; val i = p.toInt().coerceAtMost(254); return BaseCurve.TABLE[i] + (BaseCurve.TABLE[i + 1] - BaseCurve.TABLE[i]) * (p - i) }
+        for (k in 40..230 step 10) {
+            val before = base(enc(Math.pow(k / 255.0, 2.2)))
+            val after = base(enc(Math.pow(w[k].toDouble(), 2.2)))
+            assertEquals("display value at $k", before * 0.5, after, 0.02)
+        }
+    }
+
     @Test fun curveLutIsIdentityWithoutPoints_andMonotone() {
         val id = CurveMath.lut(emptyList())
         assertEquals(0f, id[0]); assertEquals(1f, id[255]); assertEquals(0.5f, id[128], 0.01f)
