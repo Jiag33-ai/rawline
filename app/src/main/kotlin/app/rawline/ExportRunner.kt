@@ -85,6 +85,7 @@ class ExportRunner(private val context: Context, private val graph: Graph) {
     fun exportForShare(p: Photo, s: ExportSettings): File? {
         val dir = File(context.cacheDir, "share").apply { mkdirs(); listFiles()?.forEach { it.delete() } }
         val f = File(dir, fileName(p, s, 1))
+        cancelled = false  // a cancel aimed at an earlier queue job must not abort this share
         f.outputStream().use { out -> write(p, s.copy(destination = null), out, f.toURI().toString(), null) ?: return null }
         applyExif(f, p, s)
         return f
