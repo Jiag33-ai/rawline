@@ -58,7 +58,7 @@ float bandWeight(float h, int i) {
     float d = abs(h - BAND[i]);
     d = min(d, 1.0 - d);
     float width = 0.0833;
-    return smoothstep(width * 1.6, 0.0, d);
+    return 1.0 - smoothstep(0.0, width * 1.6, d);
 }
 
 float curveLookup(int block, int ch, float x) {
@@ -211,7 +211,9 @@ float maskAlpha(int m, vec2 p, float asp, vec3 c) {
             v = 1.0 - smoothstep(q.a * (1.0 - r.x), q.a + 1.0e-4, d);
         } else if (type == 5) {     // luminance range: q.x lo, q.y hi, q.z falloff
             float l = pow(max(luma(c), 0.0), 1.0 / 2.2);
-            v = smoothstep(q.x - q.z, q.x, l) * (1.0 - smoothstep(q.y, q.y + q.z, l));
+            // zero falloff is a hard edge: smoothstep with equal edges is undefined, so use step there
+            float fz = max(q.z, 1.0e-4);
+            v = smoothstep(q.x - fz, q.x, l) * (1.0 - smoothstep(q.y, q.y + fz, l));
         }
         if (a.z > 0.5) v = 1.0 - v;
         int op = int(a.y + 0.5);

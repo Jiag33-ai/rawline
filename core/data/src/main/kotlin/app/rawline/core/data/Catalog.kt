@@ -171,6 +171,9 @@ object Xmp {
         val parent = DocumentsContract.buildDocumentUriUsingTree(tree, parentId)
         val name = sidecarName(p.name)
         val existing = DocumentsContract.buildDocumentUriUsingTree(tree, "$parentId/$name")
+        // A sidecar from Lightroom or another editor holds develop settings we do not write: leave it alone.
+        val old = runCatching { context.contentResolver.openInputStream(existing)?.use { String(it.readBytes(), Charsets.UTF_8) } }.getOrNull()
+        if (old != null && !old.contains("rawline:")) return false
         val target = runCatching { context.contentResolver.openOutputStream(existing, "wt")?.also { } }.getOrNull()
             ?: DocumentsContract.createDocument(context.contentResolver, parent, "application/rdf+xml", name)?.let { context.contentResolver.openOutputStream(it, "wt") }
             ?: return false

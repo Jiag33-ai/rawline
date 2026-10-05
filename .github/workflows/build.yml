@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   golden:
@@ -30,6 +30,8 @@ jobs:
   build:
     needs: golden
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # only this job publishes a release
     env:
       GITHUB_RUN_NUMBER: ${{ github.run_number }}
     steps:
@@ -38,6 +40,11 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
+      - uses: actions/cache@v4
+        with:
+          path: .android-sdk
+          key: android-sdk-${{ hashFiles('tools/setup-sdk.sh') }}
+      - uses: gradle/actions/setup-gradle@v4
       - name: Android SDK and NDK
         run: ./tools/setup-sdk.sh
       - name: Unit tests

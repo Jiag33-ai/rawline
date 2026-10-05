@@ -28,7 +28,8 @@ class Graph(context: Context) {
     val modelStore = ModelStore(context)
     val exportRunner by lazy { ExportRunner(context, this) }
     /** Outlives screens: used for saves that must finish after leaving the editor. */
-    val appScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+    val appScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO +
+        kotlinx.coroutines.CoroutineExceptionHandler { _, e -> app.rawline.core.cache.PerfLog.error("background task: ${e.javaClass.simpleName} ${e.message}") })
     val prefs = context.getSharedPreferences("rawline", Context.MODE_PRIVATE)
 }
 

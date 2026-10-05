@@ -19,16 +19,23 @@ Method: static read of the repo by the main session, three read-only reviewers (
 - RW2 preview parser: capped IFD visits (hang on crafted files) and checked claimed JPEG length against the file size.
 - CI: runs on branches and pull requests; the release is only published from main.
 
+## Fixed in the second pass
+- Model downloads: https only, redirects not followed blindly, SHA-256 pinned for the four versioned model zips (checked before any file is kept), cut-short downloads rejected, `.part` files deleted on failure. The People model uses a `/latest/` link, so it has no pinned hash.
+- Crashes: background scope has an exception handler; RAW prefetch, full-resolution decode and Share export no longer crash on a deleted file or GPU failure; a failed full decode can be retried by zooming again and frees its handle.
+- XMP export no longer overwrites a sidecar written by another editor.
+- Export service restarts itself if a job arrives while it is stopping; exported photos stay hidden (IS_PENDING) until fully written.
+- Native: JNI array sizes are checked before use, out-of-memory in raw reads and conversions returns an error instead of aborting, shader `smoothstep` calls no longer use reversed or equal edges.
+- TalkBack and switch access: sliders now report their range and value, can be set, and have a Reset action.
+- Tests: export settings round trip, TIFF header and row checks, model link and checksum checks.
+- CI: Gradle and SDK caching, write permission only on the job that publishes.
+
 ## Still open (ranked)
-1. Model downloads have no hash or size check, follow any redirect, and PEOPLE uses a `/latest/` URL.
-2. Unguarded coroutines (RawPrefetch, ensureFull, share export) can crash on a missing file or GPU failure.
-3. XMP export overwrites an existing Lightroom sidecar.
-4. Export service can strand a job enqueued during shutdown; MediaStore rows lack IS_PENDING.
-5. Restore: old backup overwrites newer ratings, whole zip entries read into memory, not transactional.
-6. Edit key `name|size|modified` collides for identical files in different folders.
-7. DeviceScanner prunes every row on an empty or partial listing; no downgrade path in Room.
-8. JNI array lengths are not checked; C++ exceptions can escape JNI; `setLayer` with a new size wipes other layers; `smoothstep` with reversed or equal edges (main.frag 61, 211, 214) is undefined and may differ on real GPUs.
-9. Accessibility: sliders have no range semantics for TalkBack, several targets under 48 dp, rotation resets library selection.
-10. CI: no lint, no Gradle or SDK cache, actions not pinned, the public sideload key is used when secrets are absent and `contents: write` is granted to every job.
-11. Tests: nothing for library, loupe or core/ui. Cheap targets: `gridRows`, `exifLine`, slider maths, `EditorState` history.
-12. Crop "Help" button does nothing.
+1. Restore from backup: old backup overwrites newer ratings, whole zip entries read into memory, not transactional.
+2. Edit key `name|size|modified` collides for identical files in different folders.
+3. DeviceScanner prunes every row on an empty or partial listing; no downgrade path in Room.
+4. `setLayer` with a new size wipes other mask layers; C++ exceptions elsewhere in the engine can still escape JNI.
+5. Touch targets under 48 dp (needs a look on the phone so layouts do not shift); rotation resets library selection; checkbox and toggle semantics.
+6. CI: no lint step, actions not pinned to commit hashes, the public sideload key signs builds when secrets are absent.
+7. Tests: nothing for library, loupe or core/ui screens.
+8. Crop "Help" button does nothing.
+9. The People model link is not versioned, so it cannot be hash-pinned.

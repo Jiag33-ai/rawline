@@ -99,6 +99,7 @@ class ExportRunner(private val context: Context, private val graph: Graph) {
         if (s.format == ExportFormat.JPEG && s.metadata != MetadataMode.NONE) runCatching {
             context.contentResolver.openFileDescriptor(uri, "rw")?.use { pfd -> writeExif(ExifInterface(pfd.fileDescriptor), p, s) }
         }
+        if (uri.authority == MediaStore.AUTHORITY) runCatching { context.contentResolver.update(uri, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null) }
         return uri
     }
 
@@ -164,6 +165,7 @@ class ExportRunner(private val context: Context, private val graph: Graph) {
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, name); put(MediaStore.Images.Media.MIME_TYPE, mime)
             put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Rawline")
+            put(MediaStore.Images.Media.IS_PENDING, 1)  // hidden from the gallery until fully written, so a kill never leaves a truncated photo
         }
         val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return null
         return (context.contentResolver.openOutputStream(uri, "wt") ?: return null) to uri

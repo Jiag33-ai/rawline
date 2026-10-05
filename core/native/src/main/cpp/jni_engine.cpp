@@ -23,6 +23,12 @@ struct ParamsRef {
     ParamsRef(JNIEnv *e, jfloatArray a) : env(e), arr(a), p(e->GetFloatArrayElements(a, nullptr)) {}
     ~ParamsRef() { env->ReleaseFloatArrayElements(arr, p, JNI_ABORT); }
 };
+
+// True when the Java array holds at least `count` elements and the dimensions are sane, so native code never reads or writes past it.
+bool fits(JNIEnv *env, jarray a, jint w, jint h, int perPixel) {
+    if (!a || w <= 0 || h <= 0 || w > 65536 || h > 65536) return false;
+    return size_t(env->GetArrayLength(a)) >= size_t(w) * size_t(h) * size_t(perPixel);
+}
 }  // namespace
 
 extern "C" {
@@ -43,11 +49,15 @@ JNIEXPORT jlong JNICALL Java_app_rawline_core_nativelib_Native_decodeRaw(JNIEnv 
 }
 
 JNIEXPORT jlong JNICALL Java_app_rawline_core_nativelib_Native_rawFromRgba(JNIEnv *env, jobject, jbyteArray px, jint w, jint h) {
-    auto *img = new RawImage();
-    jbyte *p = env->GetByteArrayElements(px, nullptr);
-    rawFromSrgb8(reinterpret_cast<uint8_t *>(p), w, h, *img);
-    env->ReleaseByteArrayElements(px, p, JNI_ABORT);
-    return reinterpret_cast<jlong>(img);
+    if (!fits(env, px, w, h, 4)) return 0;
+    std::unique_ptr<RawImage> img;
+    try {
+        img = std::make_unique<RawImage>();
+        jbyte *p = env->GetByteArrayElements(px, nullptr);
+        rawFromSrgb8(reinterpret_cast<uint8_t *>(p), w, h, *img);
+        env->ReleaseByteArrayElements(px, p, JNI_ABORT);
+    } catch (...) { LOGE("rawFromRgba: out of memory"); return 0; }
+    return reinterpret_cast<jlong>(img.release());
 }
 
 JNIEXPORT jintArray JNICALL Java_app_rawline_core_nativelib_Native_rawInfo(JNIEnv *env, jobject, jlong h) {
@@ -88,6 +98,7 @@ JNIEXPORT jboolean JNICALL Java_app_rawline_core_nativelib_Native_engineSetSourc
 }
 
 JNIEXPORT void JNICALL Java_app_rawline_core_nativelib_Native_engineSetLayer(JNIEnv *env, jobject, jlong h, jint idx, jbyteArray data, jint w, jint hgt) {
+    if (!fits(env, data, w, hgt, 1)) return;
     jbyte *p = env->GetByteArrayElements(data, nullptr);
     reinterpret_cast<Engine *>(h)->setLayer(idx, reinterpret_cast<uint8_t *>(p), w, hgt);
     env->ReleaseByteArrayElements(data, p, JNI_ABORT);
@@ -96,12 +107,14 @@ JNIEXPORT void JNICALL Java_app_rawline_core_nativelib_Native_engineSetLayer(JNI
 // RGBA half float, premultiplied, linear working space. null clears.
 JNIEXPORT void JNICALL Java_app_rawline_core_nativelib_Native_engineSetOverlay(JNIEnv *env, jobject, jlong h, jshortArray data, jint w, jint hgt) {
     if (!data) { reinterpret_cast<Engine *>(h)->setOverlay(nullptr, 0, 0); return; }
+    if (!fits(env, data, w, hgt, 4)) return;
     jshort *p = env->GetShortArrayElements(data, nullptr);
     reinterpret_cast<Engine *>(h)->setOverlay(reinterpret_cast<uint8_t *>(p), w, hgt);
     env->ReleaseShortArrayElements(data, p, JNI_ABORT);
 }
 
 JNIEXPORT void JNICALL Java_app_rawline_core_nativelib_Native_engineUpdateOverlay(JNIEnv *env, jobject, jlong h, jint x, jint y, jint w, jint hgt, jshortArray data) {
+    if (!fits(env, data, w, hgt, 4) || x < 0 || y < 0) return;
     jshort *p = env->GetShortArrayElements(data, nullptr);
     reinterpret_cast<Engine *>(h)->updateOverlayRegion(x, y, w, hgt, reinterpret_cast<uint8_t *>(p));
     env->ReleaseShortArrayElements(data, p, JNI_ABORT);
@@ -124,7 +137,9 @@ JNIEXPORT jfloatArray JNICALL Java_app_rawline_core_nativelib_Native_baseCurve(J
 // Linear working space values (rgb floats, 3 per pixel) of a rectangle of a decoded raw.
 JNIEXPORT jfloatArray JNICALL Java_app_rawline_core_nativelib_Native_rawRead(JNIEnv *env, jobject, jlong h, jint x, jint y, jint w, jint hgt) {
     auto *img = reinterpret_cast<RawImage *>(h);
-    std::vector<float> out(size_t(w) * hgt * 3);
+    if (w <= 0 || hgt <= 0 || w > 16384 || hgt > 16384) return env->NewFloatArray(0);
+    std::vector<float> out;
+    try { out.resize(size_t(w) * hgt * 3); } catch (...) { return env->NewFloatArray(0); }
     for (int j = 0; j < hgt; j++)
         for (int i = 0; i < w; i++) {
             int sx = std::min(std::max(x + i, 0), img->width - 1), sy = std::min(std::max(y + j, 0), img->height - 1);
@@ -139,6 +154,7 @@ JNIEXPORT jfloatArray JNICALL Java_app_rawline_core_nativelib_Native_rawRead(JNI
 
 JNIEXPORT void JNICALL Java_app_rawline_core_nativelib_Native_rawWrite(JNIEnv *env, jobject, jlong h, jint x, jint y, jint w, jint hgt, jfloatArray data) {
     auto *img = reinterpret_cast<RawImage *>(h);
+    if (!fits(env, data, w, hgt, 3)) return;
     jfloat *p = env->GetFloatArrayElements(data, nullptr);
     for (int j = 0; j < hgt; j++)
         for (int i = 0; i < w; i++) {
@@ -170,6 +186,7 @@ JNIEXPORT void JNICALL Java_app_rawline_core_nativelib_Native_engineRender(
 // Renders a region into a Java byte array (RGBA8, top row first). Used for tiles, histogram and thumbnails.
 JNIEXPORT jboolean JNICALL Java_app_rawline_core_nativelib_Native_engineRenderRegion(
     JNIEnv *env, jobject, jlong h, jfloatArray params, jint pw, jint ph, jfloat x, jfloat y, jfloat w, jfloat hgt, jbyteArray out) {
+    if (!fits(env, out, pw, ph, 4)) return false;
     ParamsRef pr(env, params);
     jbyte *o = env->GetByteArrayElements(out, nullptr);
     bool ok = reinterpret_cast<Engine *>(h)->renderRegion(pr.p, pw, ph, {x, y, w, hgt}, reinterpret_cast<uint8_t *>(o));
@@ -180,6 +197,7 @@ JNIEXPORT jboolean JNICALL Java_app_rawline_core_nativelib_Native_engineRenderRe
 // 16 bit linear sRGB half floats (for TIFF export): out has pw*ph*4 shorts.
 JNIEXPORT jboolean JNICALL Java_app_rawline_core_nativelib_Native_engineRenderRegionHalf(
     JNIEnv *env, jobject, jlong h, jfloatArray params, jint pw, jint ph, jfloat x, jfloat y, jfloat w, jfloat hgt, jshortArray out) {
+    if (!fits(env, out, pw, ph, 4)) return false;
     ParamsRef pr(env, params);
     jshort *o = env->GetShortArrayElements(out, nullptr);
     bool ok = reinterpret_cast<Engine *>(h)->renderRegion(pr.p, pw, ph, {x, y, w, hgt}, nullptr, true, reinterpret_cast<uint16_t *>(o));

@@ -37,7 +37,7 @@ fun ExportSettingsDialog(graph: Graph, sharePhoto: Photo?, onDismiss: () -> Unit
         onExport = onDismiss,
         onShare = if (sharePhoto != null) ({
             graph.appScope.launch {
-                val f = withContext(Dispatchers.IO) { graph.exportRunner.exportForShare(sharePhoto, settings) }
+                val f = runCatching { withContext(Dispatchers.IO) { graph.exportRunner.exportForShare(sharePhoto, settings) } }.onFailure { app.rawline.core.cache.PerfLog.error("share export: ${it.message}") }.getOrNull()
                 if (f != null) {
                     val uri = FileProvider.getUriForFile(context, context.packageName + ".files", f)
                     val send = Intent(Intent.ACTION_SEND).setType(settings.format.mime).putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)

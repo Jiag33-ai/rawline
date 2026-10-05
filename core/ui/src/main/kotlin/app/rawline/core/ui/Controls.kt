@@ -65,6 +65,10 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.setProgress
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.Dp
@@ -132,7 +136,14 @@ fun RawSlider(
     val currentText by rememberUpdatedState(shownValue)
     val currentValue by rememberUpdatedState(value)
     Box(
-        modifier.fillMaxWidth().height(LrDim.sliderBlock).semantics { contentDescription = "$label $text$unit" }
+        modifier.fillMaxWidth().height(LrDim.sliderBlock).semantics {
+            // TalkBack and switch access can read and change the value, and reset it, without a touch drag
+            contentDescription = label
+            stateDescription = shownValue
+            progressBarRangeInfo = androidx.compose.ui.semantics.ProgressBarRangeInfo(value.coerceIn(range.start, range.endInclusive), range.start..range.endInclusive)
+            setProgress { v -> currentChange(v.coerceIn(range.start, range.endInclusive)); currentCommit(); true }
+            customActions = listOf(androidx.compose.ui.semantics.CustomAccessibilityAction("Reset $label") { currentChange(default); currentCommit(); true })
+        }
             .pointerInput(range) { detectTapGestures(onDoubleTap = { currentChange(default); currentCommit() }) }
             .pointerInput(range) {
                 awaitEachGesture {
