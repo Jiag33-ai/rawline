@@ -53,6 +53,13 @@ data class LayerBinding(val key: String, val index: Int)
 
 object RenderParams {
 
+    /**
+     * Parameters for rendering a source region that becomes a heal or remove patch. The patch is laid over the raw before the
+     * main adjustment pass, which applies the baseline look itself, so the patch must be rendered without it (otherwise the
+     * patched area gets the baseline saturation, texture, clarity and sharpening twice).
+     */
+    fun patchSource(): FloatArray = build(EditRecipe(), 1, emptyMap(), overlayOn = false, useBaseline = false)
+
     /** The lens distortion polynomial the shader will apply for this recipe, or null when lens correction is off or the profile has none. */
     fun lensDistFor(recipe: EditRecipe, lens: LensCorrection?): FloatArray? = if (recipe.optics.lensCorrection) lens?.dist else null
 

@@ -62,7 +62,7 @@ class EditorSession(
         override fun onDrawFrame(gl: GL10?) = this@EditorSession.onDrawFrame()
     }
 
-    private var engine = 0L
+    @Volatile private var engine = 0L
     private var surfaceW = 1
     private var surfaceH = 1
     private var photo: Photo? = null
@@ -89,9 +89,8 @@ class EditorSession(
     /** Bumps whenever the output size changes (crop, rotate, straighten) so the UI recomputes the fit rectangle. */
     val outputRevision: StateFlow<Int> = _outputRevision
     private val layers = LinkedHashMap<String, Int>()
-    /** Layer bytes kept so a lost GL context can be refilled without the masking code. */
-    private class LayerData(val alpha: ByteArray, val w: Int, val h: Int)
-    private val layerData = HashMap<String, LayerData>()
+    /** Layer bytes kept (deflated, masks are mostly flat) so a lost GL context can be refilled without the masking code. */
+    private val layerData = HashMap<String, LayerPack.Packed>()
     /** Called on the GL thread after a lost context was rebuilt, so the owner of the heal overlay can send it again. */
     @Volatile var onContextRestored: (() -> Unit)? = null
     @Volatile private var released = false
@@ -123,7 +122,7 @@ class EditorSession(
                 val decodeMs = (System.nanoTime() - t0) / 1_000_000
                 onTiming("edit_decode_ms", decodeMs)
                 try { maybeDenoise(handle) } catch (e: Throwable) { Native.freeRaw(handle); throw e }
-                post {
+                post(onDrop = { Native.freeRaw(handle) }) {
                     if (gen != generation || engine == 0L) { Native.freeRaw(handle); return@post }
                     val u0 = System.nanoTime()
                     val ok = Native.engineSetSource(engine, handle).also { Native.engineSetBaseCurve(engine, !finishedPicture) }
@@ -152,10 +151,13 @@ class EditorSession(
 
     /** Binds an 8 bit alpha mask (brush, AI) to a key. The mask covers the whole image (stretched to the layer size). */
     fun setLayer(key: String, alpha: ByteArray, w: Int, h: Int) {
+        val packed = LayerPack.pack(alpha, w, h)   // outside the lock: compressing takes a few ms
+        // one block: the slot and the saved bytes change together, so removeLayer can never leave an orphan between them
         val idx = synchronized(layers) {
-            layers[key] ?: (0 until P.MAX_LAYERS).firstOrNull { it !in layers.values }?.also { layers[key] = it }
+            val i = layers[key] ?: (0 until P.MAX_LAYERS).firstOrNull { it !in layers.values }?.also { layers[key] = it }
+            if (i != null) layerData[key] = packed
+            i
         } ?: return
-        synchronized(layers) { layerData[key] = LayerData(alpha, w, h) }
         post { Native.engineSetLayer(engine, idx, alpha, w, h); rebuild(); requestRender() }
     }
 
@@ -186,8 +188,8 @@ class EditorSession(
      */
     suspend fun renderSource(x: Float, y: Float, w: Float, h: Float, pw: Int, ph: Int): android.graphics.Bitmap? {
         val d = CompletableDeferred<android.graphics.Bitmap?>()
-        post {
-            val arr = RenderParams.build(EditRecipe(), 1, emptyMap(), overlayOn = false, useBaseline = !finishedPicture)
+        post(onDrop = { d.complete(null) }) {
+            val arr = RenderParams.patchSource()
             val buf = ByteArray(pw * ph * 4)
             if (!Native.engineRenderRegion(engine, arr, pw, ph, x, y, w, h, buf)) { d.complete(null); return@post }
             val px = IntArray(pw * ph) { i -> (0xFF shl 24) or ((buf[i * 4].toInt() and 0xFF) shl 16) or ((buf[i * 4 + 1].toInt() and 0xFF) shl 8) or (buf[i * 4 + 2].toInt() and 0xFF) }
@@ -215,7 +217,7 @@ class EditorSession(
             if (handle == 0L) { if (gen == generation) fullRequested = false; return@launch }  // let a later zoom try again
             onTiming("full_decode_ms", (System.nanoTime() - t0) / 1_000_000)
             try { maybeDenoise(handle) } catch (e: Throwable) { Native.freeRaw(handle); throw e }
-            post {
+            post(onDrop = { Native.freeRaw(handle) }) {
                 if (gen != generation || engine == 0L) { Native.freeRaw(handle); return@post }
                 Native.engineSetSource(engine, handle).also { Native.engineSetBaseCurve(engine, !finishedPicture) }
                 rebuild()
@@ -230,7 +232,7 @@ class EditorSession(
     /** Display-referred statistics of the unedited image (camera look only). Used by Auto and Auto white balance. */
     suspend fun baseStats(): ImageStats? {
         val d = CompletableDeferred<ImageStats?>()
-        post {
+        post(onDrop = { d.complete(null) }) {
             val arr = RenderParams.build(EditRecipe(geometry = recipe.geometry.copy(cropX = 0f, cropY = 0f, cropW = 1f, cropH = 1f, angle = 0f)), orientation, emptyMap(), useBaseline = !finishedPicture)
             val w = 160
             val ow = Native.engineOutputSize(engine, arr)
@@ -257,7 +259,7 @@ class EditorSession(
     /** Mean display colour (0..1) in a small square around a point of the shown image, using the current edit. */
     suspend fun sample(nx: Float, ny: Float): FloatArray? {
         val d = CompletableDeferred<FloatArray?>()
-        post {
+        post(onDrop = { d.complete(null) }) {
             val buf = ByteArray(8 * 8 * 4)
             val hw = 0.006f
             val x = (nx - hw).coerceIn(0f, 1f - 2 * hw); val y = (ny - hw).coerceIn(0f, 1f - 2 * hw)
@@ -276,7 +278,7 @@ class EditorSession(
      */
     suspend fun renderFrame(maxEdge: Int): android.graphics.Bitmap? {
         val d = CompletableDeferred<android.graphics.Bitmap?>()
-        post {
+        post(onDrop = { d.complete(null) }) {
             val g = recipe.geometry.copy(cropX = 0f, cropY = 0f, cropW = 1f, cropH = 1f, keystoneV = recipe.geometry.keystoneV, keystoneH = recipe.geometry.keystoneH)
             val arr = RenderParams.build(EditRecipe(geometry = g), orientation, emptyMap(), useBaseline = !finishedPicture)
             val ow = Native.engineOutputSize(engine, arr)
@@ -365,7 +367,7 @@ class EditorSession(
                 appliedDenoise = -1f
                 maybeDenoise(handle)
                 if (!d.aiDenoise) { _status.value = null }
-                post {
+                post(onDrop = { Native.freeRaw(handle) }) {
                     if (gen != generation || engine == 0L) { Native.freeRaw(handle); return@post }
                     Native.engineSetSource(engine, handle).also { Native.engineSetBaseCurve(engine, !finishedPicture) }
                     srcW = info[0]; srcH = info[1]
@@ -375,32 +377,49 @@ class EditorSession(
         }
     }
 
+    /** Safe to call more than once. Anything still waiting for the engine is dropped (its owner frees what it holds). */
     fun release() {
-        released = true
+        val first = synchronized(pending) { if (released) false else { released = true; true } }
+        if (!first) return
         scope.cancel()
         // If the view is already detached its GL thread has stopped and destroyEngine() ran from the detach.
-        if (glView?.isAttachedToWindow == true) destroyEngine()
-        synchronized(pending) { pending.clear() }
+        if (glView?.isAttachedToWindow == true) destroyEngine(wait = false)
+        val dropped = synchronized(pending) { ArrayList(pending).also { pending.clear() } }
+        dropped.forEach { it.drop() }
     }
 
-    /** Destroys the engine on the GL thread and waits briefly for it. Must run before the GL thread stops (view detach). */
-    fun destroyEngine() {
+    /**
+     * Destroys the engine on the GL thread. Must run before the GL thread stops (view detach), where [wait] holds the caller
+     * briefly so the destroy really happens. Repeat calls are harmless: the destroy itself checks for an engine.
+     */
+    fun destroyEngine(wait: Boolean = true) {
         val v = glView ?: return
         synchronized(pending) { glReady = false }
         val done = java.util.concurrent.CountDownLatch(1)
         v.queueEvent { try { if (engine != 0L) { Native.engineDestroy(engine); engine = 0 } } finally { done.countDown() } }
-        done.await(500, java.util.concurrent.TimeUnit.MILLISECONDS)
+        if (wait) done.await(500, java.util.concurrent.TimeUnit.MILLISECONDS)
     }
 
     // ---- internals ----
 
-    private val pending = ArrayList<() -> Unit>()
+    /** A block waiting for the engine. [onDrop] runs instead of it when the engine is gone or the session was released. */
+    private inner class Queued(val block: () -> Unit, val onDrop: (() -> Unit)?) {
+        fun run() { if (engine == 0L) drop() else block() }
+        fun drop() { runCatching { onDrop?.invoke() } }
+    }
+
+    private val pending = ArrayList<Queued>()
     @Volatile private var glReady = false
 
-    /** Runs on the GL thread once the engine exists; earlier calls wait in a queue. */
-    private fun post(block: () -> Unit) {
-        synchronized(pending) { if (!glReady) { pending.add(block); return } }
-        glView?.queueEvent(block)
+    /** Runs on the GL thread once the engine exists; earlier calls wait in a queue. The block re-checks the engine when it runs. */
+    private fun post(onDrop: (() -> Unit)? = null, block: () -> Unit) {
+        val q = Queued(block, onDrop)
+        synchronized(pending) {
+            if (released) { q.drop(); return }
+            if (!glReady) { pending.add(q); return }
+        }
+        val v = glView
+        if (v == null) q.drop() else v.queueEvent { q.run() }
     }
     private fun requestRender() { glView?.requestRender() }
 
@@ -447,12 +466,13 @@ class EditorSession(
         val err = Native.engineInit(engine)
         if (err != null) { _state.value = SessionState(Stage.ERROR, "GPU init failed: $err"); return }
         val wasReady = _state.value.stage == Stage.READY
-        val queued = synchronized(pending) { glReady = true; ArrayList(pending).also { pending.clear() } }
-        queued.forEach { it() }
+        val queued = synchronized(pending) { glReady = !released; ArrayList(pending).also { pending.clear() } }
+        queued.forEach { it.run() }
         // A recreated context lost its textures: bring back the layers and heal overlay, then the photo.
         if (wasReady) {
             val saved = synchronized(layers) { layers.mapNotNull { (k, i) -> layerData[k]?.let { i to it } } }
-            saved.forEach { (i, d) -> Native.engineSetLayer(engine, i, d.alpha, d.w, d.h) }
+            // every layer keeps its own size; the engine resamples each into its fixed layer texture
+            saved.forEach { (i, d) -> LayerPack.unpack(d) { a, w, h -> Native.engineSetLayer(engine, i, a, w, h) } }
             onContextRestored?.invoke()
         }
         photo?.let { if (wasReady) load(it) }

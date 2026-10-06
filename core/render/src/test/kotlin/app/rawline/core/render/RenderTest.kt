@@ -76,6 +76,18 @@ class RenderTest {
         assertTrue(s[64] < 0.25f); assertTrue(s[192] > 0.75f)
     }
 
+    @Test fun patchSourceCarriesNoBaselineLook() {
+        val o = P.OFF_BLOCKS + 9   // saturation of the global block
+        val withBase = RenderParams.build(EditRecipe(), 1, emptyMap(), useBaseline = true)
+        val patch = RenderParams.patchSource()
+        assertEquals(Baseline.SATURATION, withBase[o], 0f)
+        assertEquals(0f, patch[o], 0f)
+        assertEquals(0f, patch[P.OFF_BLOCKS + 10], 0f)   // texture
+        assertEquals(0f, patch[P.OFF_BLOCKS + 11], 0f)   // clarity
+        assertEquals(0f, patch[P.G_DETAIL], 0f)          // sharpen
+        assertEquals(0f, patch[P.G_OVERLAY], 0f)
+    }
+
     @Test fun defaultRecipeGivesIdentityBlocks() {
         val p = RenderParams.build(EditRecipe(), 1, useBaseline = false)
         assertEquals(P.TOTAL, p.size)
