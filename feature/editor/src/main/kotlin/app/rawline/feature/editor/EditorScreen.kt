@@ -160,6 +160,8 @@ fun EditorScreen(
     onPaste: (EditRecipe, String) -> Unit = { _, _ -> },
     onBack: () -> Unit,
     onAiDenoiseChanged: (Boolean) -> Unit = {},
+    /** Studio builds only: makes a new Studio project from this photo as it looks now. Null (and no menu item) in a build without Studio. Develop's edit is not touched. */
+    onOpenInStudio: (() -> Unit)? = null,
 ) {
     val session = state.session
     val ss by session.state.collectAsState()
@@ -568,6 +570,7 @@ fun EditorScreen(
                             LrMenuItem(if (showHist) "Hide histogram" else "Show histogram", { menu = false; showHist = !showHist }, LrIcon.HISTOGRAM)
                             LrMenuItem("Versions and history", { menu = false; tab = "history"; open = true }, LrIcon.VERSIONS)
                             LrMenuItem("Export settings", { menu = false; onExportSettings() }, LrIcon.DOWNLOAD)
+                            if (onOpenInStudio != null) LrMenuItem("Open in Studio", { menu = false; onOpenInStudio() })
                             Box(Modifier.fillMaxWidth().height(1.dp).background(Lr.Divider))
                             // Look version: an edit made before the look update keeps its old rendering until the person moves it (one undoable step)
                             if (state.canUpdateLook) {

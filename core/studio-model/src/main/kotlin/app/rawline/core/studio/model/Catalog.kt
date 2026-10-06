@@ -26,7 +26,8 @@ object ProjectCatalog {
 
     private fun row(fs: Fs, dir: String, id: String): ProjectRow {
         val doc = ProjectStore(fs, dir).open().document
-        val size = fs.list(dir).sumOf { fs.size("$dir/$it") } + fs.list("$dir/layers").sumOf { fs.size("$dir/layers/$it") }
+        val size = fs.list(dir).sumOf { fs.size("$dir/$it") } + fs.list("$dir/layers").sumOf { fs.size("$dir/layers/$it") } +
+            fs.list("$dir/sel").sumOf { fs.size("$dir/sel/$it") } + fs.dirs("$dir/mask").sumOf { m -> fs.list("$dir/mask/$m").sumOf { fs.size("$dir/mask/$m/$it") } }
         return ProjectRow(id, doc.name, doc.width, doc.height, doc.modified, doc.layers.size, size, fs.exists("$dir/thumb.jpg"))
     }
 
@@ -40,6 +41,9 @@ object ProjectCatalog {
         try {
             for (n in fs.list(src)) if (!n.endsWith(".tmp")) fs.write("$dst/$n", fs.read("$src/$n")!!)
             for (n in fs.list("$src/layers")) if (!n.endsWith(".tmp")) fs.write("$dst/layers/$n", fs.read("$src/layers/$n")!!)
+            // schema v2: the selection and every layer mask are tile directories (the copy keeps the layer ids, so the directory names carry over). `source/` (a handed off original) is not copied: it can be large.
+            for (n in fs.list("$src/sel")) if (!n.endsWith(".part")) fs.write("$dst/sel/$n", fs.read("$src/sel/$n")!!)
+            for (m in fs.dirs("$src/mask")) for (n in fs.list("$src/mask/$m")) if (!n.endsWith(".part")) fs.write("$dst/mask/$m/$n", fs.read("$src/mask/$m/$n")!!)
             val store = ProjectStore(fs, dst)
             val doc = store.open().document
             store.save(doc.copy(id = newId, name = (doc.name + " copy").take(60), modified = nowMs), { null }, emptySet())

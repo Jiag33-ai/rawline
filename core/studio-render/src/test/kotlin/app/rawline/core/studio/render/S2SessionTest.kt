@@ -274,4 +274,17 @@ class S2SessionTest {
             assertEquals("seed $seed no errors", emptyList<String>(), x.errors)
         }
     }
+
+    @Test fun theHandOffHookRunsOnceAfterTheFirstSaveAndNotBefore() {
+        val doc = app.rawline.core.studio.model.HandOffPlan.make("pho", "shot.jpg", w, h, previewOnly = false, nowMs = 5).document
+        val x = Harness(doc = doc, pixels = mapOf("l1" to white2(w, h)), onDisk = false)
+        var calls = 0; var sawProject = false
+        x.s.afterFirstSave = { calls++; sawProject = x.fs.exists("${Harness.ROOT}/project.json") }
+        assertEquals(0, calls)
+        x.s.start()
+        assertEquals("runs once the project exists on disk", 1, calls); assertTrue(sawProject)
+        x.s.addLayer(); x.save(); x.save()
+        assertEquals("and never again", 1, calls)
+        assertEquals("develop", x.reopen().first.layers.first { it.common.id == "l1" }.common.origin)
+    }
 }

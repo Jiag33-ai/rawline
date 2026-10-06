@@ -31,6 +31,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import android.widget.Toast
 import app.rawline.core.studio.model.Document
+import app.rawline.core.studio.model.HandOffRequest
 import app.rawline.core.studio.model.Layer
 import app.rawline.core.studio.model.LayerCommon
 import app.rawline.core.studio.model.NewProject
@@ -65,6 +66,10 @@ fun StudioRoot(
     openMark: OpenMark? = null,
     /** BK-504: Studio is in use (a project opened, the app paused, Close): the host stamps the time that decides the start mode. */
     onActive: () -> Unit = {},
+    /** Open in Studio from Develop: a new project made from a photo and its recipe, opened as soon as this screen is up. Null when there is none. */
+    handOff: HandOffRequest? = null,
+    /** The hand off was taken (opened or refused): the host forgets it so it is never opened twice. */
+    onHandOffTaken: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val application = context.applicationContext as Application
@@ -76,10 +81,11 @@ fun StudioRoot(
     var message by remember { mutableStateOf<String?>(null) }
     val closedByUser = remember { booleanArrayOf(false) }
 
-    fun openSession(doc: Document, pixels: Map<String, RawPixels>, onDisk: Boolean, recovered: Boolean) {
+    fun openSession(doc: Document, pixels: Map<String, RawPixels>, onDisk: Boolean, recovered: Boolean, afterFirstSave: ((java.io.File) -> Unit)? = null) {
         val gl = StudioGl(perf)
         val env = StudioEnv.production(perf::record, perf::error)
         val s = StudioSession(projects.fs(), projects.rootOf(doc.id), gl, env, doc, pixels, onDisk, recovered, appVersion)
+        if (afterFirstSave != null) s.afterFirstSave = { afterFirstSave(java.io.File(context.filesDir, projects.rootOf(doc.id))) }
         gl.inputStamp = s::takeInputStamp
         s.start()
         openMark?.open(doc.id)
@@ -132,6 +138,16 @@ fun StudioRoot(
         }
     }
 
+    // Open in Studio: the project is made from the photo Develop rendered; the folder gets its source and recipe copies after the first save
+    LaunchedEffect(handOff) {
+        val h = handOff ?: return@LaunchedEffect
+        if (open == null && busy == null) {
+            val bytes = h.pixels.values.sumOf { it.rgba.size.toLong() }
+            val space = SpaceCheck.problem(context.filesDir.usableSpace, bytes / 2)
+            if (space != null) message = space else openSession(h.document, h.pixels, onDisk = false, recovered = false, afterFirstSave = h.afterFirstSave)
+        }
+        onHandOffTaken()
+    }
     // the project list is read again each time the canvas closes (new size, new thumbnail, a project that was just made)
     LaunchedEffect(open == null) { if (open == null) vm.reload() }
     // the screen is left (to Develop, or the canvas closed): the session writes what is unsaved and lets go of the GL queue; the GPU gauges read zero again

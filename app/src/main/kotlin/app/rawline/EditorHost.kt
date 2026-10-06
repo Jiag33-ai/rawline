@@ -136,6 +136,8 @@ fun EditorHost(photo: Photo, graph: Graph, neighbors: List<Photo>, copied: EditR
         onCopy = { onCopied(st.recipe); onNotify("Copied edits") },
         onPaste = { src, msg -> st.edit("Paste edits") { RecipeMerge.paste(it, src, RecipeMerge.QUICK) }; onNotify(msg) },
         onBack = { leave() },
+        // null (no menu item) in a build without Studio; with Studio, a new project is made from the photo as it looks now and Develop's edit is not touched
+        onOpenInStudio = StudioEntry.openInStudio(context, graph, photo, { st.recipe }, onNotify),
     )
     if (showSaving) Box(Modifier.fillMaxSize().background(app.rawline.core.ui.Lr.OverlayHeavy).clickable(enabled = true, indication = null, interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }) {}, contentAlignment = androidx.compose.ui.Alignment.Center) {
         androidx.compose.foundation.layout.Column(horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {

@@ -96,6 +96,8 @@ class StudioSession(
     private var thumbBusy = false
     /** BK-507: renders and writes the project thumbnail for [snap] (worker thread, returns false on failure). Set by the canvas screen; with none set no thumbnail is made and no timer runs. */
     @Volatile var thumbnailer: Thumbnailer? = null
+    /** Open in Studio: runs once on the saver thread after the first save of this session worked (the project folder exists then). Set before [start]; a failure is logged and the project stays as it is. */
+    @Volatile var afterFirstSave: (() -> Unit)? = null
     fun interface Thumbnailer { fun write(snap: ExportSnapshot): Boolean }
     private var needsSave = false
     private var saving = false
@@ -1051,6 +1053,10 @@ class StudioSession(
 
     private fun onSaved(saved: Document, snaps: Map<String, RawPixels>) {
         inFlightTiles = emptyMap()
+        afterFirstSave?.let { hook ->
+            afterFirstSave = null
+            env.saver.execute { try { hook() } catch (t: Throwable) { env.error("studio after first save: ${t.javaClass.simpleName}: ${t.message}") } }
+        }
         for (l in saved.layers) if (l is Layer.Pixel) files[l.common.id] = l.pixelsFile
         for ((id, px) in snaps) { inFlight.remove(id); if (unsaved[id] === px) unsaved.remove(id) }
         saving = false; saveFailed = false; noSpace = false; failStreak = 0; failureNotified = false; retryHalted = false; everSaved = true

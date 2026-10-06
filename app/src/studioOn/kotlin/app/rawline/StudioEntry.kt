@@ -16,6 +16,13 @@ import androidx.compose.ui.res.stringResource
 import app.rawline.feature.onboarding.StudioText
 import app.rawline.core.cache.ExitReasons
 import app.rawline.core.cache.PerfLog
+import app.rawline.core.model.EditRecipe
+import app.rawline.core.model.Photo
+import app.rawline.core.studio.model.HandOffRequest
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import app.rawline.core.studio.model.AppMode
 import app.rawline.core.studio.model.ExitInfo
 import app.rawline.core.studio.model.ExitKind
@@ -43,8 +50,25 @@ internal class PrefsKeyValue(private val p: SharedPreferences) : KeyValue {
     override fun putInt(key: String, value: Int) { p.edit().putInt(key, value).commit() }
 }
 
+/** Open in Studio: the project made from a Develop photo, waiting for the mode host to switch to Studio and open it. Main thread only. */
+internal val pendingHandOff = mutableStateOf<HandOffRequest?>(null)
+
 object StudioEntry {
     const val available = true
+
+    /**
+     * The editor menu item "Open in Studio" (spec 3.7, D9). Renders the photo with its edit through the Develop export pipeline (at most 12 MP, sRGB, no output sharpening) on the app scope, then
+     * hands the project to the mode host. Develop's recipe file and catalogue are only read; nothing flows back.
+     */
+    fun openInStudio(context: Context, graph: Graph, photo: Photo, recipe: () -> EditRecipe, notify: (String) -> Unit): (() -> Unit)? = {
+        val r = recipe()   // the edit as it is at this tap
+        notify("Preparing the picture for Studio")
+        graph.appScope.launch {
+            val req = try { StudioHandOffRunner.prepare(context.applicationContext, graph, photo, r) } catch (e: CancellationException) { throw e } catch (e: Throwable) { PerfLog.error("open in Studio: ${e.javaClass.simpleName} ${e.message}"); null }
+            withContext(Dispatchers.Main) { if (req == null) notify("Could not open this photo in Studio.") else pendingHandOff.value = req }
+        }
+        Unit
+    }
 
     /**
      * ModeHost: Develop or Studio, remembered between runs. Two Studio starts that never drew the home fall back to Develop with a notice (BK-409). The switch is handed to the two home
@@ -65,6 +89,8 @@ object StudioEntry {
         val holder = rememberSaveableStateHolder()
         LaunchedEffect(Unit) { modeState.notice?.let { Toast.makeText(context, it, Toast.LENGTH_LONG).show(); modeState.clearNotice() } }
         LaunchedEffect(openRoute) { if (openRoute != null && mode == AppMode.STUDIO) mode = modeState.switchTo(AppMode.DEVELOP) }
+        val handOff = pendingHandOff.value
+        LaunchedEffect(handOff) { if (handOff != null && mode != AppMode.STUDIO) mode = modeState.switchTo(AppMode.STUDIO) }
         val toggle: @Composable () -> Unit = {
             LrSegmentedToggle(listOf("Develop", "Studio"), if (mode == AppMode.DEVELOP) 0 else 1, { mode = modeState.switchTo(if (it == 0) AppMode.DEVELOP else AppMode.STUDIO) })
         }
@@ -72,7 +98,7 @@ object StudioEntry {
             AppMode.DEVELOP -> holder.SaveableStateProvider("develop") { develop(if (modeState.switchVisible(true)) toggle else null) }
             AppMode.STUDIO -> holder.SaveableStateProvider("studio") {
                 StudioRoot(toggle, studioPerf, BuildConfig.VERSION_NAME, onReady = { modeState.studioReady() }, onBackToDevelop = { mode = modeState.switchTo(AppMode.DEVELOP) },
-                    openMark = openMark, onActive = { modeState.studioActive() })
+                    openMark = openMark, onActive = { modeState.studioActive() }, handOff = handOff, onHandOffTaken = { pendingHandOff.value = null })
             }
         }
     }
