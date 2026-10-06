@@ -43,3 +43,23 @@ fun saveAction(isDefault: Boolean, stored: RecipeRead): SaveAction = when {
     isDefault -> SaveAction.DELETE
     else -> SaveAction.PUT
 }
+
+/** One file found while listing a folder. */
+internal class ScanDoc(val uri: String, val name: String, val size: Long, val modified: Long, val raw: Boolean, val dir: String)
+
+/** What to store for one directory's worth of files: new rows, and old rows whose size or time changed (deleted first, then re-added). */
+object FolderScan {
+    class Plan(val fresh: List<PhotoEntity>, val stale: List<Long>)
+
+    internal fun plan(folderKey: String, batch: List<ScanDoc>, byUri: Map<String, KnownRow>): Plan {
+        val fresh = ArrayList<PhotoEntity>()
+        val stale = ArrayList<Long>()
+        for (d in batch) {
+            val k = byUri[d.uri]
+            val row = { PhotoEntity(folderUri = folderKey, uri = d.uri, name = d.name, size = d.size, modified = d.modified, isRaw = d.raw) }
+            if (k == null) fresh.add(row())
+            else if (k.modified != d.modified || k.size != d.size) { stale.add(k.id); fresh.add(row()) }
+        }
+        return Plan(fresh, stale)
+    }
+}

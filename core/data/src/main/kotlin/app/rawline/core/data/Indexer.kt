@@ -12,6 +12,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Semaphore
@@ -19,10 +20,11 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicInteger
 
-data class IndexProgress(val total: Int = 0, val done: Int = 0, val running: Boolean = false)
+/** [listing]: still listing a folder, [total] is how many photos have been found so far and nothing is being read yet. */
+data class IndexProgress(val total: Int = 0, val done: Int = 0, val running: Boolean = false, val listing: Boolean = false)
 
 /**
- * Lists a SAF folder, adds rows straight away (so the grid fills at once) and then fills in
+ * Lists a SAF folder, adds rows as each directory is read (so the grid fills while a big tree is still being listed) and then fills in
  * thumbnails and EXIF newest first. Headers only: no raw data is ever decoded here.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -30,36 +32,38 @@ class Indexer(private val context: Context, private val dao: PhotoDao, private v
     private val _progress = MutableStateFlow(IndexProgress())
     val progress: StateFlow<IndexProgress> = _progress
 
-    private class Doc(val uri: String, val name: String, val size: Long, val modified: Long, val raw: Boolean, val dir: String)
-
     suspend fun scan(folder: Uri) = withContext(Dispatchers.IO) {
         val t0 = System.nanoTime()
         val folderKey = folder.toString()
-        val docs = ArrayList<Doc>()
+        val docs = ArrayList<ScanDoc>()
         val xmp = HashMap<String, String>()
-        val complete = walk(folder, DocumentsContract.getTreeDocumentId(folder), docs, xmp)
         val known = dao.known(folderKey)
         val byUri = known.associateBy { it.uri }
-        val seen = HashSet<String>(docs.size)
-        val fresh = ArrayList<PhotoEntity>()
+        val seen = HashSet<String>()
         val stale = ArrayList<Long>()
-        for (d in docs) {
-            seen.add(d.uri)
-            val k = byUri[d.uri]
-            if (k == null) fresh.add(PhotoEntity(folderUri = folderKey, uri = d.uri, name = d.name, size = d.size, modified = d.modified, isRaw = d.raw))
-            else if (k.modified != d.modified || k.size != d.size) { stale.add(k.id); fresh.add(PhotoEntity(folderUri = folderKey, uri = d.uri, name = d.name, size = d.size, modified = d.modified, isRaw = d.raw)) }
-        }
+        val freshUris = HashSet<String>()
+        _progress.value = IndexProgress(0, 0, true, listing = true)
+        // Each directory's photos are stored as soon as it is read, so the grid fills while the rest is still being listed.
+        val complete = try {
+            walk(folder, DocumentsContract.getTreeDocumentId(folder), xmp) { batch ->
+                docs.addAll(batch)
+                batch.forEach { seen.add(it.uri) }
+                val plan = FolderScan.plan(folderKey, batch, byUri)
+                plan.stale.chunked(500).forEach { dao.delete(it) }
+                plan.fresh.chunked(200).forEach { dao.insertAll(it) }
+                plan.fresh.forEach { freshUris.add(it.uri) }
+                _progress.value = IndexProgress(docs.size, 0, true, listing = true)
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) { _progress.value = IndexProgress(); throw e }
         // Never prune when the listing may be partial (unmounted card, revoked permission): that would wipe ratings and edit marks.
         if (complete && docs.isNotEmpty()) known.filter { it.uri !in seen }.forEach { stale.add(it.id) }
         stale.chunked(500).forEach { dao.delete(it) }
-        fresh.chunked(200).forEach { dao.insertAll(it) }
         catalog?.reapply(folderKey)
         // Ratings and labels from existing XMP sidecars (only for photos without saved ratings)
         if (xmp.isNotEmpty()) {
-            val byUri = docs.associateBy { it.uri }
-            val freshUris = fresh.mapTo(HashSet()) { it.uri }
+            val docByUri = docs.associateBy { it.uri }
             dao.known(folderKey).forEach { k ->
-                val d = byUri[k.uri] ?: return@forEach
+                val d = docByUri[k.uri] ?: return@forEach
                 val sidecar = xmp[d.dir + "/" + d.name.substringBeforeLast('.').lowercase()] ?: return@forEach
                 if (k.uri in freshUris) {
                     runCatching {
@@ -122,8 +126,9 @@ class Indexer(private val context: Context, private val dao: PhotoDao, private v
         )
     }
 
-    /** @return false if any folder could not be listed */
-    private fun walk(tree: Uri, docId: String, out: MutableList<Doc>, xmp: MutableMap<String, String>): Boolean {
+    /** Lists [tree] depth first and hands each directory's photos to [onDirectory]. @return false if any folder could not be listed */
+    private suspend fun walk(tree: Uri, docId: String, xmp: MutableMap<String, String>, onDirectory: suspend (List<ScanDoc>) -> Unit): Boolean {
+        kotlin.coroutines.coroutineContext.ensureActive()    // a cancelled scan stops at the next directory
         var ok = true
         val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, docId)
         val cols = arrayOf(
@@ -132,6 +137,7 @@ class Indexer(private val context: Context, private val dao: PhotoDao, private v
             DocumentsContract.Document.COLUMN_LAST_MODIFIED,
         )
         val dirs = ArrayList<String>()
+        val here = ArrayList<ScanDoc>()
         val cursor = context.contentResolver.query(children, cols, null, null, null)
         if (cursor == null) ok = false
         cursor?.use { c ->
@@ -140,10 +146,11 @@ class Indexer(private val context: Context, private val dao: PhotoDao, private v
                 if (mime == DocumentsContract.Document.MIME_TYPE_DIR) { dirs.add(id); continue }
                 if (name.endsWith(".xmp", true)) { xmp[docId + "/" + name.substringBeforeLast('.').lowercase()] = DocumentsContract.buildDocumentUriUsingTree(tree, id).toString(); continue }
                 val kind = FileTypes.kindOf(name) ?: continue
-                out.add(Doc(DocumentsContract.buildDocumentUriUsingTree(tree, id).toString(), name, c.getLong(3), c.getLong(4), kind == Kind.RAW, docId))
+                here.add(ScanDoc(DocumentsContract.buildDocumentUriUsingTree(tree, id).toString(), name, c.getLong(3), c.getLong(4), kind == Kind.RAW, docId))
             }
         }
-        dirs.forEach { if (!walk(tree, it, out, xmp)) ok = false }
+        if (here.isNotEmpty()) onDirectory(here)
+        dirs.forEach { if (!walk(tree, it, xmp, onDirectory)) ok = false }
         return ok
     }
 

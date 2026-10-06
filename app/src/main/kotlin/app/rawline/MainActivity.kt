@@ -345,6 +345,9 @@ private fun RawlineRoot(openRoute: String?, onOpened: () -> Unit) {
                 composable("settings") {
                     // a "Backup saved" shown here must not still be there next time Settings opens
                     DisposableEffect(Unit) { onDispose { vm.message.value = null } }
+                    var cacheBytes by remember { mutableStateOf(0L) }
+                    LaunchedEffect(Unit) { cacheBytes = withContext(Dispatchers.IO) { graph.thumbs.diskBytes() } }
+                    var lastCrash by remember { mutableStateOf(CrashStore.lastForBuild(context, ReportBuilder.buildLabel)) }
                     Box(Modifier.statusBarsPadding()) {
                         SettingsScreen(
                             versionName = BuildConfig.VERSION_NAME, buildNumber = BuildConfig.BUILD_NUMBER, buildDate = BuildConfig.BUILD_DATE,
@@ -357,7 +360,10 @@ private fun RawlineRoot(openRoute: String?, onOpened: () -> Unit) {
                                     showToast("Report copied")
                                 }
                             },
-                            lastCrash = remember { CrashStore.lastForBuild(context, ReportBuilder.buildLabel) },
+                            lastCrash = lastCrash,
+                            onClearCrash = { CrashStore.clear(context); lastCrash = null },
+                            cacheBytes = cacheBytes,
+                            onClearThumbnails = { scope.launch { withContext(Dispatchers.IO) { graph.thumbs.clearDisk() }; cacheBytes = 0L; showToast("Thumbnails cleared") } },
                             xmpOn = xmp, onXmpChange = vm::setXmp,
                             onBackup = { backupOut.launch("rawline-backup.zip") }, onRestore = { backupIn.launch(arrayOf("application/zip", "application/octet-stream")) },
                             message = message,

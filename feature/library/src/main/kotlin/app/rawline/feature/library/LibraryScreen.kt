@@ -59,6 +59,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import app.rawline.core.cache.FrameMonitor
@@ -177,10 +178,11 @@ fun LibraryScreen(
                 Text("${sel.size} selected", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f).padding(start = 4.dp))
                 IconTap(LrIcon.SELECT, "Select all") { selected.value = photos.map { it.id }.toSet() }
             } else {
-                Row(Modifier.weight(1f).clickable { sourceMenu = true }.padding(start = 10.dp).heightIn(min = LrDim.libraryHeader), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.weight(1f).clickable(role = androidx.compose.ui.semantics.Role.DropdownList) { sourceMenu = true }.semantics { stateDescription = "Photo source" }.padding(start = 10.dp).heightIn(min = LrDim.libraryHeader), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f, fill = false)) {
                         Text(current?.label ?: "Photos", style = MaterialTheme.typography.titleMedium, maxLines = 1)
                         val sub = when {
+                            progress.listing -> "Listing photos, ${progress.total} found"
                             progress.running -> "Reading ${progress.done} of ${progress.total}"
                             filter.isActive -> "${photos.size} of $allCount (filtered)"
                             else -> app.rawline.core.ui.Plurals.photos(photos.size)
@@ -205,10 +207,10 @@ fun LibraryScreen(
                 Box {
                     IconTap(LrIcon.SORT, "Sort") { moreMenu = true }
                     LrDropdown(moreMenu, { moreMenu = false }) {
-                        LrMenuItem("Newest first", { moreMenu = false; actions.onFilter(filter.copy(sort = SortOrder.NEWEST)) })
-                        LrMenuItem("Oldest first", { moreMenu = false; actions.onFilter(filter.copy(sort = SortOrder.OLDEST)) })
-                        LrMenuItem("By name", { moreMenu = false; actions.onFilter(filter.copy(sort = SortOrder.NAME)) })
-                        LrMenuItem("By rating", { moreMenu = false; actions.onFilter(filter.copy(sort = SortOrder.RATING)) })
+                        LrMenuItem("Newest first", { moreMenu = false; actions.onFilter(filter.copy(sort = SortOrder.NEWEST)) }, if (filter.sort == SortOrder.NEWEST) LrIcon.CHECK else null)
+                        LrMenuItem("Oldest first", { moreMenu = false; actions.onFilter(filter.copy(sort = SortOrder.OLDEST)) }, if (filter.sort == SortOrder.OLDEST) LrIcon.CHECK else null)
+                        LrMenuItem("By name", { moreMenu = false; actions.onFilter(filter.copy(sort = SortOrder.NAME)) }, if (filter.sort == SortOrder.NAME) LrIcon.CHECK else null)
+                        LrMenuItem("By rating", { moreMenu = false; actions.onFilter(filter.copy(sort = SortOrder.RATING)) }, if (filter.sort == SortOrder.RATING) LrIcon.CHECK else null)
                     }
                 }
             }
@@ -312,7 +314,7 @@ private fun FilterBar(f: LibraryFilter, cameras: List<String>, onChange: (Librar
 private fun SelectionBar(sel: List<Photo>, a: LibraryActions, onPaste: () -> Unit) {
     Column(Modifier.fillMaxWidth().background(Lr.Panel).padding(horizontal = 8.dp, vertical = 6.dp)) {
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            ChipButton("Add to export queue", true, { a.onExport(sel) })
+            ChipButton("Add to export queue", false, { a.onExport(sel) })   // an action, not a selected option
             (1..5).forEach { r -> ChipButton("$r ★", false, { a.onRate(sel, r) }) }
             ChipButton("No stars", false, { a.onRate(sel, 0) })
             ChipButton("Pick", false, { a.onFlag(sel, 1) }); ChipButton("Reject", false, { a.onFlag(sel, -1) }); ChipButton("Unflag", false, { a.onFlag(sel, 0) })
@@ -321,7 +323,7 @@ private fun SelectionBar(sel: List<Photo>, a: LibraryActions, onPaste: () -> Uni
             listOf("No label", "Red", "Yellow", "Green", "Blue", "Purple").forEachIndexed { i, n -> ChipButton(n, false, { a.onLabel(sel, i) }) }
             if (sel.size == 1) ChipButton("Copy edits", false, { a.onCopyEdits(sel[0]) })
             if (a.hasCopied) ChipButton("Paste edits...", false, onPaste)
-            if (sel.size > 1) ChipButton("Sync from first", false, { a.onSyncEdits(sel[0], sel.drop(1)) })
+            if (sel.size > 1) ChipButton("Sync from top photo", false, { a.onSyncEdits(sel[0], sel.drop(1)) })   // the first in grid order, not the first tapped
         }
     }
 }
@@ -359,13 +361,14 @@ private fun Thumb(p: Photo, thumbs: ThumbStore, selected: Boolean, selecting: Bo
             val img = remember(b) { b.asImageBitmap() }
             Image(img, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().then(app.rawline.core.ui.LocalSharedPhoto.current(p.id)))
         }
-        if (p.rating > 0) Text("★".repeat(p.rating), color = Lr.Star, style = MaterialTheme.typography.labelSmall, modifier = Modifier.align(Alignment.BottomStart).padding(3.dp))
-        if (p.flag == 1) Box(Modifier.align(Alignment.TopStart).padding(4.dp)) { LrIconView(LrIcon.FLAG_FILLED, Color.White, size = 14.dp) }
-        if (p.flag == -1) Box(Modifier.align(Alignment.TopStart).padding(4.dp)) { LrIconView(LrIcon.REJECT, Lr.Error, size = 14.dp) }
+        // badges sit on a dark translucent chip (like the RAW badge) so they stay readable on a bright sky or snow
+        if (p.rating > 0) Text("★".repeat(p.rating), color = Lr.Star, style = MaterialTheme.typography.labelSmall, modifier = Modifier.align(Alignment.BottomStart).padding(3.dp).background(Color(0xB3000000), RoundedCornerShape(2.dp)).padding(horizontal = 3.dp))
+        if (p.flag == 1) Box(Modifier.align(Alignment.TopStart).padding(3.dp).background(Color(0xB3000000), RoundedCornerShape(2.dp)).padding(2.dp)) { LrIconView(LrIcon.FLAG_FILLED, Color.White, size = 14.dp) }
+        if (p.flag == -1) Box(Modifier.align(Alignment.TopStart).padding(3.dp).background(Color(0xB3000000), RoundedCornerShape(2.dp)).padding(2.dp)) { LrIconView(LrIcon.REJECT, Lr.Error, size = 14.dp) }
         if (p.label in 1..5) Box(Modifier.align(Alignment.BottomEnd).padding(end = 24.dp, bottom = 7.dp).size(9.dp).background(LabelColors[p.label], CircleShape))
         if (p.kind == Kind.RAW && !selecting) Text("RAW", color = Lr.TextPrimary, style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, lineHeight = 11.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium),
             modifier = Modifier.align(Alignment.TopEnd).padding(3.dp).background(Color(0xB3000000), androidx.compose.foundation.shape.RoundedCornerShape(2.dp)).padding(horizontal = 3.dp, vertical = 1.dp))
-        if (p.edited) Box(Modifier.align(Alignment.BottomEnd).padding(4.dp)) { LrIconView(LrIcon.EDIT, Color.White, size = 14.dp) }
+        if (p.edited) Box(Modifier.align(Alignment.BottomEnd).padding(3.dp).background(Color(0xB3000000), RoundedCornerShape(2.dp)).padding(2.dp)) { LrIconView(LrIcon.EDIT, Color.White, size = 14.dp) }
         if (selecting) Box(Modifier.align(Alignment.TopEnd).padding(6.dp).size(20.dp).clip(CircleShape).background(if (selected) Lr.Accent else Color(0x66000000))) {
             if (selected) LrIconView(LrIcon.CHECK, Color.White, size = 12.dp)
         }

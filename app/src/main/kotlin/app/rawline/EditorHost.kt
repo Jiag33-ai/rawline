@@ -12,6 +12,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import app.rawline.core.cache.PerfLog
 import app.rawline.core.model.EditRecipe
@@ -95,6 +96,14 @@ fun EditorHost(photo: Photo, graph: Graph, neighbors: List<Photo>, copied: EditR
         if (committed != null && session.state.value.stage == app.rawline.core.render.Stage.READY) session.reloadSource()
     }
 
+    // until the saved edit is read the screen shows the photo's preview (when one is ready) and a spinner, not a black page
+    if (state == null) {
+        Box(Modifier.fillMaxSize().background(app.rawline.core.ui.Lr.Canvas), contentAlignment = androidx.compose.ui.Alignment.Center) {
+            placeholder?.let { b -> androidx.compose.foundation.Image(b.asImageBitmap(), contentDescription = photo.name, contentScale = androidx.compose.ui.layout.ContentScale.Fit, modifier = Modifier.fillMaxSize()) }
+            app.rawline.core.ui.LocalLoader(size = 28.dp)
+        }
+        return
+    }
     val st = state ?: return
     // Leaving the editor waits for the edit to be written; a dimmed canvas with a spinner shows only if that takes noticeable time.
     var saving by remember { mutableStateOf(false) }

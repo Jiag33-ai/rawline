@@ -445,7 +445,7 @@ fun LrDropdown(expanded: Boolean, onDismiss: () -> Unit, modifier: Modifier = Mo
 @Composable
 fun LrMenuItem(text: String, onClick: () -> Unit, icon: LrIcon? = null, enabled: Boolean = true) {
     DropdownMenuItem(
-        text = { Text(text, style = MaterialTheme.typography.bodySmall, color = if (enabled) Lr.TextPrimary else Lr.TextDisabled) },
+        text = { Text(text, style = MaterialTheme.typography.bodySmall, color = if (enabled) Lr.TextPrimary else Lr.TextDisabled, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
         onClick = onClick, enabled = enabled, modifier = Modifier.height(LrDim.menuRow),
         leadingIcon = icon?.let { { LrIconView(it, if (enabled) Lr.IconPrimary else Lr.TextDisabled, size = 18.dp) } },
         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp),

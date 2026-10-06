@@ -128,3 +128,32 @@ class XmpSupportTest {
         org.junit.Assert.assertFalse(Xmp.supports(""))
     }
 }
+
+class FolderScanTest {
+    private fun doc(uri: String, size: Long = 10, modified: Long = 1) = ScanDoc(uri, uri.substringAfterLast('/'), size, modified, false, "d")
+    private fun row(id: Long, uri: String, size: Long = 10, modified: Long = 1) = KnownRow(id, uri, modified, size)
+
+    @org.junit.Test fun newFilesAreStoredAtOnceForEachDirectory() {
+        val plan = FolderScan.plan("f", listOf(doc("t/a.jpg"), doc("t/b.jpg")), emptyMap())
+        assertEquals(listOf("t/a.jpg", "t/b.jpg"), plan.fresh.map { it.uri })
+        assertTrue(plan.stale.isEmpty())
+        assertTrue(plan.fresh.all { it.folderUri == "f" && !it.indexed })
+    }
+
+    @org.junit.Test fun unchangedFilesAreLeftAlone() {
+        val plan = FolderScan.plan("f", listOf(doc("t/a.jpg")), mapOf("t/a.jpg" to row(7, "t/a.jpg")))
+        assertTrue(plan.fresh.isEmpty() && plan.stale.isEmpty())
+    }
+
+    @org.junit.Test fun aChangedFileIsReplacedOldRowFirst() {
+        val plan = FolderScan.plan("f", listOf(doc("t/a.jpg", size = 99)), mapOf("t/a.jpg" to row(7, "t/a.jpg")))
+        assertEquals(listOf(7L), plan.stale)
+        assertEquals(1, plan.fresh.size)
+        assertEquals(99L, plan.fresh[0].size)
+    }
+
+    @org.junit.Test fun aChangedTimeAlsoReplaces() {
+        val plan = FolderScan.plan("f", listOf(doc("t/a.jpg", modified = 5)), mapOf("t/a.jpg" to row(3, "t/a.jpg")))
+        assertEquals(listOf(3L), plan.stale)
+    }
+}
