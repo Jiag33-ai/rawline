@@ -70,8 +70,13 @@ data class ExportJobEntity(
     val status: Int = 0, val progress: Float = 0f, val message: String? = null, val outputUri: String? = null, val createdAt: Long = 0,
 )
 
+data class StatusCount(val status: Int, val n: Int)
+data class LibraryCounts(val total: Int, val raw: Int, val pending: Int, val noPreview: Int, val edited: Int)
+
 @Dao
 interface ExportDao {
+    @Query("SELECT status, COUNT(*) AS n FROM export_jobs GROUP BY status") suspend fun statusCounts(): List<StatusCount>
+    @Query("SELECT * FROM export_jobs WHERE status = 3 ORDER BY id DESC LIMIT 5") suspend fun recentFailures(): List<ExportJobEntity>
     @Query("SELECT * FROM export_jobs ORDER BY id DESC") fun observe(): Flow<List<ExportJobEntity>>
     @Insert suspend fun add(jobs: List<ExportJobEntity>)
     @Query("SELECT * FROM export_jobs WHERE status = 0 ORDER BY id ASC LIMIT 1") suspend fun nextWaiting(): ExportJobEntity?
@@ -99,6 +104,11 @@ data class SourceCount(val source: String, val n: Int)
 
 @Dao
 interface PhotoDao {
+    /** For the report. noPreview: indexing finished but found no size (an unreadable file). */
+    @Query("""SELECT COUNT(*) AS total, COALESCE(SUM(isRaw), 0) AS raw, COALESCE(SUM(CASE WHEN indexed = 0 THEN 1 ELSE 0 END), 0) AS pending,
+        COALESCE(SUM(CASE WHEN indexed = 1 AND width = 0 THEN 1 ELSE 0 END), 0) AS noPreview, COALESCE(SUM(edited), 0) AS edited FROM photos""")
+    suspend fun counts(): LibraryCounts
+
     @Query("SELECT * FROM photos WHERE folderUri = :folder ORDER BY modified DESC, id DESC")
     fun observe(folder: String): Flow<List<PhotoEntity>>
 

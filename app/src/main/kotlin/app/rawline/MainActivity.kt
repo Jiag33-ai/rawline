@@ -69,13 +69,21 @@ import app.rawline.feature.library.LibraryActions
 import app.rawline.feature.library.LibraryScreen
 import app.rawline.feature.loupe.LoupeScreen
 import app.rawline.feature.settings.SettingsScreen
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent { RawlineTheme { Surface(color = Lr.Canvas) { RawlineRoot() } } }
+    }
+
+    /** Saves the timings and errors so they survive if Android kills the process while the app is in the background. */
+    override fun onStop() {
+        super.onStop()
+        PerfLog.flushSoon()
     }
 }
 
@@ -251,12 +259,14 @@ private fun RawlineRoot() {
                             versionName = BuildConfig.VERSION_NAME, buildNumber = BuildConfig.BUILD_NUMBER, buildDate = BuildConfig.BUILD_DATE,
                             overlayOn = overlay, onOverlayChange = vm::setOverlay,
                             onCopyReport = {
-                                val v = "Rawline ${BuildConfig.VERSION_NAME} build ${BuildConfig.BUILD_NUMBER} (${BuildConfig.BUILD_DATE})"
-                                val text = PerfLog.report(context, v, "Photos in this source: ${allPhotos.size}")
-                                (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Rawline report", text))
-                                toast = "Report copied"
+                                scope.launch {
+                                    val label = when { source == "device:*" -> "all device photos"; source.startsWith("device:") -> "album ${source.removePrefix("device:")}"; else -> "a picked folder or imports" }
+                                    val text = withContext(Dispatchers.IO) { ReportBuilder.build(context, graph, allPhotos.size, label) }
+                                    (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Rawline report", text))
+                                    toast = "Report copied"
+                                }
                             },
-                            lastCrash = remember { CrashStore.last(context) },
+                            lastCrash = remember { CrashStore.lastForBuild(context, ReportBuilder.buildLabel) },
                             xmpOn = xmp, onXmpChange = vm::setXmp,
                             onBackup = { backupOut.launch("rawline-backup.zip") }, onRestore = { backupIn.launch(arrayOf("application/zip", "application/octet-stream")) },
                             message = message,

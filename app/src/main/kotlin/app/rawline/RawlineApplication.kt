@@ -34,12 +34,25 @@ class Graph(context: Context) {
 }
 
 class RawlineApplication : Application() {
+    private companion object { const val TRIM_MODERATE = 60 }
+
     lateinit var graph: Graph
         private set
 
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        // recorded so a report after a low memory kill shows the phone was squeezed first
+        if (level >= TRIM_MODERATE) app.rawline.core.cache.PerfLog.event("memory trim level $level")
+    }
+
+    override fun onLowMemory() {
+        super.onLowMemory()
+        app.rawline.core.cache.PerfLog.event("low memory warning")
+    }
+
     override fun onCreate() {
         super.onCreate()
-        CrashStore.install(this)
+        CrashStore.install(this, ReportBuilder.buildLabel)
         graph = Graph(this)
     }
 }
