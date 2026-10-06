@@ -794,17 +794,17 @@ class StudioSession(
     fun renderStrip(snap: ExportSnapshot, y: Int, rows: Int): ByteArray? = renderView(snap, 0f, y.toFloat(), 1f, snap.width, rows)
 
     /** The whole canvas scaled to fit [maxEdge] on its long side (project thumbnail). Returns (width, height, RGBA8) or null. */
-    fun renderThumbnail(snap: ExportSnapshot, maxEdge: Int): Triple<Int, Int, ByteArray>? {
+    fun renderThumbnail(snap: ExportSnapshot, maxEdge: Int, timeoutMs: Long = 60_000): Triple<Int, Int, ByteArray>? {
         val zoom = minOf(1f, maxEdge.toFloat() / maxOf(snap.width, snap.height))
         val w = maxOf(1, Math.round(snap.width * zoom)); val h = maxOf(1, Math.round(snap.height * zoom))
-        val px = renderView(snap, 0f, 0f, zoom, w, h) ?: return null
+        val px = renderView(snap, 0f, 0f, zoom, w, h, timeoutMs) ?: return null
         return Triple(w, h, px)
     }
 
-    private fun renderView(snap: ExportSnapshot, vx: Float, vy: Float, zoom: Float, w: Int, h: Int): ByteArray? {
+    private fun renderView(snap: ExportSnapshot, vx: Float, vy: Float, zoom: Float, w: Int, h: Int, timeoutMs: Long = 60_000): ByteArray? {
         if (released) return null
         val out = ByteArray(w * h * 4)
-        val ok = gpuCall(60_000) { it.render(snap.layers, vx, vy, zoom, w, h, out) } == true
+        val ok = gpuCall(timeoutMs) { it.render(snap.layers, vx, vy, zoom, w, h, out) } == true
         return if (ok) out else null
     }
 

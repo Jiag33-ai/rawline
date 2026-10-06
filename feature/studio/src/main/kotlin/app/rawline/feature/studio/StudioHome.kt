@@ -152,7 +152,7 @@ private fun ProjectCell(vm: StudioHomeViewModel, r: ProjectRow, onOpen: (String)
                 Text(StudioText.meta(r.width, r.height, r.sizeBytes), style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp, lineHeight = 14.sp), color = Lr.TextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Box {
-                LrIconButton(LrIcon.MORE, "Project menu", { menu = true }, size = 18.dp)
+                LrIconButton(LrIcon.MORE, "Project menu", { menu = true }, size = 18.dp, hit = 48.dp)
                 ProjectMenu(menu, { menu = false }, onOpen = { onOpen(r.id) }, onDuplicate = onDuplicate, onRename = onRename, onDelete = onDelete)
             }
         }
@@ -182,7 +182,7 @@ private fun DamagedCell(id: String, onDelete: () -> Unit) {
                 Text(id, style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp, lineHeight = 14.sp), color = Lr.TextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Box {
-                LrIconButton(LrIcon.MORE, "Menu for the project that cannot be opened", { menu = true }, size = 18.dp)
+                LrIconButton(LrIcon.MORE, "Menu for the project that cannot be opened", { menu = true }, size = 18.dp, hit = 48.dp)
                 ProjectMenu(menu, { menu = false }, null, null, null, onDelete)
             }
         }

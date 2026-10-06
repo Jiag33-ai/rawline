@@ -78,6 +78,7 @@ import app.rawline.core.ui.ValueFeedback
 import app.rawline.core.ui.ValueFeedbackPill
 import app.rawline.core.ui.blockPointerInput
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -121,14 +122,16 @@ fun StudioCanvasScreen(session: StudioSession, gl: StudioGl, projects: StudioPro
             val projectId = state.document.id
             val ready = state.phase == Phase.READY
             scope.launch {
-                if (ready) withTimeoutOrNull(3_000) {
-                    withContext(Dispatchers.IO) {
+                if (ready) {
+                    // async + await, so the 3 second limit works even though the render itself blocks a worker; a late result is dropped (the session is released by then)
+                    val work = async(Dispatchers.IO) {
                         runCatching {
                             val snap = session.exportSnapshot(2_000)
                             val jpeg = snap?.let { StudioExporter(session, perf).thumbnailJpeg(it) }
                             if (jpeg != null) projects.writeThumbnail(projectId, jpeg)
                         }.onFailure { perf.error("studio thumbnail: ${it.javaClass.simpleName}: ${it.message}") }
                     }
+                    withTimeoutOrNull(3_000) { work.await() }
                 }
                 onExit()
             }

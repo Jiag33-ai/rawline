@@ -72,8 +72,8 @@ class StudioExporter(private val session: StudioSession, private val perf: Studi
     private class StripFailed : RuntimeException()
 
     /** A JPEG of the whole canvas, [maxEdge] pixels on the long side, over white, for the Studio home. Null when it could not be made. */
-    fun thumbnailJpeg(snap: ExportSnapshot, maxEdge: Int = 512, quality: Int = 80): ByteArray? {
-        val (w, h, px) = session.renderThumbnail(snap, maxEdge) ?: return null
+    fun thumbnailJpeg(snap: ExportSnapshot, maxEdge: Int = 512, quality: Int = 80, timeoutMs: Long = 3_000): ByteArray? {
+        val (w, h, px) = session.renderThumbnail(snap, maxEdge, timeoutMs) ?: return null
         Flatten.matteOverWhite(px)
         val ints = IntArray(w * h)
         var o = 0
