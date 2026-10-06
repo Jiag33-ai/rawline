@@ -53,6 +53,9 @@ data class LayerBinding(val key: String, val index: Int)
 
 object RenderParams {
 
+    /** The lens distortion polynomial the shader will apply for this recipe, or null when lens correction is off or the profile has none. */
+    fun lensDistFor(recipe: EditRecipe, lens: LensCorrection?): FloatArray? = if (recipe.optics.lensCorrection) lens?.dist else null
+
     /** Maps TIFF orientation to (rot90, flipH). */
     private fun orientationToRotFlip(o: Int): Pair<Int, Boolean> = when (o) {
         2 -> 0 to true
@@ -68,16 +71,22 @@ object RenderParams {
     /**
      * @param layers alpha layer index per layerKey (brush, AI masks). Components without a bound layer are skipped.
      * @param showMask index into recipe.masks to tint red while editing it, -1 for none.
+     * @param srcW source size in pixels (only the aspect matters). When both are above zero the crop is constrained to valid
+     * source with [Geo.fitCrop], so no outside-image pixel is ever shown or exported. Leave at 0 to use the recipe crop as is
+     * (crop editing, whole-frame renders).
      */
     fun build(
         recipe: EditRecipe, orientation: Int, layers: Map<String, Int> = emptyMap(), showMask: Int = -1,
         useBaseline: Boolean = true, overlayOn: Boolean = false, lens: LensCorrection? = null, out: FloatArray = FloatArray(P.TOTAL),
+        srcW: Int = 0, srcH: Int = 0,
     ): FloatArray {
         out.fill(0f)
         val written = BooleanArray(P.CURVE_ROWS)
         val g = recipe.geometry
         val (rot0, flip0) = orientationToRotFlip(orientation)
-        out[P.G_CROP] = g.cropX; out[P.G_CROP + 1] = g.cropY; out[P.G_CROP + 2] = g.cropW; out[P.G_CROP + 3] = g.cropH
+        val crop = if (srcW > 0 && srcH > 0) Geo.fitCrop(g, recipe.optics, orientation, srcW, srcH, lensDistFor(recipe, lens))
+        else floatArrayOf(g.cropX, g.cropY, g.cropW, g.cropH)
+        out[P.G_CROP] = crop[0]; out[P.G_CROP + 1] = crop[1]; out[P.G_CROP + 2] = crop[2]; out[P.G_CROP + 3] = crop[3]
         out[P.G_GEO] = Math.toRadians(g.angle.toDouble()).toFloat()
         // Orientation flip and user flips combine by XOR; user rotation adds to the base rotation.
         out[P.G_GEO + 1] = if (flip0 xor g.flipH) 1f else 0f

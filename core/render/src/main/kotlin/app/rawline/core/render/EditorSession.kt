@@ -174,6 +174,13 @@ class EditorSession(
     val currentRecipe get() = recipe
 
     /**
+     * The crop (x, y, w, h in the oriented base frame) the preview and export really use: the recipe crop pulled inside valid
+     * source after straighten, keystone, distortion and lens correction ([Geo.fitCrop]). Equals the recipe crop when nothing
+     * is exposed. Code that maps between the view and the frame should prefer this over the recipe's crop fields.
+     */
+    @Volatile var effectiveCrop: FloatArray = floatArrayOf(0f, 0f, 1f, 1f); private set
+
+    /**
      * A rectangle of the source picture in its stored orientation (no crop, rotation or edits; camera look only), as a
      * software bitmap of the given pixel size. [x], [y], [w], [h] are normalised source coordinates.
      */
@@ -421,7 +428,9 @@ class EditorSession(
         if (engine == 0L) return
         var r = if (before) EditRecipe() else recipe
         if (cropMode && !before) r = r.copy(geometry = r.geometry.copy(cropX = 0f, cropY = 0f, cropW = 1f, cropH = 1f))
-        val arr = RenderParams.build(r, orientation, layerIndex, showMask = if (before) -1 else showMask, overlayOn = overlayOn && !before, lens = if (before) null else lens, useBaseline = !finishedPicture)
+        val arr = RenderParams.build(r, orientation, layerIndex, showMask = if (before) -1 else showMask, overlayOn = overlayOn && !before, lens = if (before) null else lens, useBaseline = !finishedPicture,
+            srcW = if (cropMode || before) 0 else srcW, srcH = if (cropMode || before) 0 else srcH)
+        effectiveCrop = floatArrayOf(arr[P.G_CROP], arr[P.G_CROP + 1], arr[P.G_CROP + 2], arr[P.G_CROP + 3])
         params = arr
         val size = Native.engineOutputSize(engine, arr)
         if (!size.contentEquals(geometryOutSize)) { geometryOutSize = size; _outputRevision.value++ }
