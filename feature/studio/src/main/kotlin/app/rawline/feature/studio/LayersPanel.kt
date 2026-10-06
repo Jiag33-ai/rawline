@@ -5,6 +5,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -45,6 +46,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import app.rawline.core.studio.model.BlendMode
+import app.rawline.core.studio.render.MaskFill
 import app.rawline.core.studio.render.StudioSession
 import app.rawline.core.studio.render.StudioState
 import app.rawline.core.studio.render.Thumb
@@ -75,7 +77,7 @@ fun LayersPanel(state: StudioState, session: StudioSession, onAddPhoto: () -> Un
         }
         LazyColumn(Modifier.weight(1f, fill = false)) {
             items(rows, key = { it.id }) { row ->
-                LayerRowView(row, state.thumbs[row.id], session)
+                LayerRowView(row, state.thumbs[row.id], state.maskThumbs[row.id], state.paintMask, state.selection != null, session)
             }
         }
         Row(Modifier.fillMaxWidth().height(LrDim.touch).border(1.dp, Lr.BorderSubtle), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
@@ -102,25 +104,42 @@ fun LayersPanel(state: StudioState, session: StudioSession, onAddPhoto: () -> Un
 }
 
 @Composable
-private fun LayerRowView(row: LayerRow, thumb: Thumb?, session: StudioSession) {
+private fun LayerRowView(row: LayerRow, thumb: Thumb?, maskThumb: Thumb?, paintMask: Boolean, hasSelection: Boolean, session: StudioSession) {
     var blendMenu by remember { mutableStateOf(false) }
+    var maskMenu by remember { mutableStateOf(false) }
     var opacityOpen by remember(row.id) { mutableStateOf(false) }
     Column(
         Modifier.fillMaxWidth().background(if (row.active) Lr.SurfaceSelected else Color.Transparent)
-            .clickable { session.selectLayer(row.id) }
+            .combinedClickable(onClickLabel = "Select layer", onClick = { session.selectLayer(row.id) }, onLongClickLabel = "Mask options", onLongClick = { maskMenu = true })
             .semantics(mergeDescendants = false) {
-                contentDescription = "${row.name}${if (row.visible) "" else ", hidden"}${if (row.locked) ", locked" else ""}, ${LayerRows.blendName(row.blend)}, opacity ${row.opacity} percent"
+                contentDescription = "${row.name}${if (row.visible) "" else ", hidden"}${if (row.locked) ", locked" else ""}, ${LayerRows.blendName(row.blend)}, opacity ${row.opacity} percent${if (row.hasMask) (if (row.maskEnabled) ", has a mask" else ", has a mask that is off") else ""}"
                 selected = row.active
                 customActions = buildList {
                     if (row.canMoveUp) add(CustomAccessibilityAction("Move layer up") { session.moveLayer(row.id, up = true); true })
                     if (row.canMoveDown) add(CustomAccessibilityAction("Move layer down") { session.moveLayer(row.id, up = false); true })
+                    for (e in MaskMenu.entries(row, paintMask, hasSelection)) if (e.enabled) add(CustomAccessibilityAction(e.label) { runMask(session, row, e.action); true })
                 }
             },
     ) {
         Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.width(3.dp).height(40.dp).background(if (row.active) Lr.Accent else Color.Transparent))
             Spacer(Modifier.width(9.dp))
-            ThumbView(thumb, Modifier.size(40.dp))
+            Box {
+                ThumbView(thumb, Modifier.size(40.dp))
+                LrDropdown(maskMenu, { maskMenu = false }, width = 230.dp) {
+                    for (e in MaskMenu.entries(row, paintMask, hasSelection)) LrMenuItem(e.label, { maskMenu = false; runMask(session, row, e.action) }, enabled = e.enabled)
+                }
+            }
+            if (row.hasMask) {
+                Spacer(Modifier.width(4.dp))
+                MaskThumbView(
+                    maskThumb, row.maskEnabled, row.maskInverted, row.active && paintMask,
+                    Modifier.minimumInteractiveComponentSize()   // 48 dp target, the thumbnail stays 40 dp
+                        .combinedClickable(onClickLabel = if (row.maskEnabled) "Turn mask off" else "Turn mask on", onClick = { session.setMaskEnabled(row.id, !row.maskEnabled) }, onLongClickLabel = "Mask options", onLongClick = { maskMenu = true })
+                        .semantics { contentDescription = "Mask of ${row.name}, ${if (row.maskEnabled) "on" else "off"}${if (row.maskInverted) ", inverted" else ""}" }
+                        .size(40.dp),
+                )
+            }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
                 Text(row.name, style = MaterialTheme.typography.bodyMedium, color = if (row.visible) Lr.TextPrimary else Lr.TextMuted, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
@@ -174,5 +193,35 @@ private fun ThumbView(thumb: Thumb?, modifier: Modifier) {
             val dw = (image.width * s).roundToInt(); val dh = (image.height * s).roundToInt()
             drawImage(image, dstOffset = IntOffset(((size.width - dw) / 2).roundToInt(), ((size.height - dh) / 2).roundToInt()), dstSize = IntSize(dw, dh), filterQuality = FilterQuality.Low)
         }
+    }
+}
+
+private fun runMask(session: StudioSession, row: LayerRow, a: MaskAction) {
+    when (a) {
+        MaskAction.ADD_WHITE -> session.addMask(row.id, MaskFill.WHITE)
+        MaskAction.ADD_BLACK -> session.addMask(row.id, MaskFill.BLACK)
+        MaskAction.ADD_FROM_SELECTION -> session.addMask(row.id, MaskFill.FROM_SELECTION)
+        MaskAction.TURN_ON -> session.setMaskEnabled(row.id, true)
+        MaskAction.TURN_OFF -> session.setMaskEnabled(row.id, false)
+        MaskAction.INVERT -> session.invertMask(row.id)
+        MaskAction.DELETE -> session.deleteMask(row.id)
+        MaskAction.PAINT_MASK -> { session.selectLayer(row.id); session.setPaintMask(true) }
+        MaskAction.PAINT_PIXELS -> session.setPaintMask(false)
+    }
+}
+
+/** The grey thumbnail of a layer mask. Off is dimmed with a line through it, a mask being painted has the accent border, an inverted one a small mark in the corner. */
+@Composable
+private fun MaskThumbView(thumb: Thumb?, enabled: Boolean, inverted: Boolean, painting: Boolean, modifier: Modifier) {
+    val image: ImageBitmap? = remember(thumb) { thumb?.let { Bitmap.createBitmap(it.argb, it.w, it.h, Bitmap.Config.ARGB_8888).asImageBitmap() } }
+    Canvas(modifier.clip(RoundedCornerShape(2.dp)).border(if (painting) 2.dp else 1.dp, if (painting) Lr.Accent else Lr.BorderDefault, RoundedCornerShape(2.dp))) {
+        drawRect(Color(0xFF202020))
+        if (image != null) {
+            val s = minOf(size.width / image.width, size.height / image.height)
+            val dw = (image.width * s).roundToInt(); val dh = (image.height * s).roundToInt()
+            drawImage(image, dstOffset = IntOffset(((size.width - dw) / 2).roundToInt(), ((size.height - dh) / 2).roundToInt()), dstSize = IntSize(dw, dh), filterQuality = FilterQuality.Low, alpha = if (enabled) 1f else 0.35f)
+        }
+        if (!enabled) drawLine(Color(0xFFE0524D), Offset(4.dp.toPx(), size.height - 4.dp.toPx()), Offset(size.width - 4.dp.toPx(), 4.dp.toPx()), 2.dp.toPx())
+        if (inverted) drawCircle(Color.White, 3.dp.toPx(), Offset(size.width - 6.dp.toPx(), 6.dp.toPx()))
     }
 }

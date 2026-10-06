@@ -46,7 +46,7 @@ class StudioExporterTest {
     }
 
     private fun whole(hn: Harness, snap: ExportSnapshot): ByteArray {
-        val refs = (0 until snap.layers.size / 6).map { i -> val o = i * 6; val t = hn.gl.gpu.tex[snap.layers[o].toInt()]!!; RefLayer(RefImage(t.w, t.h, t.rgba), snap.layers[o + 1], snap.layers[o + 2], snap.layers[o + 3], snap.layers[o + 4], BlendMode.entries.first { it.id == snap.layers[o + 5].toInt() }) }
+        val refs = (0 until snap.layers.size / 7).map { i -> val o = i * 7; val t = hn.gl.gpu.tex[snap.layers[o].toInt()]!!; val mm = snap.layers[o + 6].toInt(); RefLayer(RefImage(t.w, t.h, t.rgba), snap.layers[o + 1], snap.layers[o + 2], snap.layers[o + 3], snap.layers[o + 4], BlendMode.entries.first { it.id == snap.layers[o + 5].toInt() }, if (mm != 0) hn.gl.gpu.masks[snap.layers[o].toInt()] else null, mm) }
         return ReferenceCompositor.render(refs, 0f, 0f, 1f, w, h)
     }
 
@@ -190,7 +190,7 @@ class StudioExporterTest {
     @Test fun hiddenLayersAreLeftOutOfTheSnapshotAndTheExport() {
         val hn = harness(); hn.s.setVisible("b", false)
         val snap = hn.s.exportSnapshot()!!
-        assertEquals(6, snap.layers.size)
+        assertEquals(7, snap.layers.size)
         assertEquals(w to h, snap.width to snap.height)
     }
 

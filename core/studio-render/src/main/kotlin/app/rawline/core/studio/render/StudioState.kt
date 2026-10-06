@@ -1,14 +1,26 @@
 package app.rawline.core.studio.render
 
 import app.rawline.core.studio.model.Brush
+import app.rawline.core.studio.model.CanvasView
 import app.rawline.core.studio.model.Document
+import app.rawline.core.studio.model.IRect
+import app.rawline.core.studio.model.SelOp
 import java.util.concurrent.Executor
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
-enum class Tool { MOVE, SCALE, BRUSH, ERASER }
+enum class Tool { MOVE, SCALE, BRUSH, ERASER, RECT_SELECT, ELLIPSE_SELECT, LASSO_SELECT }
+
+/** Where a new layer mask starts: all white (reveals everything), all black (hides everything), or the selection. */
+enum class MaskFill { WHITE, BLACK, FROM_SELECTION }
+
+/** The selection as the screen draws it: its bounds and the outline as x0, y0, x1, y1 segments in canvas pixels (marching ants). [version] changes with every edit. */
+class SelectionView(val bounds: IRect, val contour: FloatArray, val version: Int)
+
+/** The shape being dragged with a selection tool, in canvas pixels: two corners for a rectangle or an ellipse, the points so far for a lasso. */
+class SelectionDrag(val tool: Tool, val x0: Float, val y0: Float, val x1: Float, val y1: Float, val xs: FloatArray = FloatArray(0), val ys: FloatArray = FloatArray(0))
 
 /** Straight colour 0..1 in the document's blend space (decision D6). */
 data class Rgb(val r: Float, val g: Float, val b: Float) {
@@ -44,6 +56,18 @@ data class StudioState(
     val message: UiMessage? = null,
     val recovered: Boolean = false,
     val zoomPercent: Int = 100,
+    /** S2: how the next selection combines with the current one. Stays until changed (no keyboard modifiers on a phone). */
+    val selectionOp: SelOp = SelOp.REPLACE,
+    /** S2: the current selection, or null for none. */
+    val selection: SelectionView? = null,
+    /** S2: the shape being dragged, or null. */
+    val selectionDrag: SelectionDrag? = null,
+    /** S2: the brush and eraser paint the active layer's mask instead of its pixels (only while that layer has a mask). */
+    val paintMask: Boolean = false,
+    /** S2: grey thumbnails of layer masks, by layer id. */
+    val maskThumbs: Map<String, Thumb> = emptyMap(),
+    /** S2: the canvas view, for the selection outline. */
+    val view: CanvasView = CanvasView(),
 )
 
 /** Threads and clocks of a session, so the tests can run it on one thread with a fake clock. */

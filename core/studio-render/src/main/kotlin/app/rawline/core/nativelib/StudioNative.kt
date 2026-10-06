@@ -19,7 +19,15 @@ object StudioNative {
     external fun setLayerImage(h: Long, slot: Int, rgba: ByteArray, w: Int, hgt: Int): Boolean
     external fun updateLayerRegion(h: Long, slot: Int, x: Int, y: Int, w: Int, hgt: Int, rgba: ByteArray): Boolean
     external fun removeLayer(h: Long, slot: Int)
-    /** [layers]: 6 floats per layer, bottom to top: slot, x, y, scale, opacity (0 to 1), blend mode id. [out]: outW * outH * 4 bytes of straight RGBA8, row 0 at the top. */
+    /** One byte per layer pixel (255 reveals), the layer's own size, or null to remove the mask. */
+    external fun setLayerMask(h: Long, slot: Int, r8: ByteArray?, w: Int, hgt: Int): Boolean
+    external fun updateMaskRegion(h: Long, slot: Int, x: Int, y: Int, w: Int, hgt: Int, r8: ByteArray): Boolean
+    /** One byte per canvas pixel, or null for no selection. It multiplies the live stroke of the layer being painted. */
+    external fun setSelection(h: Long, r8: ByteArray?, w: Int, hgt: Int): Boolean
+    external fun updateSelectionRegion(h: Long, x: Int, y: Int, w: Int, hgt: Int, r8: ByteArray): Boolean
+    /** A live stroke on the layer's mask: it moves the mask toward [value] (0 hides, 1 reveals). The layer needs a mask. */
+    external fun beginMaskStroke(h: Long, slot: Int, value: Float, opacity: Float, hardness: Float, flow: Float): Boolean
+    /** [layers]: 7 floats per layer, bottom to top: slot, x, y, scale, opacity (0 to 1), blend mode id, mask mode (0 none or off, 1 on, 2 inverted). [out]: outW * outH * 4 bytes of straight RGBA8, row 0 at the top. */
     external fun render(h: Long, layers: FloatArray, vx: Float, vy: Float, zoom: Float, outW: Int, outH: Int, out: ByteArray): Boolean
     /** Starts a live stroke on [slot]: clears its coverage buffer. [r], [g], [b] are straight 0 to 1 in the document's blend space. */
     external fun beginStroke(h: Long, slot: Int, r: Float, g: Float, b: Float, opacity: Float, erase: Boolean, hardness: Float, flow: Float): Boolean

@@ -8,6 +8,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -17,7 +18,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /** Line icons Studio needs that the shared set (core:ui LrIcon) does not have, drawn the same way: 1.8 stroke on a 24 unit grid, round caps. */
-enum class StudioIcon { EYE, EYE_OFF, LAYERS, BRUSH, ERASER, MOVE, SCALE, UP, DOWN }
+enum class StudioIcon { EYE, EYE_OFF, LAYERS, BRUSH, ERASER, MOVE, SCALE, UP, DOWN, SELECT, RECT, ELLIPSE, LASSO, MASK }
 
 @Composable
 fun StudioIconView(icon: StudioIcon, tint: Color, modifier: Modifier = Modifier, size: Dp = 24.dp) {
@@ -46,6 +47,10 @@ private fun DrawScope.draw(icon: StudioIcon, c: Color, sw: Float) {
         StudioIcon.MOVE -> { line(0.5f, 0.12f, 0.5f, 0.88f); line(0.12f, 0.5f, 0.88f, 0.5f); poly(0.38f, 0.24f, 0.5f, 0.12f, 0.62f, 0.24f); poly(0.38f, 0.76f, 0.5f, 0.88f, 0.62f, 0.76f); poly(0.24f, 0.38f, 0.12f, 0.5f, 0.24f, 0.62f); poly(0.76f, 0.38f, 0.88f, 0.5f, 0.76f, 0.62f) }
         StudioIcon.SCALE -> { drawRect(c, Offset(0.1f * w, 0.4f * h), Size(0.5f * w, 0.5f * h), style = st); poly(0.5f, 0.1f, 0.9f, 0.1f, 0.9f, 0.5f); line(0.9f, 0.1f, 0.5f, 0.5f) }
         StudioIcon.UP -> { line(0.5f, 0.85f, 0.5f, 0.2f); poly(0.25f, 0.42f, 0.5f, 0.17f, 0.75f, 0.42f) }
+        StudioIcon.SELECT, StudioIcon.RECT -> drawRect(c, Offset(0.14f * w, 0.2f * h), Size(0.72f * w, 0.6f * h), style = Stroke(width = sw, cap = StrokeCap.Butt, pathEffect = PathEffect.dashPathEffect(floatArrayOf(0.09f * w, 0.07f * w))))
+        StudioIcon.ELLIPSE -> drawOval(c, Offset(0.12f * w, 0.22f * h), Size(0.76f * w, 0.56f * h), style = Stroke(width = sw, cap = StrokeCap.Butt, pathEffect = PathEffect.dashPathEffect(floatArrayOf(0.09f * w, 0.07f * w))))
+        StudioIcon.LASSO -> { poly(0.2f, 0.5f, 0.3f, 0.25f, 0.6f, 0.2f, 0.85f, 0.4f, 0.7f, 0.65f, 0.4f, 0.7f, 0.25f, 0.6f, close = false); poly(0.4f, 0.7f, 0.35f, 0.88f) }
+        StudioIcon.MASK -> { drawRect(c, Offset(0.12f * w, 0.12f * h), Size(0.76f * w, 0.76f * h), style = st); circle(0.5f, 0.5f, 0.24f, fill = true) }
         StudioIcon.DOWN -> { line(0.5f, 0.15f, 0.5f, 0.8f); poly(0.25f, 0.58f, 0.5f, 0.83f, 0.75f, 0.58f) }
     }
 }

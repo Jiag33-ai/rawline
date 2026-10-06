@@ -6,6 +6,18 @@ import app.rawline.core.studio.model.RawPixels
 class Thumb(val w: Int, val h: Int, val argb: IntArray)
 
 object Thumbs {
+    /** A grey thumbnail of a mask: white where it reveals, black where it hides, nearest sampling (at most [maxEdge] on the long side). */
+    fun makeMask(p: app.rawline.core.studio.model.TilePlane, maxEdge: Int = 64): Thumb {
+        val scale = maxOf(p.w, p.h).toDouble() / maxEdge
+        val tw = if (scale <= 1.0) p.w else maxOf(1, Math.round(p.w / scale).toInt()); val th = if (scale <= 1.0) p.h else maxOf(1, Math.round(p.h / scale).toInt())
+        val out = IntArray(tw * th)
+        for (ty in 0 until th) for (tx in 0 until tw) {
+            val v = p[minOf(p.w - 1, ((tx + 0.5) * p.w / tw).toInt()), minOf(p.h - 1, ((ty + 0.5) * p.h / th).toInt())]
+            out[ty * tw + tx] = (255 shl 24) or (v shl 16) or (v shl 8) or v
+        }
+        return Thumb(tw, th, out)
+    }
+
     /** Box averages the layer down so its longest edge is at most [maxEdge], sampling 3 x 3 points per output pixel (a 12 MP layer costs about 60 000 reads). Colour is averaged alpha weighted. */
     fun make(p: RawPixels, maxEdge: Int = 96): Thumb {
         val scale = maxOf(p.w, p.h).toDouble() / maxEdge

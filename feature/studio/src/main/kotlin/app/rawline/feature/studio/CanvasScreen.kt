@@ -262,7 +262,10 @@ private fun StatusStrip(state: StudioState, session: StudioSession, onExit: () -
         LrIconButton(LrIcon.REDO, "Redo", { session.redo() }, enabled = state.canRedo)
         Box {
             LrIconButton(LrIcon.MORE, "More", { menu = true })
-            LrDropdown(menu, { menu = false }, width = 190.dp) {
+            LrDropdown(menu, { menu = false }, width = 200.dp) {
+                LrMenuItem("Select all", { menu = false; session.selectAll() }, enabled = state.phase == Phase.READY)
+                LrMenuItem("Deselect", { menu = false; session.deselect() }, enabled = state.selection != null)
+                LrMenuItem("Invert selection", { menu = false; session.invertSelection() }, enabled = state.phase == Phase.READY)
                 LrMenuItem("Swap colours", { menu = false; session.swapColours() })
                 LrMenuItem("Export", { menu = false; onExport() }, enabled = state.phase == Phase.READY)
             }
@@ -275,6 +278,7 @@ private fun StatusStrip(state: StudioState, session: StudioSession, onExit: () -
 private fun CanvasSurface(session: StudioSession, surface: @Composable () -> Unit, state: StudioState) {
     Box(Modifier.fillMaxSize().background(Lr.Canvas)) {
         surface()
+        SelectionOverlay(state, Modifier.fillMaxSize())
         Box(
             Modifier.fillMaxSize().systemGestureExclusion().canvasInput(session)
                 .semantics { contentDescription = "Drawing canvas, ${state.document.width} by ${state.document.height}" },
@@ -298,15 +302,21 @@ private fun ColourChips(state: StudioState, pick: (PickerTarget) -> Unit, modifi
     }
 }
 
-/** Layers, Brush, Eraser, Move, Scale. The selected tool's tile is #303030 with the accent on its icon (spec 5); Layers opens the panel and is not a tool. */
+/**
+ * Layers, Brush, Eraser, Move, Scale and Select. The selected tool's tile is #303030 with the accent on its icon (spec 5); Layers opens the panel and is not a tool. The Select tile
+ * opens the three selection tools (Rectangle, Ellipse, Lasso) in the options area and remembers the one used last.
+ */
 @Composable
 private fun ToolRail(state: StudioState, session: StudioSession, layersOpen: Boolean, toggleLayers: () -> Unit, vertical: Boolean, modifier: Modifier = Modifier) {
+    var lastSelect by remember { mutableStateOf(Tool.RECT_SELECT) }
+    if (SelectionText.isSelect(state.tool)) lastSelect = state.tool
     val items = @Composable {
         RailTile(StudioIcon.LAYERS, "Layers", layersOpen) { toggleLayers() }
         RailTile(StudioIcon.BRUSH, "Brush", state.tool == Tool.BRUSH) { session.setTool(Tool.BRUSH) }
         RailTile(StudioIcon.ERASER, "Eraser", state.tool == Tool.ERASER) { session.setTool(Tool.ERASER) }
         RailTile(StudioIcon.MOVE, "Move", state.tool == Tool.MOVE) { session.setTool(Tool.MOVE) }
         RailTile(StudioIcon.SCALE, "Scale", state.tool == Tool.SCALE) { session.setTool(Tool.SCALE) }
+        RailTile(when (lastSelect) { Tool.ELLIPSE_SELECT -> StudioIcon.ELLIPSE; Tool.LASSO_SELECT -> StudioIcon.LASSO; else -> StudioIcon.RECT }, "Select", SelectionText.isSelect(state.tool)) { session.setTool(lastSelect) }
     }
     if (vertical) Column(modifier.width(56.dp).background(Lr.Surface1).statusBarsPadding(), verticalArrangement = Arrangement.spacedBy(2.dp), horizontalAlignment = Alignment.CenterHorizontally) { items() }
     else Row(modifier.fillMaxWidth().height(56.dp).background(Lr.Surface1).border(1.dp, Lr.BorderSubtle), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) { items() }

@@ -62,7 +62,30 @@ class FakeGpu : StudioGpu {
         for (r in 0 until h) System.arraycopy(rgba, r * w * 4, t.rgba, ((y + r) * t.w + x) * 4, w * 4)
         return true
     }
-    override fun removeLayer(slot: Int) { tex.remove(slot) }
+    override fun removeLayer(slot: Int) { tex.remove(slot); masks.remove(slot) }
+    // S2: masks (one byte per layer pixel) and the canvas selection, held as the real compositor holds them
+    val masks = HashMap<Int, ByteArray>()
+    var selectionBytes: ByteArray? = null
+    var maskStrokeValue: Float? = null
+    override fun setMask(slot: Int, r8: ByteArray?, w: Int, h: Int): Boolean { if (r8 == null) masks.remove(slot) else { require(r8.size == w * h && tex[slot]!!.w == w); masks[slot] = r8.copyOf() }; return true }
+    override fun updateMask(slot: Int, x: Int, y: Int, w: Int, h: Int, r8: ByteArray): Boolean {
+        val m = masks[slot] ?: return false; val t = tex[slot]!!
+        for (r in 0 until h) System.arraycopy(r8, r * w, m, (y + r) * t.w + x, w)
+        return true
+    }
+    var selW = 0
+    override fun setSelection(r8: ByteArray?, w: Int, h: Int): Boolean { selectionBytes = r8?.copyOf(); selW = w; return true }
+    override fun updateSelection(x: Int, y: Int, w: Int, h: Int, r8: ByteArray): Boolean {
+        val m = selectionBytes ?: return false
+        for (r in 0 until h) System.arraycopy(r8, r * w, m, (y + r) * selW + x, w)
+        return true
+    }
+    override fun beginMaskStroke(slot: Int, value: Float, opacity: Float, hardness: Float, flow: Float): Boolean {
+        if (failBegin || masks[slot] == null) return false
+        strokeBegins++; stamps.clear(); maskStrokeValue = value
+        stroke = slot to Brush(hardness = hardness.toDouble(), flow = flow.toDouble(), opacity = opacity.toDouble(), erase = false)
+        return true
+    }
     override fun beginStroke(slot: Int, r: Float, g: Float, b: Float, opacity: Float, erase: Boolean, hardness: Float, flow: Float): Boolean {
         if (failBegin) return false
         strokeBegins++; stamps.clear()
@@ -78,7 +101,7 @@ class FakeGpu : StudioGpu {
         for (j in 0 until h) for (i in 0 until w) coverage[j * w + i] = full[(y + j) * t.w + x + i]
         return true
     }
-    override fun endStroke() { strokeEnds++; stroke = null }
+    override fun endStroke() { strokeEnds++; stroke = null; maskStrokeValue = null }
     override fun textureBytes() = tex.values.sumOf { it.rgba.size.toLong() }
     var renderFails = false
     var lastRender: Triple<Int, Int, Float>? = null
@@ -86,9 +109,10 @@ class FakeGpu : StudioGpu {
     override fun render(layers: FloatArray, vx: Float, vy: Float, zoom: Float, outW: Int, outH: Int, out: ByteArray): Boolean {
         if (renderFails) return false
         lastRender = Triple(outW, outH, zoom)
-        val refs = (0 until layers.size / 6).map { i ->
-            val o = i * 6; val t = tex[layers[o].toInt()]!!
-            RefLayer(RefImage(t.w, t.h, t.rgba), layers[o + 1], layers[o + 2], layers[o + 3], layers[o + 4], BlendMode.entries.first { it.id == layers[o + 5].toInt() })
+        val refs = (0 until layers.size / 7).map { i ->
+            val o = i * 7; val t = tex[layers[o].toInt()]!!
+            val mm = layers[o + 6].toInt()
+            RefLayer(RefImage(t.w, t.h, t.rgba), layers[o + 1], layers[o + 2], layers[o + 3], layers[o + 4], BlendMode.entries.first { it.id == layers[o + 5].toInt() }, if (mm != 0) masks[layers[o].toInt()] else null, mm)
         }
         System.arraycopy(ReferenceCompositor.render(refs, vx, vy, zoom, outW, outH), 0, out, 0, outW * outH * 4)
         return true
@@ -273,23 +297,23 @@ class StudioSessionTest {
         h.stroke(listOf(10f to 10f, 30f to 10f))
         val painted = h.gl.gpu.tex[1]!!.rgba.copyOf()
         h.s.setBlend(added, BlendMode.MULTIPLY)
-        assertEquals(BlendMode.MULTIPLY.id.toFloat(), h.gl.last!!.layers[5 + 6], 0f)
+        assertEquals(BlendMode.MULTIPLY.id.toFloat(), h.gl.last!!.layers[5 + 7], 0f)
         h.s.deleteLayer(added)
         assertEquals(1, h.st.document.layers.size)
         assertNull(h.gl.gpu.tex[1])
         h.s.undo()                                                       // the delete
         assertEquals(2, h.st.document.layers.size)
-        assertArrayEquals(painted, h.gl.gpu.tex[h.gl.last!!.layers[6].toInt()]!!.rgba)
+        assertArrayEquals(painted, h.gl.gpu.tex[h.gl.last!!.layers[7].toInt()]!!.rgba)
         h.s.flush()
         assertArrayEquals(painted, h.layerPixels(added))                 // and it is saved again under its own name
         h.s.undo(); assertEquals(BlendMode.NORMAL, h.st.document.layers[1].common.blend)
         h.s.undo()                                                       // the stroke
-        assertEquals(0, h.gl.gpu.tex[h.gl.last!!.layers[6].toInt()]!!.rgba.count { it.toInt() != 0 })
+        assertEquals(0, h.gl.gpu.tex[h.gl.last!!.layers[7].toInt()]!!.rgba.count { it.toInt() != 0 })
         h.s.undo()                                                       // the add
         assertEquals(1, h.st.document.layers.size); assertEquals("a", h.st.activeId)
         h.s.redo(); h.s.redo()                                           // the add, then the stroke on it
         assertEquals(2, h.st.document.layers.size)
-        assertArrayEquals(painted, h.gl.gpu.tex[h.gl.last!!.layers[6].toInt()]!!.rgba)
+        assertArrayEquals(painted, h.gl.gpu.tex[h.gl.last!!.layers[7].toInt()]!!.rgba)
     }
 
     @Test fun undoingAStrokeOnAnotherLayerSwitchesToItAndKeepsBothLayersSaved() {
@@ -500,7 +524,7 @@ class SessionFuzzTest {
             val shown = h.st.document
             assertEquals("seed $seed ids", shown.layers.map { it.common }, saved.layers.map { it.common })
             // pixels on the GPU by slot, found through the last frame (visible layers only) plus hidden ones are never hidden here
-            val frame = h.gl.last!!.layers.toList().chunked(6)
+            val frame = h.gl.last!!.layers.toList().chunked(7)
             assertEquals("seed $seed visible layers", shown.layers.count { it.common.visible }, frame.size)
             for ((i, l) in shown.layers.filterIsInstance<Layer.Pixel>().withIndex()) {
                 val onDisk = store.load(saved.layers[i] as Layer.Pixel)?.rgba ?: ByteArray(l.width * l.height * 4)
