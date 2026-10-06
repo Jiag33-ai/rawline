@@ -165,7 +165,7 @@ object Xmp {
         val r = recipeJson?.let { runCatching { EditRecipe.fromJson(it) }.getOrNull() }
         val labels = listOf("", "Red", "Yellow", "Green", "Blue", "Purple")
         return buildString {
-            append("<?xpacket begin=\"﻿\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">\n")
+            append("<?xpacket begin=\"\uFEFF\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">\n")
             append("<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n<rdf:Description rdf:about=\"\"\n")
             append(" xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\" xmlns:rawline=\"https://rawline.app/ns/1.0/\"\n")
             append(" xmp:Rating=\"$rating\"")

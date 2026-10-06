@@ -82,11 +82,9 @@ jobs:
 
   lint:
     # Android lint for every module (the app's release build only runs lintVital, which skips the library modules).
-    # Not blocking yet: it currently reports a few real errors in core/render and core/ml (see docs/AUDIT.md). The HTML
-    # reports are attached to the run. Make it blocking by removing continue-on-error once those are fixed.
+    # Blocking for the run's status (not for the release: the build job does not wait for it). The reports are attached to the run.
     if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
-    continue-on-error: true
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7.0.1
