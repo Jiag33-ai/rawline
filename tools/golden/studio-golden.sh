@@ -17,6 +17,11 @@ python3 "$ROOT/tools/studio/studio_brush.py" make "$W"
 for k in hard soft flow pressure erase; do "$W/studio_golden" "$W/scene_$k.txt" "$W/out_$k.rgba"; done
 python3 "$ROOT/tools/studio/studio_brush.py" compare "$W"
 
+# S2: layer masks (half, gradient, all 255 identity, inverted, disabled, live mask stroke) and the selection clip, against the Python reference
+python3 "$ROOT/tools/studio/studio_mask.py" make "$W"
+for k in mask_half mask_gradient mask_all255_identity mask_inverted mask_disabled mask_nomask mask_paint sel_clip sel_none sel_free; do "$W/studio_golden" "$W/scene_$k.txt" "$W/out_$k.rgba"; done
+python3 "$ROOT/tools/studio/studio_mask.py" compare "$W"
+
 # Banded stroke readback: the coverage read in bands of 1, 7, 64, 256 and 1000 rows must equal one single read (band 100000) byte for byte
 for k in hard flow erase; do
   STUDIO_BAND=100000 STUDIO_READ_STROKE="$W/cov_ref_$k.bin" "$W/studio_golden" "$W/scene_$k.txt" "$W/o.rgba"

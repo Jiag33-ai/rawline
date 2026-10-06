@@ -14,6 +14,7 @@ struct LayerDraw {
     float scale = 1;          // 1 = one layer pixel per document pixel
     float opacity = 1;        // 0..1
     int mode = 0;             // BlendMode.id: 0 normal, 1 multiply, 2 screen
+    int maskMode = 0;         // 0 no mask (also a disabled mask), 1 mask, 2 inverted mask. A mask is read only when the slot has one
 };
 
 /**
@@ -36,12 +37,21 @@ public:
     bool updateLayerRegion(int slot, int x, int y, int w, int h, const uint8_t *rgba);
     void removeLayer(int slot);
 
+    /** Layer mask (schema v2): one byte per layer pixel, row 0 at the top, 255 = reveal. Needs the slot's layer to exist and the size to match it. null removes the mask. On a GL error the previous mask stays. */
+    bool setLayerMask(int slot, const uint8_t *r8, int w, int h);
+    bool updateMaskRegion(int slot, int x, int y, int w, int h, const uint8_t *r8);
+    /** The selection: one byte per canvas pixel. It multiplies the live stroke of the layer being painted (the commit applies the same factor on the CPU). null clears it. */
+    bool setSelection(const uint8_t *r8, int w, int h);
+    bool updateSelectionRegion(int x, int y, int w, int h, const uint8_t *r8);
+
     /**
      * Live stroke on one layer (spec 3.3: the stroke buffer is blended in at the layer's place in the stack). beginStroke clears an R16F
      * coverage buffer the size of the layer; addStamps draws stamps (x, y, radius triples, layer pixels) into it with `over` accumulation;
      * render() shows the layer with the stroke applied; readStroke gives the coverage of a rectangle back for the commit; endStroke frees it.
      */
     bool beginStroke(int slot, float r, float g, float b, float opacity, bool erase, float hardness, float flow);
+    /** A live stroke on the layer's mask: shown as m + (value - m) * coverage * opacity, so black (0) hides and white (1) reveals. The slot needs a mask. */
+    bool beginMaskStroke(int slot, float value, float opacity, float hardness, float flow);
     bool addStamps(const float *xyr, int count);
     bool readStroke(int x, int y, int w, int h, float *coverage, int bandRows = 256);
     void endStroke();
@@ -54,9 +64,9 @@ public:
     int64_t textureBytes() const;
 
 private:
-    struct Slot { GLuint tex = 0; int w = 0, h = 0; };
+    struct Slot { GLuint tex = 0; int w = 0, h = 0; GLuint mask = 0; };
     struct Target { GLuint tex = 0, fbo = 0; int w = 0, h = 0; GLenum fmt = 0; };
-    struct Stroke { int slot = -1; float rgb[3] = {0, 0, 0}; float opacity = 1; bool erase = false; float hardness = 1, flow = 1; };
+    struct Stroke { int slot = -1; float rgb[3] = {0, 0, 0}; float opacity = 1; bool erase = false; float hardness = 1, flow = 1; bool mask = false; float maskValue = 0; };
     bool ensureTarget(Target &t, int w, int h, GLenum fmt);
     void freeTarget(Target &t);
     void draw(const Target &dst, const Target *backdrop, const LayerDraw *l, int mode, float vx, float vy, float zoom);
@@ -66,6 +76,7 @@ private:
     Stroke stroke_;
     Slot slots_[kMaxSlots];
     Target ping_[2], resolve_;
+    GLuint sel_ = 0; int selW_ = 0, selH_ = 0;
     bool ready_ = false;
 };
 

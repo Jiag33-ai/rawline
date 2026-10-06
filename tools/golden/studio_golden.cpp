@@ -1,6 +1,8 @@
 // Host harness for the Studio compositor on Mesa llvmpipe: reads a scene file, renders it with the real GLSL, writes straight RGBA8.
 // usage: studio_golden <scene.txt> <out.rgba>
 // scene.txt: `view vx vy zoom outW outH`, then one `layer file.rgba w h x y scale opacity mode` per layer, bottom to top.
+// S2: `mask file.r8 w h maskMode` (after a layer line: that layer's mask, mode 0 = uploaded but off, 1 = on, 2 = inverted),
+//     `sel file.r8 w h` (the canvas selection), `mstroke slot value opacity hardness flow` (a live stroke on the layer's mask).
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <GLES3/gl32.h>
@@ -45,6 +47,30 @@ int main(int argc, char **argv) {
             if (std::fscanf(f, "%d %f %f %f %f %d %f %f", &slot, &r, &g, &b, &op, &erase, &hard, &flow) != 8) return 5;
             if (!comp.beginStroke(slot, r, g, b, op, erase != 0, hard, flow)) { std::fprintf(stderr, "beginStroke failed\n"); return 6; }
         }
+        else if (std::string(kind) == "mstroke") {
+            int slot; float value, op, hard, flow;
+            if (std::fscanf(f, "%d %f %f %f %f", &slot, &value, &op, &hard, &flow) != 5) return 5;
+            if (!comp.beginMaskStroke(slot, value, op, hard, flow)) { std::fprintf(stderr, "beginMaskStroke failed\n"); return 6; }
+        }
+        else if (std::string(kind) == "mask") {
+            int w, h, mm;
+            if (std::fscanf(f, "%1023s %d %d %d", path, &w, &h, &mm) != 4 || draws.empty()) return 5;
+            std::vector<uint8_t> px(size_t(w) * h);
+            FILE *lf = std::fopen(path, "rb");
+            if (!lf || std::fread(px.data(), 1, px.size(), lf) != px.size()) { std::fprintf(stderr, "bad mask file %s\n", path); return 5; }
+            std::fclose(lf);
+            if (!comp.setLayerMask(draws.back().slot, px.data(), w, h)) { std::fprintf(stderr, "mask upload failed\n"); return 6; }
+            draws.back().maskMode = mm;
+        }
+        else if (std::string(kind) == "sel") {
+            int w, h;
+            if (std::fscanf(f, "%1023s %d %d", path, &w, &h) != 3) return 5;
+            std::vector<uint8_t> px(size_t(w) * h);
+            FILE *lf = std::fopen(path, "rb");
+            if (!lf || std::fread(px.data(), 1, px.size(), lf) != px.size()) { std::fprintf(stderr, "bad selection file %s\n", path); return 5; }
+            std::fclose(lf);
+            if (!comp.setSelection(px.data(), w, h)) { std::fprintf(stderr, "selection upload failed\n"); return 6; }
+        }
         else if (std::string(kind) == "stamp") { float x, y, rad; if (std::fscanf(f, "%f %f %f", &x, &y, &rad) != 3) return 5; stamps.insert(stamps.end(), {x, y, rad}); }
         else if (std::string(kind) == "view") { if (std::fscanf(f, "%f %f %f %d %d", &vx, &vy, &zoom, &ow, &oh) != 5) return 5; }
         else if (std::string(kind) == "layer") {
@@ -56,7 +82,7 @@ int main(int argc, char **argv) {
             std::fclose(lf);
             int slot = int(draws.size());
             if (!comp.setLayerImage(slot, px.data(), w, h)) { std::fprintf(stderr, "upload failed\n"); return 6; }
-            draws.push_back({slot, x, y, sc, op, mode});
+            draws.push_back({slot, x, y, sc, op, mode, 0});
         }
     }
     std::fclose(f);

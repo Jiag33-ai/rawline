@@ -8,7 +8,13 @@ class RefImage(val w: Int, val h: Int, val rgba: ByteArray) {
 }
 
 /** One visible layer as the compositor sees it. [x], [y] are the document position of the top left corner; the layer covers w*scale by h*scale document pixels. */
-class RefLayer(val image: RefImage, val x: Float, val y: Float, val scale: Float, val opacity: Float, val mode: BlendMode)
+class RefLayer(
+    val image: RefImage, val x: Float, val y: Float, val scale: Float, val opacity: Float, val mode: BlendMode,
+    /** S2: one byte per layer pixel (255 reveals), or null. [maskMode] 0 = off, 1 = on, 2 = inverted. */
+    val mask: ByteArray? = null, val maskMode: Int = 0,
+) {
+    init { if (mask != null) require(mask.size == image.w * image.h) { "mask is ${mask.size} bytes, expected ${image.w * image.h}" } }
+}
 
 /**
  * The slow, exact CPU compositor of spec 4.5. The GPU path (studio_composite.frag) is compared with it in the golden scene, and the
@@ -26,7 +32,8 @@ object ReferenceCompositor {
         val u = lx - 0.5f; val v = ly - 0.5f
         val i0 = floor(u).toInt(); val j0 = floor(v).toInt()
         val fx = u - i0; val fy = v - j0
-        var r = 0f; var g = 0f; var b = 0f; var asum = 0f
+        var r = 0f; var g = 0f; var b = 0f; var asum = 0f; var msum = 0f
+        val masked = l.mask != null && l.maskMode != 0
         for (jj in 0..1) for (ii in 0..1) {
             val cx = (i0 + ii).coerceIn(0, img.w - 1); val cy = (j0 + jj).coerceIn(0, img.h - 1)
             val o = (cy * img.w + cx) * 4
@@ -36,8 +43,12 @@ object ReferenceCompositor {
             g += w * (img.rgba[o + 1].toInt() and 255) / 255f
             b += w * (img.rgba[o + 2].toInt() and 255) / 255f
             asum += w
+            if (masked) msum += (if (ii == 0) 1 - fx else fx) * (if (jj == 0) 1 - fy else fy) * ((l.mask!![cy * img.w + cx].toInt() and 255) / 255f)
         }
-        return if (asum <= 0f) Rgba.CLEAR else Rgba(r / asum, g / asum, b / asum, asum)
+        if (asum <= 0f) return Rgba.CLEAR
+        // the mask scales the resampled alpha, bilinear in the layer's own pixels; colour is not touched (spec 2.1: alpha' = alpha * opacity * m)
+        val alpha = if (masked) asum * (if (l.maskMode == 2) 1f - msum else msum) else asum
+        return Rgba(r / asum, g / asum, b / asum, alpha)
     }
 
     /** Renders the view (top left [vx], [vy] in document pixels, [zoom] screen pixels per document pixel) into straight RGBA8, rounded to nearest. Layers bottom to top. */
@@ -59,10 +70,15 @@ object ReferenceCompositor {
     private fun q(v: Float): Byte = (v.coerceIn(0f, 1f) * 255f + 0.5f).toInt().toByte()
 
     /** The visible layers of [doc] for which [pixels] returns an image, as compositor input. */
-    fun layersOf(doc: Document, pixels: (Layer.Pixel) -> RefImage?): List<RefLayer> = doc.layers.mapNotNull { l ->
+    fun layersOf(doc: Document, pixels: (Layer.Pixel) -> RefImage?): List<RefLayer> = layersWithMasks(doc, pixels) { null }
+
+    /** As [layersOf], with each enabled layer mask from [masks] (one byte per layer pixel). A disabled mask is left out, an inverted one is flagged. */
+    fun layersWithMasks(doc: Document, pixels: (Layer.Pixel) -> RefImage?, masks: (Layer.Pixel) -> ByteArray?): List<RefLayer> = doc.layers.mapNotNull { l ->
         val p = l as? Layer.Pixel ?: return@mapNotNull null
         if (!p.common.visible) return@mapNotNull null
         val img = pixels(p) ?: return@mapNotNull null
-        RefLayer(img, p.common.x.toFloat(), p.common.y.toFloat(), p.common.scale, p.common.opacity / 100f, p.common.blend)
+        val ref = p.common.mask
+        val m = if (ref != null && ref.enabled) masks(p) else null
+        RefLayer(img, p.common.x.toFloat(), p.common.y.toFloat(), p.common.scale, p.common.opacity / 100f, p.common.blend, m, if (m == null) 0 else if (ref!!.inverted) 2 else 1)
     }
 }

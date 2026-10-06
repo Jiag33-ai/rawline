@@ -48,7 +48,9 @@ bool Compositor::init(std::string &err) {
 
 void Compositor::release() {
     if (!ready_) return;
-    for (Slot &s : slots_) { if (s.tex) glDeleteTextures(1, &s.tex); s = Slot(); }
+    for (Slot &s : slots_) { if (s.tex) glDeleteTextures(1, &s.tex); if (s.mask) glDeleteTextures(1, &s.mask); s = Slot(); }
+    if (sel_) glDeleteTextures(1, &sel_);
+    sel_ = 0; selW_ = selH_ = 0;
     for (Target &t : ping_) freeTarget(t);
     freeTarget(resolve_);
     freeTarget(strokeBuf_);
@@ -93,8 +95,71 @@ bool Compositor::setLayerImage(int slot, const uint8_t *rgba, int w, int h) {
     if (rgba) glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
     if (glGetError() != GL_NO_ERROR) { glDeleteTextures(1, &t); while (glGetError() != GL_NO_ERROR) {} return false; }
     if (slots_[slot].tex) glDeleteTextures(1, &slots_[slot].tex);
-    slots_[slot] = Slot{t, w, h};
+    GLuint keepMask = slots_[slot].mask;
+    if (keepMask && (slots_[slot].w != w || slots_[slot].h != h)) { glDeleteTextures(1, &keepMask); keepMask = 0; }   // a mask follows its layer's size
+    slots_[slot] = Slot{t, w, h, keepMask};
     return true;
+}
+
+namespace {
+GLuint makeR8(int w, int h, const uint8_t *data) {
+    GLuint t = 0;
+    glGenTextures(1, &t);
+    glBindTexture(GL_TEXTURE_2D, t);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_R8, w, h);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    if (data) glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RED, GL_UNSIGNED_BYTE, data);
+    return t;
+}
+}  // namespace
+
+bool Compositor::setLayerMask(int slot, const uint8_t *r8, int w, int h) {
+    if (!ready_ || slot < 0 || slot >= kMaxSlots || !slots_[slot].tex) return false;
+    if (!r8) {   // remove
+        if (slots_[slot].mask) { glDeleteTextures(1, &slots_[slot].mask); slots_[slot].mask = 0; }
+        return true;
+    }
+    if (w != slots_[slot].w || h != slots_[slot].h) return false;
+    while (glGetError() != GL_NO_ERROR) {}
+    GLuint t = makeR8(w, h, r8);
+    if (glGetError() != GL_NO_ERROR) { glDeleteTextures(1, &t); while (glGetError() != GL_NO_ERROR) {} return false; }
+    if (slots_[slot].mask) glDeleteTextures(1, &slots_[slot].mask);
+    slots_[slot].mask = t;
+    return true;
+}
+
+bool Compositor::updateMaskRegion(int slot, int x, int y, int w, int h, const uint8_t *r8) {
+    if (!ready_ || slot < 0 || slot >= kMaxSlots || !slots_[slot].mask) return false;
+    if (x < 0 || y < 0 || w <= 0 || h <= 0 || x + w > slots_[slot].w || y + h > slots_[slot].h) return false;
+    while (glGetError() != GL_NO_ERROR) {}
+    glBindTexture(GL_TEXTURE_2D, slots_[slot].mask);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, x, y, w, h, GL_RED, GL_UNSIGNED_BYTE, r8);
+    return glGetError() == GL_NO_ERROR;
+}
+
+bool Compositor::setSelection(const uint8_t *r8, int w, int h) {
+    if (!ready_) return false;
+    if (!r8) { if (sel_) glDeleteTextures(1, &sel_); sel_ = 0; selW_ = selH_ = 0; return true; }
+    if (w <= 0 || h <= 0) return false;
+    while (glGetError() != GL_NO_ERROR) {}
+    GLuint t = makeR8(w, h, r8);
+    if (glGetError() != GL_NO_ERROR) { glDeleteTextures(1, &t); while (glGetError() != GL_NO_ERROR) {} return false; }
+    if (sel_) glDeleteTextures(1, &sel_);
+    sel_ = t; selW_ = w; selH_ = h;
+    return true;
+}
+
+bool Compositor::updateSelectionRegion(int x, int y, int w, int h, const uint8_t *r8) {
+    if (!ready_ || !sel_) return false;
+    if (x < 0 || y < 0 || w <= 0 || h <= 0 || x + w > selW_ || y + h > selH_) return false;
+    while (glGetError() != GL_NO_ERROR) {}
+    glBindTexture(GL_TEXTURE_2D, sel_);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, x, y, w, h, GL_RED, GL_UNSIGNED_BYTE, r8);
+    return glGetError() == GL_NO_ERROR;
 }
 
 bool Compositor::updateLayerRegion(int slot, int x, int y, int w, int h, const uint8_t *rgba) {
@@ -109,6 +174,7 @@ bool Compositor::updateLayerRegion(int slot, int x, int y, int w, int h, const u
 void Compositor::removeLayer(int slot) {
     if (slot < 0 || slot >= kMaxSlots || !slots_[slot].tex) return;
     glDeleteTextures(1, &slots_[slot].tex);
+    if (slots_[slot].mask) glDeleteTextures(1, &slots_[slot].mask);
     slots_[slot] = Slot();
 }
 
@@ -132,8 +198,25 @@ void Compositor::draw(const Target &dst, const Target *backdrop, const LayerDraw
         glUniform4f(glGetUniformLocation(prog_, "uRect"), l->x, l->y, s.w * l->scale, s.h * l->scale);
         glUniform1f(glGetUniformLocation(prog_, "uOpacity"), l->opacity);
         bool live = stroke_.slot == l->slot && strokeBuf_.tex;
-        glUniform1i(glGetUniformLocation(prog_, "uStrokeMode"), live ? (stroke_.erase ? 2 : 1) : 0);
+        const bool maskOn = l->maskMode != 0 && s.mask;
+        glUniform1i(glGetUniformLocation(prog_, "uMaskMode"), maskOn ? l->maskMode : 0);
+        if (maskOn) {
+            glActiveTexture(GL_TEXTURE3);
+            glBindTexture(GL_TEXTURE_2D, s.mask);
+            glUniform1i(glGetUniformLocation(prog_, "uMask"), 3);
+        }
+        // a mask stroke is shown only through a mask that is on; a pixel stroke needs nothing more
+        if (live && stroke_.mask && !maskOn) live = false;
+        glUniform1i(glGetUniformLocation(prog_, "uStrokeMode"), live ? (stroke_.mask ? 3 : (stroke_.erase ? 2 : 1)) : 0);
+        const bool selOn = live && sel_;
+        glUniform1i(glGetUniformLocation(prog_, "uSelOn"), selOn ? 1 : 0);
+        if (selOn) {
+            glActiveTexture(GL_TEXTURE4);
+            glBindTexture(GL_TEXTURE_2D, sel_);
+            glUniform1i(glGetUniformLocation(prog_, "uSel"), 4);
+        }
         if (live) {
+            glUniform1f(glGetUniformLocation(prog_, "uStrokeMaskValue"), stroke_.maskValue);
             glActiveTexture(GL_TEXTURE2);
             glBindTexture(GL_TEXTURE_2D, strokeBuf_.tex);
             glUniform1i(glGetUniformLocation(prog_, "uStroke"), 2);
@@ -142,6 +225,8 @@ void Compositor::draw(const Target &dst, const Target *backdrop, const LayerDraw
         }
     } else {
         glUniform1i(glGetUniformLocation(prog_, "uStrokeMode"), 0);
+        glUniform1i(glGetUniformLocation(prog_, "uMaskMode"), 0);
+        glUniform1i(glGetUniformLocation(prog_, "uSelOn"), 0);
     }
     glBindVertexArray(vao_);
     glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -181,8 +266,15 @@ bool Compositor::beginStroke(int slot, float r, float g, float b, float opacity,
     glViewport(0, 0, sl.w, sl.h);
     glClearColor(0.f, 0.f, 0.f, 0.f);
     glClear(GL_COLOR_BUFFER_BIT);
-    stroke_ = Stroke{slot, {r, g, b}, opacity, erase, hardness, flow};
+    stroke_ = Stroke{slot, {r, g, b}, opacity, erase, hardness, flow, false, 0.f};
     return glGetError() == GL_NO_ERROR;
+}
+
+bool Compositor::beginMaskStroke(int slot, float value, float opacity, float hardness, float flow) {
+    if (!ready_ || slot < 0 || slot >= kMaxSlots || !slots_[slot].tex || !slots_[slot].mask) return false;
+    if (!beginStroke(slot, 0.f, 0.f, 0.f, opacity, false, hardness, flow)) return false;
+    stroke_.mask = true; stroke_.maskValue = value;
+    return true;
 }
 
 bool Compositor::addStamps(const float *xyr, int count) {
@@ -241,7 +333,8 @@ void Compositor::endStroke() {
 
 int64_t Compositor::textureBytes() const {
     int64_t n = 0;
-    for (const Slot &s : slots_) n += int64_t(s.w) * s.h * 4;
+    for (const Slot &s : slots_) { n += int64_t(s.w) * s.h * 4; if (s.mask) n += int64_t(s.w) * s.h; }
+    n += int64_t(selW_) * selH_;
     for (const Target &t : ping_) n += int64_t(t.w) * t.h * 8;
     n += int64_t(resolve_.w) * resolve_.h * 4;
     n += int64_t(strokeBuf_.w) * strokeBuf_.h * 2;

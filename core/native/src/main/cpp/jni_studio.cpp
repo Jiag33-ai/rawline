@@ -27,6 +27,11 @@ bool fits(JNIEnv *env, jarray a, jint w, jint h) {
     if (!a || w <= 0 || h <= 0 || w > 16384 || h > 16384) return false;
     return size_t(env->GetArrayLength(a)) >= size_t(w) * size_t(h) * 4;
 }
+// Same for one byte per pixel (masks, selection).
+bool fits1(JNIEnv *env, jarray a, jint w, jint h) {
+    if (!a || w <= 0 || h <= 0 || w > 16384 || h > 16384) return false;
+    return size_t(env->GetArrayLength(a)) >= size_t(w) * size_t(h);
+}
 struct Bytes {
     JNIEnv *env; jbyteArray a; jbyte *p; jint mode;
     Bytes(JNIEnv *e, jbyteArray arr, jint releaseMode) : env(e), a(arr), p(e->GetByteArrayElements(arr, nullptr)), mode(releaseMode) { if (!p) throw std::bad_alloc(); }
@@ -82,16 +87,52 @@ JNIEXPORT void JNICALL Java_app_rawline_core_nativelib_StudioNative_removeLayer(
     guardedV("studioRemoveLayer", [&] { reinterpret_cast<Compositor *>(h)->removeLayer(slot); });
 }
 
-/** layers: 6 floats per layer, bottom to top: slot, x, y, scale, opacity (0..1), mode. out: outW * outH * 4 bytes, straight RGBA8, row 0 top. */
+/** r8: w * h bytes, or null to remove the layer's mask. The size must equal the layer's. */
+JNIEXPORT jboolean JNICALL Java_app_rawline_core_nativelib_StudioNative_setLayerMask(JNIEnv *env, jobject, jlong h, jint slot, jbyteArray r8, jint w, jint hgt) {
+    return guarded<jboolean>("studioSetLayerMask", JNI_FALSE, [&]() -> jboolean {
+        if (!r8) return reinterpret_cast<Compositor *>(h)->setLayerMask(slot, nullptr, 0, 0);
+        if (!fits1(env, r8, w, hgt)) return JNI_FALSE;
+        Bytes b(env, r8, JNI_ABORT);
+        return reinterpret_cast<Compositor *>(h)->setLayerMask(slot, reinterpret_cast<const uint8_t *>(b.p), w, hgt);
+    });
+}
+
+JNIEXPORT jboolean JNICALL Java_app_rawline_core_nativelib_StudioNative_updateMaskRegion(JNIEnv *env, jobject, jlong h, jint slot, jint x, jint y, jint w, jint hgt, jbyteArray r8) {
+    return guarded<jboolean>("studioUpdateMaskRegion", JNI_FALSE, [&]() -> jboolean {
+        if (!fits1(env, r8, w, hgt)) return JNI_FALSE;
+        Bytes b(env, r8, JNI_ABORT);
+        return reinterpret_cast<Compositor *>(h)->updateMaskRegion(slot, x, y, w, hgt, reinterpret_cast<const uint8_t *>(b.p));
+    });
+}
+
+/** r8: w * h bytes of the canvas selection, or null to clear it. */
+JNIEXPORT jboolean JNICALL Java_app_rawline_core_nativelib_StudioNative_setSelection(JNIEnv *env, jobject, jlong h, jbyteArray r8, jint w, jint hgt) {
+    return guarded<jboolean>("studioSetSelection", JNI_FALSE, [&]() -> jboolean {
+        if (!r8) return reinterpret_cast<Compositor *>(h)->setSelection(nullptr, 0, 0);
+        if (!fits1(env, r8, w, hgt)) return JNI_FALSE;
+        Bytes b(env, r8, JNI_ABORT);
+        return reinterpret_cast<Compositor *>(h)->setSelection(reinterpret_cast<const uint8_t *>(b.p), w, hgt);
+    });
+}
+
+JNIEXPORT jboolean JNICALL Java_app_rawline_core_nativelib_StudioNative_updateSelectionRegion(JNIEnv *env, jobject, jlong h, jint x, jint y, jint w, jint hgt, jbyteArray r8) {
+    return guarded<jboolean>("studioUpdateSelectionRegion", JNI_FALSE, [&]() -> jboolean {
+        if (!fits1(env, r8, w, hgt)) return JNI_FALSE;
+        Bytes b(env, r8, JNI_ABORT);
+        return reinterpret_cast<Compositor *>(h)->updateSelectionRegion(x, y, w, hgt, reinterpret_cast<const uint8_t *>(b.p));
+    });
+}
+
+/** layers: 7 floats per layer, bottom to top: slot, x, y, scale, opacity (0..1), mode, maskMode (0 none or off, 1 mask, 2 inverted mask). out: outW * outH * 4 bytes, straight RGBA8, row 0 top. */
 JNIEXPORT jboolean JNICALL Java_app_rawline_core_nativelib_StudioNative_render(JNIEnv *env, jobject, jlong h, jfloatArray layers, jfloat vx, jfloat vy, jfloat zoom, jint outW, jint outH, jbyteArray out) {
     return guarded<jboolean>("studioRender", JNI_FALSE, [&]() -> jboolean {
         if (!fits(env, out, outW, outH) || !layers) return JNI_FALSE;
-        const jsize n = env->GetArrayLength(layers) / 6;
+        const jsize n = env->GetArrayLength(layers) / 7;
         std::vector<LayerDraw> draws(n);
         {
             jfloat *p = env->GetFloatArrayElements(layers, nullptr);
             if (!p) throw std::bad_alloc();
-            for (jsize i = 0; i < n; i++) draws[i] = {int(p[i * 6]), p[i * 6 + 1], p[i * 6 + 2], p[i * 6 + 3], p[i * 6 + 4], int(p[i * 6 + 5])};
+            for (jsize i = 0; i < n; i++) draws[i] = {int(p[i * 7]), p[i * 7 + 1], p[i * 7 + 2], p[i * 7 + 3], p[i * 7 + 4], int(p[i * 7 + 5]), int(p[i * 7 + 6])};
             env->ReleaseFloatArrayElements(layers, p, JNI_ABORT);
         }
         Bytes o(env, out, 0);
@@ -102,6 +143,11 @@ JNIEXPORT jboolean JNICALL Java_app_rawline_core_nativelib_StudioNative_render(J
 /** Clears an R16F coverage buffer the size of the slot's layer and remembers the stroke style. */
 JNIEXPORT jboolean JNICALL Java_app_rawline_core_nativelib_StudioNative_beginStroke(JNIEnv *, jobject, jlong h, jint slot, jfloat r, jfloat g, jfloat b, jfloat opacity, jboolean erase, jfloat hardness, jfloat flow) {
     return guarded<jboolean>("studioBeginStroke", JNI_FALSE, [&]() -> jboolean { return reinterpret_cast<Compositor *>(h)->beginStroke(slot, r, g, b, opacity, erase, hardness, flow); });
+}
+
+/** Like beginStroke, but the stroke paints the layer's mask toward [value] (0 hides, 1 reveals). The layer needs a mask. */
+JNIEXPORT jboolean JNICALL Java_app_rawline_core_nativelib_StudioNative_beginMaskStroke(JNIEnv *, jobject, jlong h, jint slot, jfloat value, jfloat opacity, jfloat hardness, jfloat flow) {
+    return guarded<jboolean>("studioBeginMaskStroke", JNI_FALSE, [&]() -> jboolean { return reinterpret_cast<Compositor *>(h)->beginMaskStroke(slot, value, opacity, hardness, flow); });
 }
 
 /** xyr: count * 3 floats (x, y, radius in layer pixels). */

@@ -23,8 +23,9 @@ def composite(cb, ab, cs, a_s, mode, opacity=1.0, mask=1.0):
     return (out[0], out[1], out[2], ar)
 
 class Layer:
-    def __init__(self, pix, w, h, x=0.0, y=0.0, scale=1.0, opacity=1.0, mode=0):
+    def __init__(self, pix, w, h, x=0.0, y=0.0, scale=1.0, opacity=1.0, mode=0, mask=None, mask_mode=0):
         self.pix, self.w, self.h, self.x, self.y, self.scale, self.opacity, self.mode = pix, w, h, x, y, scale, opacity, mode   # pix: bytes RGBA8 straight
+        self.mask, self.mask_mode = mask, mask_mode   # S2: mask = bytes, one per layer pixel (255 reveals); mask_mode 0 off (or none), 1 on, 2 inverted
 
     def sample(self, dx, dy):
         """Straight RGBA (floats 0..1) of the layer at document position (dx, dy) in pixel centres, bilinear and alpha weighted; alpha 0 outside."""
@@ -35,7 +36,7 @@ class Layer:
         u, v = lx - 0.5, ly - 0.5
         i0, j0 = math.floor(u), math.floor(v)
         fx, fy = u - i0, v - j0
-        acc = [0.0, 0.0, 0.0]; asum = 0.0
+        acc = [0.0, 0.0, 0.0]; asum = 0.0; msum = 0.0
         for jj, wy in ((j0, 1 - fy), (j0 + 1, fy)):
             for ii, wx in ((i0, 1 - fx), (i0 + 1, fx)):
                 cx = min(max(ii, 0), self.w - 1); cy = min(max(jj, 0), self.h - 1)
@@ -44,8 +45,13 @@ class Layer:
                 wgt = wx * wy * a
                 for c in range(3): acc[c] += wgt * (self.pix[o + c] / 255.0)
                 asum += wgt
+                if self.mask is not None and self.mask_mode != 0: msum += wx * wy * (self.mask[cy * self.w + cx] / 255.0)
         if asum <= 0.0: return (0.0, 0.0, 0.0, 0.0)
-        return (acc[0] / asum, acc[1] / asum, acc[2] / asum, asum)
+        alpha = asum
+        if self.mask is not None and self.mask_mode != 0:
+            # the mask scales the resampled alpha (spec 2.1: alpha' = alpha * opacity * m), bilinear in the layer's own pixels; colour is not touched
+            alpha = asum * ((1.0 - msum) if self.mask_mode == 2 else msum)
+        return (acc[0] / asum, acc[1] / asum, acc[2] / asum, alpha)
 
 def render(layers, view, out_w, out_h):
     """layers bottom to top (visible only). view = (vx, vy, zoom). Returns bytes RGBA8 straight, rounded to nearest."""
