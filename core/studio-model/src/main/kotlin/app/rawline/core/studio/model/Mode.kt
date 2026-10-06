@@ -35,7 +35,7 @@ class ModeState(private val studioEnabled: Boolean, private val kv: KeyValue) {
         if (!studioEnabled) return AppMode.DEVELOP
         val wanted = AppMode.fromKey(kv.getString(KEY))
         if (wanted == AppMode.STUDIO) {
-            if (guard.shouldFallBack()) { kv.putString(KEY, AppMode.DEVELOP.key); notice = "Studio did not start twice, so Rawline opened Develop. Switch to Studio again when you like."; return AppMode.DEVELOP }
+            if (guard.shouldFallBack()) { kv.putString(KEY, AppMode.DEVELOP.key); kv.putInt(LAST_FALLBACK, 1); notice = "Studio did not start twice, so Rawline opened Develop. Switch to Studio again when you like."; return AppMode.DEVELOP }
             guard.beginStudioStart()
         }
         return wanted
@@ -49,13 +49,16 @@ class ModeState(private val studioEnabled: Boolean, private val kv: KeyValue) {
     fun switchTo(mode: AppMode): AppMode {
         if (!studioEnabled) return AppMode.DEVELOP
         kv.putString(KEY, mode.key)
-        if (mode == AppMode.STUDIO) guard.beginStudioStart() else guard.studioReady()
+        if (mode == AppMode.STUDIO) { kv.putInt(LAST_FALLBACK, 0); guard.beginStudioStart() } else guard.studioReady()
         return mode
     }
 
     fun clearNotice() { notice = null }
 
-    companion object { const val KEY = "mode" }
+    /** For the Copy report: true when the last Studio start fell back to Develop and the user has not chosen Studio again since. */
+    fun lastStartFellBack() = kv.getInt(LAST_FALLBACK, 0) == 1
+
+    companion object { const val KEY = "mode"; const val LAST_FALLBACK = "studio_last_fallback" }
 }
 
 /** Counts Studio starts that did not reach the first frame. [limit] in a row means the next start goes to Develop (BK-409). */

@@ -90,7 +90,14 @@ class MainActivity : ComponentActivity() {
         )
         // only on a fresh start: after a restore the same intent is replayed and must not jump to the queue again
         if (savedInstanceState == null) openRoute.value = intent?.getStringExtra(EXTRA_OPEN)
-        setContent { RawlineTheme { Surface(color = Lr.Canvas) { RawlineRoot(openRoute.value) { openRoute.value = null } } } }
+        setContent {
+            RawlineTheme {
+                Surface(color = Lr.Canvas) {
+                    // Develop | Studio when this build has Studio (StudioEntry in src/studioOn); otherwise Develop alone, exactly as before
+                    StudioEntry.Root(openRoute.value) { modeSwitch -> RawlineRoot(openRoute.value, modeSwitch) { openRoute.value = null } }
+                }
+            }
+        }
     }
 
     override fun onNewIntent(intent: android.content.Intent) {
@@ -123,7 +130,7 @@ private fun openSettings(context: Context, intent: android.content.Intent, byHan
 }
 
 @Composable
-private fun RawlineRoot(openRoute: String?, onOpened: () -> Unit) {
+private fun RawlineRoot(openRoute: String?, modeSwitch: (@Composable () -> Unit)?, onOpened: () -> Unit) {
     val context = LocalContext.current
     val graph = (context.applicationContext as RawlineApplication).graph
     val vm: LibraryViewModel = viewModel()
@@ -280,6 +287,7 @@ private fun RawlineRoot(openRoute: String?, onOpened: () -> Unit) {
                                 onRequestAllFiles = { openSettings(context, vm.allFilesIntent(), "Open Settings, Apps, Special app access, All files access", fallback = android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)) { showToast(it) } },
                                 hasCopied = copied != null,
                             ),
+                            modeSwitch = modeSwitch,
                         )
                     }
                                     }
@@ -368,7 +376,8 @@ private fun RawlineRoot(openRoute: String?, onOpened: () -> Unit) {
                             xmpOn = xmp, onXmpChange = vm::setXmp,
                             onBackup = { backupOut.launch("rawline-backup.zip") }, onRestore = { backupIn.launch(arrayOf("application/zip", "application/octet-stream")) },
                             message = message,
-                            onVersionLongPress = DebugEntry.versionLongPress(context),
+                            onVersionLongPress = StudioEntry.debugLongPress(context),
+                            studioNote = StudioEntry.settingsNote(),
                             onBack = { nav.popBackStack() },
                         )
                     }

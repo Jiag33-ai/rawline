@@ -16,6 +16,7 @@ android {
 dependencies {
     api(project(":core:studio-model"))
     api(project(":core:native"))
+    implementation(project(":core:render"))
     api(libs.kotlinx.coroutines.android)
     testImplementation(libs.junit)
     testImplementation(libs.json)

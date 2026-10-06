@@ -57,7 +57,10 @@ import app.rawline.core.studio.model.Document
 import app.rawline.core.studio.render.PhotoImport
 import app.rawline.core.studio.render.Phase
 import app.rawline.core.studio.render.Rgb
+import app.rawline.core.studio.render.StudioExporter
 import app.rawline.core.studio.render.StudioGl
+import app.rawline.core.studio.render.StudioPerf
+import app.rawline.core.studio.render.StudioProjects
 import app.rawline.core.studio.render.StudioGlView
 import app.rawline.core.studio.render.StudioSession
 import app.rawline.core.studio.render.StudioState
@@ -77,6 +80,7 @@ import app.rawline.core.ui.blockPointerInput
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 
 private enum class PickerTarget { FOREGROUND, BACKGROUND }
@@ -86,7 +90,7 @@ private enum class PickerTarget { FOREGROUND, BACKGROUND }
  * the left and a 280 dp panel (layers, or the tool's options) on the right. Back closes the layers panel first, then saves and leaves.
  */
 @Composable
-fun StudioCanvasScreen(session: StudioSession, gl: StudioGl, onExit: () -> Unit, modifier: Modifier = Modifier) {
+fun StudioCanvasScreen(session: StudioSession, gl: StudioGl, projects: StudioProjects, perf: StudioPerf, onExit: () -> Unit, modifier: Modifier = Modifier) {
     val state by session.state.collectAsStateWithLifecycle()
     var layersOpen by rememberSaveable { mutableStateOf(false) }
     var picker by remember { mutableStateOf<PickerTarget?>(null) }
@@ -106,7 +110,31 @@ fun StudioCanvasScreen(session: StudioSession, gl: StudioGl, onExit: () -> Unit,
         context.registerComponentCallbacks(cb)
         onDispose { context.unregisterComponentCallbacks(cb) }
     }
-    BackHandler { if (layersOpen) layersOpen = false else { session.flush(); onExit() } }
+    var exportOpen by rememberSaveable { mutableStateOf(false) }
+    var leaving by remember { mutableStateOf(false) }
+    // Leaving: save what is unsaved, then write the project's thumbnail for the home (a worker renders it through the compositor while the surface still exists), then go.
+    // The thumbnail is best effort: it gets 3 seconds, and a failure only means the home shows the old one.
+    val leave: () -> Unit = {
+        if (!leaving) {
+            leaving = true
+            session.flush()
+            val projectId = state.document.id
+            val ready = state.phase == Phase.READY
+            scope.launch {
+                if (ready) withTimeoutOrNull(3_000) {
+                    withContext(Dispatchers.IO) {
+                        runCatching {
+                            val snap = session.exportSnapshot(2_000)
+                            val jpeg = snap?.let { StudioExporter(session, perf).thumbnailJpeg(it) }
+                            if (jpeg != null) projects.writeThumbnail(projectId, jpeg)
+                        }.onFailure { perf.error("studio thumbnail: ${it.javaClass.simpleName}: ${it.message}") }
+                    }
+                }
+                onExit()
+            }
+        }
+    }
+    BackHandler(enabled = !leaving) { if (exportOpen) exportOpen = false else if (layersOpen) layersOpen = false else leave() }
 
     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) scope.launch {
@@ -122,8 +150,8 @@ fun StudioCanvasScreen(session: StudioSession, gl: StudioGl, onExit: () -> Unit,
         Box(modifier.fillMaxSize().background(Lr.Canvas)) {
             // The layout (and with it the GL surface) is ALWAYS composed: the session waits for the GL context to upload the layers before it says READY,
             // so a surface that only appeared once READY would wait for itself.
-            if (landscape) Landscape(state, session, gl, layersOpen, { layersOpen = !layersOpen }, { picker = it }, addPhoto, onExit)
-            else Portrait(state, session, gl, layersOpen, { layersOpen = !layersOpen }, { picker = it }, addPhoto, onExit)
+            if (landscape) Landscape(state, session, gl, layersOpen, { layersOpen = !layersOpen }, { picker = it }, addPhoto, leave, { exportOpen = true })
+            else Portrait(state, session, gl, layersOpen, { layersOpen = !layersOpen }, { picker = it }, addPhoto, leave, { exportOpen = true })
             when (state.phase) {
                 Phase.LOADING -> Box(Modifier.fillMaxSize().background(Lr.Canvas).blockPointerInput(), contentAlignment = Alignment.Center) { LocalLoader() }
                 Phase.ERROR -> Column(Modifier.fillMaxSize().background(Lr.Canvas).blockPointerInput().statusBarsPadding().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
@@ -132,10 +160,12 @@ fun StudioCanvasScreen(session: StudioSession, gl: StudioGl, onExit: () -> Unit,
                 }
                 Phase.READY -> {}
             }
+            if (leaving) Box(Modifier.fillMaxSize().background(Lr.Canvas.copy(alpha = 0.6f)).blockPointerInput(), contentAlignment = Alignment.Center) { LocalLoader() }
             ValueFeedbackPill(feedback, Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 52.dp))
             Notices(state, session, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 200.dp, start = 16.dp, end = 16.dp))
         }
     }
+    if (exportOpen) ExportSheet(session, state.document.width, state.document.height, state.document.name, perf, onDismiss = { exportOpen = false })
     picker?.let { target ->
         val fg = target == PickerTarget.FOREGROUND
         ColourPickerDialog(
@@ -147,9 +177,9 @@ fun StudioCanvasScreen(session: StudioSession, gl: StudioGl, onExit: () -> Unit,
 }
 
 @Composable
-private fun Portrait(state: StudioState, session: StudioSession, gl: StudioGl, layersOpen: Boolean, toggleLayers: () -> Unit, pick: (PickerTarget) -> Unit, addPhoto: () -> Unit, onExit: () -> Unit) {
+private fun Portrait(state: StudioState, session: StudioSession, gl: StudioGl, layersOpen: Boolean, toggleLayers: () -> Unit, pick: (PickerTarget) -> Unit, addPhoto: () -> Unit, onExit: () -> Unit, onExport: () -> Unit) {
     Column(Modifier.fillMaxSize()) {
-        StatusStrip(state, session, onExit, Modifier.statusBarsPadding())
+        StatusStrip(state, session, onExit, onExport, Modifier.statusBarsPadding())
         Box(Modifier.weight(1f).fillMaxWidth()) {
             CanvasSurface(session, gl, state)
             ColourChips(state, pick, Modifier.align(Alignment.BottomEnd).padding(12.dp))
@@ -161,11 +191,11 @@ private fun Portrait(state: StudioState, session: StudioSession, gl: StudioGl, l
 }
 
 @Composable
-private fun Landscape(state: StudioState, session: StudioSession, gl: StudioGl, layersOpen: Boolean, toggleLayers: () -> Unit, pick: (PickerTarget) -> Unit, addPhoto: () -> Unit, onExit: () -> Unit) {
+private fun Landscape(state: StudioState, session: StudioSession, gl: StudioGl, layersOpen: Boolean, toggleLayers: () -> Unit, pick: (PickerTarget) -> Unit, addPhoto: () -> Unit, onExit: () -> Unit, onExport: () -> Unit) {
     Row(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))) {
         ToolRail(state, session, layersOpen, toggleLayers, vertical = true, Modifier.fillMaxHeight())
         Column(Modifier.weight(1f).fillMaxHeight()) {
-            StatusStrip(state, session, onExit, Modifier.statusBarsPadding())
+            StatusStrip(state, session, onExit, onExport, Modifier.statusBarsPadding())
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 CanvasSurface(session, gl, state)
                 ColourChips(state, pick, Modifier.align(Alignment.BottomStart).padding(12.dp))
@@ -177,12 +207,12 @@ private fun Landscape(state: StudioState, session: StudioSession, gl: StudioGl, 
     }
 }
 
-/** 44 dp: close, project name, save state, undo, redo, overflow (Export arrives with S1c). */
+/** 44 dp: close, project name, save state, undo, redo, overflow (swap colours, Export). */
 @Composable
-private fun StatusStrip(state: StudioState, session: StudioSession, onExit: () -> Unit, modifier: Modifier = Modifier) {
+private fun StatusStrip(state: StudioState, session: StudioSession, onExit: () -> Unit, onExport: () -> Unit, modifier: Modifier = Modifier) {
     var menu by remember { mutableStateOf(false) }
     Row(modifier.fillMaxWidth().height(44.dp).background(Lr.Surface1), verticalAlignment = Alignment.CenterVertically) {
-        LrIconButton(LrIcon.CLOSE, "Close and save", { session.flush(); onExit() })
+        LrIconButton(LrIcon.CLOSE, "Close and save", onExit)
         Column(Modifier.weight(1f)) {
             Text(state.document.name, style = MaterialTheme.typography.bodyMedium, color = Lr.TextPrimary, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
             Text(
@@ -196,7 +226,7 @@ private fun StatusStrip(state: StudioState, session: StudioSession, onExit: () -
             LrIconButton(LrIcon.MORE, "More", { menu = true })
             LrDropdown(menu, { menu = false }, width = 190.dp) {
                 LrMenuItem("Swap colours", { menu = false; session.swapColours() })
-                LrMenuItem("Export", { menu = false }, enabled = false)
+                LrMenuItem("Export", { menu = false; onExport() }, enabled = state.phase == Phase.READY)
             }
         }
     }

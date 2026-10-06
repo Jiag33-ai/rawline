@@ -43,6 +43,13 @@ class StudioProjects(private val filesDir: File, private val appVersion: String 
         }.maxByOrNull { it.second }?.first
     }
 
+    /** Writes the home thumbnail (`thumb.jpg`, a JPEG made by [StudioExporter.thumbnailJpeg]) next to the project: a temporary file first, then an atomic rename, so the home never reads half a file. Worker thread. */
+    fun writeThumbnail(id: String, jpeg: ByteArray) {
+        val path = "${rootOf(id)}/thumb.jpg"
+        fs.write("$path.tmp", jpeg)
+        fs.rename("$path.tmp", path)
+    }
+
     /** Throws ProjectFormatException (with a message for the user) or NewerSchemaException. */
     fun open(id: String): OpenResult = ProjectStore(fs, rootOf(id), appVersion).open()
 

@@ -12,6 +12,8 @@ interface StudioGpu {
     fun readStroke(x: Int, y: Int, w: Int, h: Int, coverage: FloatArray): Boolean
     fun endStroke()
     fun textureBytes(): Long
+    /** Straight RGBA8 of the view `(vx, vy)` at [zoom] into [out] (outW * outH * 4 bytes, row 0 at the top). False on a GL error. */
+    fun render(layers: FloatArray, vx: Float, vy: Float, zoom: Float, outW: Int, outH: Int, out: ByteArray): Boolean
 }
 
 /** [StudioGpu] on the native compositor (jni_studio.cpp). [handle] is the object made by `StudioNative.create` on the GL thread. */
@@ -24,6 +26,7 @@ class NativeStudioGpu(private val handle: Long) : StudioGpu {
     override fun readStroke(x: Int, y: Int, w: Int, h: Int, coverage: FloatArray) = StudioNative.readStroke(handle, x, y, w, h, coverage)
     override fun endStroke() = StudioNative.endStroke(handle)
     override fun textureBytes() = StudioNative.textureBytes(handle)
+    override fun render(layers: FloatArray, vx: Float, vy: Float, zoom: Float, outW: Int, outH: Int, out: ByteArray) = StudioNative.render(handle, layers, vx, vy, zoom, outW, outH, out)
 }
 
 /** What one frame shows: visible layers bottom to top as 6 floats each (slot, x, y, scale, opacity 0..1, blend id), and the view. Immutable, so the GL thread can read the latest one without a lock. */

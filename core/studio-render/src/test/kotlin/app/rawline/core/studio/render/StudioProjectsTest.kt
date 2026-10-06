@@ -66,4 +66,15 @@ class StudioProjectsTest {
         assertEquals(30, p.document.width); assertEquals(20, p.document.height); assertEquals("holiday", p.document.name)
         assertEquals(photo, p.pixels["bg"])
     }
+
+    @Test fun theThumbnailIsWrittenNextToTheProjectAndReplacesTheOldOneWithoutALeftoverTemporaryFile() {
+        val dir = Files.createTempDirectory("studio-thumb").toFile()
+        try {
+            val projects = StudioProjects(dir)
+            projects.writeThumbnail("p1", byteArrayOf(1, 2, 3))
+            projects.writeThumbnail("p1", byteArrayOf(9, 8))
+            assertArrayEquals(byteArrayOf(9, 8), File(dir, "studio/p1/thumb.jpg").readBytes())
+            assertEquals(listOf("thumb.jpg"), File(dir, "studio/p1").list()!!.toList())
+        } finally { dir.deleteRecursively() }
+    }
 }

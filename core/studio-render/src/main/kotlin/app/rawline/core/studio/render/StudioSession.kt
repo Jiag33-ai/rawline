@@ -4,6 +4,7 @@ import app.rawline.core.studio.model.Action
 import app.rawline.core.studio.model.Brush
 import app.rawline.core.studio.model.BlendMode
 import app.rawline.core.studio.model.CanvasView
+import app.rawline.core.studio.model.ColourSpace
 import app.rawline.core.studio.model.Dirty
 import app.rawline.core.studio.model.Document
 import app.rawline.core.studio.model.Fs
@@ -30,6 +31,9 @@ import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
+
+/** What a flatten export or a thumbnail renders: the visible layers as the compositor takes them (see `StudioSession.exportSnapshot`). Immutable. */
+class ExportSnapshot(val name: String, val width: Int, val height: Int, val colourSpace: ColourSpace, val layers: FloatArray)
 
 /**
  * One open Studio project: document, linear history, the CPU copy of the active layer, the GPU layers and the autosave.
@@ -748,16 +752,60 @@ class StudioSession(
         }
     }
 
-    private fun updateFrame() {
-        val d = curDoc()
+    /** The visible layers bottom to top as 6 floats each (slot, x, y, scale, opacity 0..1, blend id): what the compositor is given for a frame, an export strip or a thumbnail. */
+    private fun layerSpec(d: Document): FloatArray {
         val out = ArrayList<Float>(d.layers.size * 6)
         for (l in d.layers) {
             if (!l.common.visible) continue
             val slot = slots[l.common.id] ?: continue
             out += slot.toFloat(); out += l.common.x.toFloat(); out += l.common.y.toFloat(); out += l.common.scale; out += l.common.opacity / 100f; out += l.common.blend.id.toFloat()
         }
-        gl.setFrame(FrameSpec(out.toFloatArray(), view.x, view.y, view.zoom, d.width, d.height))
+        return out.toFloatArray()
+    }
+
+    private fun updateFrame() {
+        val d = curDoc()
+        gl.setFrame(FrameSpec(layerSpec(d), view.x, view.y, view.zoom, d.width, d.height))
         gl.requestRender()
+    }
+
+    // ---- flatten export and thumbnail input (S1c) -----------------------------------------------------------------------------------------
+
+    /**
+     * The document as it is now, in the form the compositor takes. Waits for the model thread, so call it from a worker (never the main thread, never the model or GL thread).
+     * Null when the project is not open yet, was released, or the model thread did not answer in [timeoutMs].
+     */
+    fun exportSnapshot(timeoutMs: Long = 5_000): ExportSnapshot? {
+        if (released) return null
+        val box = arrayOfNulls<ExportSnapshot>(1)
+        val done = CountDownLatch(1)
+        env.model.execute {
+            try {
+                if (_state.value.phase == Phase.READY) { val d = curDoc(); box[0] = ExportSnapshot(d.name, d.width, d.height, d.colourSpace, layerSpec(d)) }
+            } catch (t: Throwable) { env.error("studio snapshot: ${t.javaClass.simpleName}: ${t.message}") } finally { done.countDown() }
+        }
+        return if (done.await(timeoutMs, TimeUnit.MILLISECONDS)) box[0] else null
+    }
+
+    /**
+     * Renders rows [y, y + rows) of the whole canvas at zoom 1 (one strip of a flatten export): straight RGBA8, `snap.width * rows * 4` bytes. Worker thread only, like [exportSnapshot].
+     * Null when the GPU is gone or failed. Keep [rows] the same for every strip but the last: a new output size reallocates the compositor's ping-pong pair.
+     */
+    fun renderStrip(snap: ExportSnapshot, y: Int, rows: Int): ByteArray? = renderView(snap, 0f, y.toFloat(), 1f, snap.width, rows)
+
+    /** The whole canvas scaled to fit [maxEdge] on its long side (project thumbnail). Returns (width, height, RGBA8) or null. */
+    fun renderThumbnail(snap: ExportSnapshot, maxEdge: Int): Triple<Int, Int, ByteArray>? {
+        val zoom = minOf(1f, maxEdge.toFloat() / maxOf(snap.width, snap.height))
+        val w = maxOf(1, Math.round(snap.width * zoom)); val h = maxOf(1, Math.round(snap.height * zoom))
+        val px = renderView(snap, 0f, 0f, zoom, w, h) ?: return null
+        return Triple(w, h, px)
+    }
+
+    private fun renderView(snap: ExportSnapshot, vx: Float, vy: Float, zoom: Float, w: Int, h: Int): ByteArray? {
+        if (released) return null
+        val out = ByteArray(w * h * 4)
+        val ok = gpuCall(60_000) { it.render(snap.layers, vx, vy, zoom, w, h, out) } == true
+        return if (ok) out else null
     }
 
     /** Copy report gauges (spec section 6 of the task): GPU bytes and undo history bytes, and the figures the Studio section prints. */

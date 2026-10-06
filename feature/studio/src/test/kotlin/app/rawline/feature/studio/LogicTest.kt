@@ -43,4 +43,17 @@ class LogicTest {
         assertEquals(1.0, BrushSliders.withSize(b, 0f).diameter, 0.0)
         assertEquals(2000.0, BrushSliders.withSize(b, 99999f).diameter, 0.0)
     }
+
+    @Test fun exportNamesAreSafeNeverEmptyAndKeepTheExtension() {
+        assertEquals("Holiday.png", StudioText.exportFileName("Holiday", "png"))
+        assertEquals("a_b_c.jpg", StudioText.exportFileName("a/b:c", "jpg"))
+        assertEquals("studio.jpg", StudioText.exportFileName("  ...  ", "jpg"))
+        assertEquals("studio.png", StudioText.exportFileName("", "png"))
+        assertEquals(120 + 4, StudioText.exportFileName("x".repeat(300), "jpg").length)
+    }
+
+    @Test fun sizesAndProjectMetaReadNaturally() {
+        assertEquals("512 B", StudioText.size(512)); assertEquals("3 KB", StudioText.size(3 * 1024L)); assertEquals("1.5 MB", StudioText.size(1_572_864L)); assertEquals("2.0 GB", StudioText.size(2L shl 30))
+        assertEquals("4000 x 3000, 1.0 MB", StudioText.meta(4000, 3000, 1_048_576L))
+    }
 }

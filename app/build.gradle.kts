@@ -6,6 +6,9 @@ plugins {
 }
 
 val buildNumber = (System.getenv("GITHUB_RUN_NUMBER") ?: "0").toInt()
+// Studio (docs/STUDIO_SPEC.md). Off by default: -PstudioEnabled=true|false wins, else the one line file studio.enabled at the repository root. With it off the Studio modules are not on
+// the app's classpath and src/studioOff holds a stub, so no Studio class is in the APK (CI proves it). The CI release build passes -PstudioEnabled=true.
+val studioEnabled = (providers.gradleProperty("studioEnabled").orNull ?: rootProject.file("studio.enabled").takeIf { it.exists() }?.readText()?.trim() ?: "false") == "true"
 // CI: the run number, as before. A local build is 1 unless asked otherwise (RAWLINE_VERSION_CODE or -PversionCode=N), for
 // example to install over a newer sideloaded build. Not automatic: a large local number would block later CI builds.
 val versionCodeOverride = (System.getenv("RAWLINE_VERSION_CODE") ?: providers.gradleProperty("versionCode").orNull)?.toIntOrNull()
@@ -24,9 +27,7 @@ android {
         ndk { abiFilters += "arm64-v8a" }
         buildConfigField("int", "BUILD_NUMBER", "$buildNumber")
         buildConfigField("String", "BUILD_DATE", "\"${LocalDate.now()}\"")
-        // Studio (docs/STUDIO_SPEC.md): off unless a build asks for it with -PstudioEnabled=true. S1b has no entry gated by it; the only way in is the debug-only Studio screen
-        // (src/debug), which is not compiled into release. S1c puts the mode switch behind this flag.
-        buildConfigField("boolean", "STUDIO_ENABLED", "${providers.gradleProperty("studioEnabled").orNull == "true"}")
+        buildConfigField("boolean", "STUDIO_ENABLED", "$studioEnabled")
     }
     signingConfigs {
         create("release") {
@@ -64,6 +65,14 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    sourceSets {
+        // the flag decides which StudioEntry exists (the real one or the stub); the debug long press entry follows the flag too, not the build type
+        getByName("main") { kotlin.directories.add(if (studioEnabled) "src/studioOn/kotlin" else "src/studioOff/kotlin") }
+        getByName("debug") {
+            if (studioEnabled) kotlin.directories.add("src/debugStudioOn/kotlin")
+            manifest.srcFile(if (studioEnabled) "src/debugStudioOn/AndroidManifest.xml" else "src/debugStudioOff/AndroidManifest.xml")
+        }
+    }
 }
 
 dependencies {
@@ -83,8 +92,8 @@ dependencies {
     implementation(project(":feature:export"))
     implementation(libs.androidx.exifinterface)
     implementation(project(":feature:settings"))
-    // the Studio canvas is only reachable from the debug build (DebugEntry in src/debug); release has neither the code nor the entry
-    debugImplementation(project(":feature:studio"))
+    // Studio is on the classpath only when the flag is on, in every build type
+    if (studioEnabled) implementation(project(":feature:studio"))
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.core.ktx)

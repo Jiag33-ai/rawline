@@ -44,7 +44,7 @@ object ReportBuilder {
         }.getOrElse { "unavailable (${it.javaClass.simpleName})" }
         sections += "Settings" to "XMP sidecars ${if (graph.prefs.getBoolean("xmp", false)) "on" else "off"}, overlay ${if (graph.prefs.getBoolean("overlay", false)) "on" else "off"}, " +
             "LibRaw ${runCatching { app.rawline.core.nativelib.Native.librawVersion() }.getOrElse { "failed: ${it.javaClass.simpleName}" }}"
-        DebugEntry.reportSection()?.let { sections += it }   // debug builds only; null in release
+        StudioEntry.reportSection(context, graph.prefs)?.let { sections += it }   // null when this build has no Studio
         return PerfLog.report(context, version, sections, now)
     }
 }

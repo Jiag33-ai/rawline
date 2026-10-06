@@ -1,6 +1,9 @@
 package app.rawline.core.studio.render
 
 import app.rawline.core.studio.model.BlendMode
+import app.rawline.core.studio.model.RefImage
+import app.rawline.core.studio.model.RefLayer
+import app.rawline.core.studio.model.ReferenceCompositor
 import app.rawline.core.studio.model.Brush
 import app.rawline.core.studio.model.BrushMath
 import app.rawline.core.studio.model.Dirty
@@ -70,6 +73,19 @@ class FakeGpu : StudioGpu {
     }
     override fun endStroke() { strokeEnds++; stroke = null }
     override fun textureBytes() = tex.values.sumOf { it.rgba.size.toLong() }
+    var renderFails = false
+    var lastRender: Triple<Int, Int, Float>? = null
+    /** The reference compositor over the slot textures: what the real compositor is compared with in the golden. */
+    override fun render(layers: FloatArray, vx: Float, vy: Float, zoom: Float, outW: Int, outH: Int, out: ByteArray): Boolean {
+        if (renderFails) return false
+        lastRender = Triple(outW, outH, zoom)
+        val refs = (0 until layers.size / 6).map { i ->
+            val o = i * 6; val t = tex[layers[o].toInt()]!!
+            RefLayer(RefImage(t.w, t.h, t.rgba), layers[o + 1], layers[o + 2], layers[o + 3], layers[o + 4], BlendMode.entries.first { it.id == layers[o + 5].toInt() })
+        }
+        System.arraycopy(ReferenceCompositor.render(refs, vx, vy, zoom, outW, outH), 0, out, 0, outW * outH * 4)
+        return true
+    }
 }
 
 class FakeGl(val gpu: FakeGpu = FakeGpu()) : GpuExecutor {

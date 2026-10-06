@@ -47,3 +47,25 @@ object BrushSliders {
     fun withOpacity(b: Brush, v: Float) = b.copy(opacity = (v / 100.0).coerceIn(0.0, 1.0))
     fun withFlow(b: Brush, v: Float) = b.copy(flow = (v / 100.0).coerceIn(0.01, 1.0))
 }
+
+/** Names and sizes shown by the Studio home and export. */
+object StudioText {
+    private const val MAX_BASE = 120
+
+    /** File name for an export: the project name with characters file systems refuse replaced, never empty, at most 120 characters before the extension. */
+    fun exportFileName(projectName: String, ext: String): String {
+        var base = projectName.replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), "_").trim().trim('.')
+        if (base.length > MAX_BASE) base = base.take(MAX_BASE).trimEnd()
+        if (base.isEmpty()) base = "studio"
+        return "$base.$ext"
+    }
+
+    fun size(bytes: Long): String = when {
+        bytes >= 1L shl 30 -> String.format(Locale.US, "%.1f GB", bytes / (1024.0 * 1024 * 1024))
+        bytes >= 1L shl 20 -> String.format(Locale.US, "%.1f MB", bytes / (1024.0 * 1024))
+        bytes >= 1L shl 10 -> "${bytes / 1024} KB"
+        else -> "$bytes B"
+    }
+
+    fun meta(w: Int, h: Int, bytes: Long) = "$w x $h, ${size(bytes)}"
+}

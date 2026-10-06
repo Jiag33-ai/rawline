@@ -52,6 +52,8 @@ fun SettingsScreen(
     onClearCrash: () -> Unit = {},
     /** Debug builds only: a long press on the Version row. Null (release) leaves the row exactly as it was. */
     onVersionLongPress: (() -> Unit)? = null,
+    /** About text for Studio, shown only in builds that contain it. */
+    studioNote: String? = null,
 ) {
     var confirmRestore by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     val libraw = runCatching { Native.librawVersion() }.getOrElse { "failed: ${it.message}" }
@@ -90,6 +92,11 @@ fun SettingsScreen(
         Spacer(Modifier.height(12.dp))
         Button(onClick = onCopyReport) { Text("Copy report") }
         Text("Copies timings, device info, errors and the last crash. Paste it into the chat.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
+        if (studioNote != null) {
+            Spacer(Modifier.height(16.dp))
+            Text("Studio", style = MaterialTheme.typography.titleSmall)
+            Text(studioNote, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         Spacer(Modifier.height(16.dp))
         Text("Gestures", style = MaterialTheme.typography.titleSmall)
         Text(

@@ -113,6 +113,36 @@ jobs:
           path: "**/build/reports/lint-results-debug.html"
           if-no-files-found: ignore
 
+  studio-flag:
+    # Both values of the Studio flag (app/build.gradle.kts, studio.enabled) build and pass the unit tests, and the debug APK proves it in both directions:
+    # with the flag on the dex files hold the Studio classes, with it off none of them (the stub app.rawline.StudioEntry is all that is left).
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        studio: ["true", "false"]
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-java@v6.0.1
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: actions/cache@v6.1.0
+        with:
+          path: .android-sdk
+          key: android-sdk-${{ hashFiles('tools/setup-sdk.sh') }}
+      - uses: gradle/actions/setup-gradle@v6.4.0
+      - name: Android SDK and NDK
+        run: ./tools/setup-sdk.sh
+      - name: Unit tests and debug build
+        run: |
+          source tools/env.sh
+          ./gradlew testDebugUnitTest assembleDebug -PstudioEnabled=${{ matrix.studio }} --no-daemon
+      - name: Studio classes are in the APK only when the flag is on
+        run: ./tools/check-studio-apk.sh "$(ls app/build/outputs/apk/debug/*.apk | head -1)" ${{ matrix.studio }}
+
   build:
     needs: golden
     if: github.event_name != 'schedule'
@@ -167,7 +197,9 @@ jobs:
           if [ -z "$RAWLINE_KEYSTORE" ]; then unset RAWLINE_KEYSTORE RAWLINE_KEYSTORE_PASSWORD RAWLINE_KEY_ALIAS RAWLINE_KEY_PASSWORD; fi
           source tools/env.sh
           # LibRaw is fetched from libraw.org by CMake; one retry covers a passing outage of that host
-          ./gradlew assembleRelease --no-daemon || { echo "retrying once"; ./gradlew assembleRelease --no-daemon; }
+          # The released APK contains Studio (the Develop | Studio switch is visible): -PstudioEnabled=true. Local and default builds keep it off (studio.enabled).
+          ./gradlew assembleRelease -PstudioEnabled=true --no-daemon || { echo "retrying once"; ./gradlew assembleRelease -PstudioEnabled=true --no-daemon; }
+          ./tools/check-studio-apk.sh app/build/outputs/apk/release/app-release.apk true
           cp app/build/outputs/apk/release/app-release.apk rawline.apk
           sha256sum rawline.apk | tee rawline.apk.sha256
       - name: Publish release

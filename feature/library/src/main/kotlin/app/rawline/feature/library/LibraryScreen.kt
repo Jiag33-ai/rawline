@@ -135,6 +135,8 @@ fun LibraryScreen(
     permissionBlocked: Boolean,
     allFilesGranted: Boolean,
     actions: LibraryActions,
+    /** The Develop | Studio switch, drawn at the start of the top bar. Null (Studio not in this build) leaves the bar exactly as it was. */
+    modeSwitch: (@Composable () -> Unit)? = null,
 ) {
     // Saved, so a rotation, a visit to the viewer or another tab keeps the density, the selection and the open filter bar.
     var columns by rememberSaveable { mutableStateOf(5) }
@@ -178,9 +180,10 @@ fun LibraryScreen(
                 Text("${sel.size} selected", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f).padding(start = 4.dp))
                 IconTap(LrIcon.SELECT, "Select all") { selected.value = photos.map { it.id }.toSet() }
             } else {
+                if (modeSwitch != null) { modeSwitch(); Spacer(Modifier.width(4.dp)) }
                 Row(Modifier.weight(1f).clickable(role = androidx.compose.ui.semantics.Role.DropdownList) { sourceMenu = true }.semantics { stateDescription = "Photo source" }.padding(start = 10.dp).heightIn(min = LrDim.libraryHeader), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f, fill = false)) {
-                        Text(current?.label ?: "Photos", style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                        Text(current?.label ?: "Photos", style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = if (modeSwitch != null) androidx.compose.ui.text.style.TextOverflow.Ellipsis else androidx.compose.ui.text.style.TextOverflow.Clip)
                         val sub = when {
                             progress.listing -> "Listing photos, ${progress.total} found"
                             progress.running -> "Reading ${progress.done} of ${progress.total}"
