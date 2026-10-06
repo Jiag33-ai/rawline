@@ -250,9 +250,36 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
 
     // ---- ratings and organising ----
     // Catalogue work never runs on the main dispatcher: the XMP step does SAF file I/O per photo.
-    fun rate(list: List<Photo>, r: Int) = viewModelScope.launch(Dispatchers.IO) { reportSidecars(catalog.setRating(list, r)) }
-    fun flag(list: List<Photo>, f: Int) = viewModelScope.launch(Dispatchers.IO) { catalog.setFlag(list, f) }
-    fun label(list: List<Photo>, l: Int) = viewModelScope.launch(Dispatchers.IO) { reportSidecars(catalog.setLabel(list, l)) }
+    /** The last rating, flag or label change, offered as Undo for a few seconds. */
+    val undo = MutableStateFlow<UndoEntry?>(null)
+
+    fun rate(list: List<Photo>, r: Int) = change(list, UndoField.RATING, r)
+    fun flag(list: List<Photo>, f: Int) = change(list, UndoField.FLAG, f)
+    fun label(list: List<Photo>, l: Int) = change(list, UndoField.LABEL, l)
+
+    private fun change(list: List<Photo>, field: UndoField, value: Int) = viewModelScope.launch(Dispatchers.IO) {
+        val changed = UndoRules.changed(list, field, value)
+        if (changed.isNotEmpty()) undo.value = UndoEntry(field, value, changed)
+        write(list, field, value)
+    }
+
+    private suspend fun write(list: List<Photo>, field: UndoField, value: Int) {
+        when (field) {
+            UndoField.RATING -> reportSidecars(catalog.setRating(list, value))
+            UndoField.FLAG -> catalog.setFlag(list, value)
+            UndoField.LABEL -> reportSidecars(catalog.setLabel(list, value))
+        }
+    }
+
+    /** Puts the photos of the last change back as they were. */
+    fun undoLast() {
+        val e = undo.value ?: return
+        undo.value = null
+        viewModelScope.launch(Dispatchers.IO) {
+            UndoRules.restoreGroups(e).forEach { (old, group) -> write(group, e.field, old) }
+            message.value = "Undone"
+        }
+    }
 
     private var told = false
     /** XMP is on but some photos cannot have a sidecar (camera roll, imported files) or it failed: say so once, never silently. */

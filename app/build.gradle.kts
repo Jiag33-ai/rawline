@@ -19,6 +19,9 @@ android {
         targetSdk = 37
         versionCode = versionCodeOverride?.takeIf { it > 0 } ?: maxOf(buildNumber, 1)
         versionName = "0.1.$buildNumber"
+        // Only arm64-v8a (the phone). Dependency AARs (LiteRT, graphics-path) ship x86, x86_64 and armeabi-v7a copies that the
+        // filter inside core/native does not reach; they were about 22 MB of every sideload update.
+        ndk { abiFilters += "arm64-v8a" }
         buildConfigField("int", "BUILD_NUMBER", "$buildNumber")
         buildConfigField("String", "BUILD_DATE", "\"${LocalDate.now()}\"")
     }

@@ -153,8 +153,16 @@ private fun RawlineRoot(openRoute: String?, onOpened: () -> Unit) {
     val workerAlive = exportRunning || ExportService.isRunning
     var toast by remember { mutableStateOf<ToastMsg?>(null) }
     fun showToast(text: String) { toast = Toasts.make(text, toast) }
-    // keyed on the sequence number, so the same text twice restarts the timer; errors stay longer
-    LaunchedEffect(toast?.seq) { toast?.let { kotlinx.coroutines.delay(Toasts.durationMs(it)); toast = null } }
+    // keyed on the sequence number, so the same text twice restarts the timer; errors and Undo stay longer
+    LaunchedEffect(toast?.seq) {
+        toast?.let {
+            kotlinx.coroutines.delay(Toasts.durationMs(it))
+            if (it.action != null) vm.undo.value = null    // the chance to undo ends with the toast
+            toast = null
+        }
+    }
+    val undo by vm.undo.collectAsStateWithLifecycle()
+    LaunchedEffect(undo) { undo?.let { toast = Toasts.make(it.message, toast, action = "Undo") } }
     val nav = rememberNavController()
     val route by nav.currentBackStackEntryAsState()
     var exportSettingsFor by remember { mutableStateOf<Pair<Boolean, Photo?>?>(null) }
@@ -360,7 +368,7 @@ private fun RawlineRoot(openRoute: String?, onOpened: () -> Unit) {
             }            }
             // Drawn after the NavHost so it sits on top of every screen (the screens paint opaque backgrounds). Screens without the
             // bottom tab bar run under the system navigation bar, so the toast keeps clear of it as well.
-            ToastHost(toast, Modifier.align(Alignment.BottomCenter).then(if (currentRoute in TopLevel) Modifier else Modifier.navigationBarsPadding()).padding(bottom = Toasts.bottomOffsetDp(currentRoute).dp, start = 16.dp, end = 16.dp))
+            ToastHost(toast, onAction = { vm.undoLast() }, Modifier.align(Alignment.BottomCenter).then(if (currentRoute in TopLevel) Modifier else Modifier.navigationBarsPadding()).padding(bottom = Toasts.bottomOffsetDp(currentRoute).dp, start = 16.dp, end = 16.dp))
         }
         if (currentRoute in TopLevel) {
             Row(Modifier.fillMaxWidth().background(Lr.Surface1).navigationBarsPadding().height(LrDim.bottomNav)) {
@@ -387,10 +395,11 @@ private fun NavItem(icon: LrIcon, label: String, selected: Boolean, badge: Int, 
 
 /** Quiet toast above the navigation: #292929, 6 dp, 13 sp, 160 ms in and 120 ms out. */
 @Composable
-private fun ToastHost(toast: ToastMsg?, modifier: Modifier) {
+private fun ToastHost(toast: ToastMsg?, onAction: () -> Unit, modifier: Modifier) {
     // keep the last text while the fade out runs
     var last by remember { mutableStateOf("") }
-    if (toast != null) last = toast.text
+    var lastAction by remember { mutableStateOf<String?>(null) }
+    if (toast != null) { last = toast.text; lastAction = toast.action }
     androidx.compose.animation.AnimatedVisibility(
         toast != null, modifier,
         enter = androidx.compose.animation.fadeIn(tween(160)) + androidx.compose.animation.slideInVertically(tween(160)) { 6 },
@@ -398,7 +407,10 @@ private fun ToastHost(toast: ToastMsg?, modifier: Modifier) {
     ) {
         val shown = last
         Box(Modifier.widthIn(max = 320.dp).defaultMinSize(minHeight = 36.dp).background(Color(0xFF292929), RoundedCornerShape(6.dp)).border(1.dp, Lr.BorderSubtle, RoundedCornerShape(6.dp)).padding(horizontal = 12.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
-            Text(shown, style = MaterialTheme.typography.bodySmall, color = Lr.TextPrimary)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(shown, style = MaterialTheme.typography.bodySmall, color = Lr.TextPrimary, modifier = Modifier.weight(1f, fill = false))
+                lastAction?.let { a -> Text(a, style = MaterialTheme.typography.labelLarge, color = Lr.Accent, modifier = Modifier.padding(start = 16.dp).clickable(onClick = onAction).padding(vertical = 8.dp, horizontal = 4.dp)) }
+            }
         }
     }
 }

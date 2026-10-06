@@ -1,7 +1,7 @@
 package app.rawline
 
 /** One toast. [seq] is unique per message, so showing the same text twice restarts the timer. */
-data class ToastMsg(val text: String, val seq: Long, val isError: Boolean)
+data class ToastMsg(val text: String, val seq: Long, val isError: Boolean, val action: String? = null)
 
 /** Toast rules without any UI types (testable on the host). */
 object Toasts {
@@ -13,9 +13,10 @@ object Toasts {
         return "failed" in t || "could not" in t || "couldn't" in t || "skipped" in t || "no longer" in t || "not written" in t
     }
 
-    fun durationMs(m: ToastMsg): Long = if (m.isError) ERROR_MS else SHORT_MS
+    /** A toast with a button (Undo) stays as long as an error, so there is time to reach it. */
+    fun durationMs(m: ToastMsg): Long = if (m.isError || m.action != null) ERROR_MS else SHORT_MS
 
-    fun make(text: String, previous: ToastMsg?): ToastMsg = ToastMsg(text, (previous?.seq ?: 0L) + 1, isError(text))
+    fun make(text: String, previous: ToastMsg?, action: String? = null): ToastMsg = ToastMsg(text, (previous?.seq ?: 0L) + 1, isError(text), action)
 
     /** Distance from the bottom edge so the toast clears the bar that each screen keeps there (dp). */
     fun bottomOffsetDp(route: String?): Int = when {

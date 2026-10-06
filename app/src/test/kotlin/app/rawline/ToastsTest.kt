@@ -34,3 +34,12 @@ class ToastsTest {
         assertEquals(16, Toasts.bottomOffsetDp(null))
     }
 }
+
+class ToastActionTest {
+    @Test fun aToastWithUndoStaysAsLongAsAnError() {
+        val t = Toasts.make("Rated 1 photo 3 stars", null, action = "Undo")
+        assertEquals("Undo", t.action)
+        assertEquals(Toasts.ERROR_MS, Toasts.durationMs(t))
+        assertFalse(t.isError)
+    }
+}
