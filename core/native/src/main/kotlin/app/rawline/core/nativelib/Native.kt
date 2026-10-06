@@ -17,6 +17,8 @@ object Native {
     // ---- Raw decode (any thread). Returns a native handle, 0 on failure. ----
     external fun decodeRaw(fd: Int, half: Boolean): Long
     external fun rawFromRgba(px: ByteArray, w: Int, h: Int): Long   // 8 bit sRGB image to the working space
+    /** Same from a software ARGB_8888 bitmap, read in place (no copy of the pixels on the Java heap). 0 on failure. */
+    external fun rawFromBitmap(bitmap: android.graphics.Bitmap): Long
     external fun rawInfo(handle: Long): IntArray      // width, height, tiff orientation
     external fun freeRaw(handle: Long)
 
@@ -24,12 +26,15 @@ object Native {
     external fun engineCreate(): Long
     external fun engineInit(h: Long): String?          // null on success, else the GL error text
     external fun engineDestroy(h: Long)
+    /** For an engine whose GL context is already gone (restored surface): frees the object without calling GL. */
+    external fun engineAbandon(h: Long)
     external fun engineSetSource(h: Long, raw: Long): Boolean
     external fun engineSetBaseCurve(h: Long, enabled: Boolean)
     external fun engineSetLayer(h: Long, index: Int, alpha: ByteArray, w: Int, hgt: Int)
     external fun engineSetOverlay(h: Long, rgbaHalf: ShortArray?, w: Int, hgt: Int)
     external fun engineOutputSize(h: Long, params: FloatArray): IntArray
-    external fun engineRender(h: Long, params: FloatArray, vx: Int, vy: Int, vw: Int, vh: Int, x: Float, y: Float, w: Float, hgt: Float)
+    /** False when the frame could not be drawn (a render target was incomplete or GL reported an error). */
+    external fun engineRender(h: Long, params: FloatArray, vx: Int, vy: Int, vw: Int, vh: Int, x: Float, y: Float, w: Float, hgt: Float): Boolean
     external fun engineRenderRegion(h: Long, params: FloatArray, pw: Int, ph: Int, x: Float, y: Float, w: Float, hgt: Float, out: ByteArray): Boolean
     /** 16 bit export: pw*ph*3 unsigned 16 bit values (held in shorts), display encoded. Needs [engineSetHighPrecision] first. */
     external fun engineRenderRegion16(h: Long, params: FloatArray, pw: Int, ph: Int, x: Float, y: Float, w: Float, hgt: Float, out: ShortArray): Boolean

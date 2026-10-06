@@ -75,7 +75,7 @@ class Exporter(
             // 16 bit TIFF: float32 intermediate and output targets and a float32 curve, quantised once in native code
             if (s.format == ExportFormat.TIFF16) Native.engineSetHighPrecision(engine, true)
 
-            handle = decode(photo)
+            handle = decode(photo, maxTextureEdge())
             if (handle == 0L) throw IllegalStateException("Could not decode ${photo.name}")
             val info = Native.rawInfo(handle)
             if (recipe.detail.aiDenoise && denoise != null) {
@@ -170,14 +170,39 @@ class Exporter(
         return base * when (s.sharpenAmount) { SharpenAmount.LOW -> 0.6f; SharpenAmount.STANDARD -> 1f; SharpenAmount.HIGH -> 1.6f }
     }
 
-    private fun decode(photo: Photo): Long {
+    /** The longest side a source texture may have here: the GPU limit, and never more than 8192 (the editor's own cap for pictures). */
+    private fun maxTextureEdge(): Int {
+        val v = IntArray(1)
+        android.opengl.GLES20.glGetIntegerv(android.opengl.GLES20.GL_MAX_TEXTURE_SIZE, v, 0)
+        return min(if (v[0] > 0) v[0] else 4096, 8192)
+    }
+
+    private fun decode(photo: Photo, maxEdge: Int): Long {
         val uri = Uri.parse(photo.uri)
         if (photo.kind == Kind.RAW) return context.contentResolver.openFileDescriptor(uri, "r")?.use { Native.decodeRaw(it.fd, false) } ?: 0L
-        val bmp = android.graphics.ImageDecoder.decodeBitmap(android.graphics.ImageDecoder.createSource(context.contentResolver, uri)) { d, _, _ -> d.allocator = android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE; d.setTargetColorSpace(android.graphics.ColorSpace.get(android.graphics.ColorSpace.Named.SRGB)) }
+        // A finished picture is decoded straight to the size the GPU can take (100 MP stitches and scans exist): the decoder scales while
+        // it reads, so the full size bitmap is never built, and the pixels go to native code without a copy on the Java heap.
+        val bmp = android.graphics.ImageDecoder.decodeBitmap(android.graphics.ImageDecoder.createSource(context.contentResolver, uri)) { d, info, _ ->
+            d.allocator = android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE
+            d.setTargetColorSpace(android.graphics.ColorSpace.get(android.graphics.ColorSpace.Named.SRGB))
+            decodeTarget(info.size.width, info.size.height, maxEdge)?.let { (w, h) -> d.setTargetSize(w, h) }
+        }
         val argb = if (bmp.config == Bitmap.Config.ARGB_8888) bmp else bmp.copy(Bitmap.Config.ARGB_8888, false)
-        val buf = ByteBuffer.allocate(argb.byteCount); argb.copyPixelsToBuffer(buf)
-        return Native.rawFromRgba(buf.array(), argb.width, argb.height)
+        try {
+            return Native.rawFromBitmap(argb)
+        } finally {
+            if (argb !== bmp) argb.recycle()
+            bmp.recycle()
+        }
     }
+}
+
+/** Target size that brings the long edge down to [maxEdge], or null when the picture already fits. */
+internal fun decodeTarget(w: Int, h: Int, maxEdge: Int): Pair<Int, Int>? {
+    val long = max(w, h)
+    if (long <= maxEdge || maxEdge <= 0) return null
+    val f = maxEdge.toFloat() / long
+    return max(1, (w * f).toInt()) to max(1, (h * f).toInt())
 }
 
 /** Minimal uncompressed 16 bit RGB TIFF (little endian, one strip per call). */

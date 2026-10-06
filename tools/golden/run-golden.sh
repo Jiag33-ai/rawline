@@ -115,4 +115,7 @@ numericChecks() {
 numericChecks || fail=1
 # Host unit test for the half float conversion (AE-028)
 g++ -O1 -std=c++17 -I"$ROOT/core/native/src/main/cpp" "$ROOT/tools/golden/halfs_test.cpp" -o /tmp/golden/halfs_test && /tmp/golden/halfs_test || fail=1
+# Host test for GL robustness: failed upload keeps the old source, context restore, stale errors (AE-006, AE-011, AE-034)
+CE="$ROOT/core/native/src/main/cpp"
+g++ -O1 -std=c++17 -I/tmp/golden -I"$CE" -I"$CE/engine" "$ROOT/tools/golden/engine_test.cpp" "$CE/engine/engine.cpp" -lEGL -lGLESv2 -o /tmp/golden/engine_test && /tmp/golden/engine_test || fail=1
 exit $fail

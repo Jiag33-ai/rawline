@@ -74,6 +74,7 @@ class EditorSession(
     private var loadStart = 0L
     private var firstFrameDone = false
     @Volatile private var wantHistogram = false
+    private var drawFailureShown = false
 
     @Volatile private var recipe = EditRecipe()
     @Volatile private var before = false
@@ -219,7 +220,14 @@ class EditorSession(
             try { maybeDenoise(handle) } catch (e: Throwable) { Native.freeRaw(handle); throw e }
             post(onDrop = { Native.freeRaw(handle) }) {
                 if (gen != generation || engine == 0L) { Native.freeRaw(handle); return@post }
-                Native.engineSetSource(engine, handle).also { Native.engineSetBaseCurve(engine, !finishedPicture) }
+                if (!Native.engineSetSource(engine, handle)) {
+                    // The engine builds the new texture first and only swaps it in when it is complete, so the preview source is still
+                    // in place and the picture keeps drawing. The upload failed for size (GPU memory), so asking again would fail the
+                    // same way: stay on the preview resolution for this photo and say so.
+                    notice("Not enough GPU memory for full resolution. Zoom stays at preview detail.")
+                    return@post
+                }
+                Native.engineSetBaseCurve(engine, !finishedPicture)
                 rebuild()
                 _state.value = _state.value.copy(usingFull = true, outW = geometryOutSize[0], outH = geometryOutSize[1])
                 requestRender()
@@ -369,7 +377,8 @@ class EditorSession(
                 if (!d.aiDenoise) { _status.value = null }
                 post(onDrop = { Native.freeRaw(handle) }) {
                     if (gen != generation || engine == 0L) { Native.freeRaw(handle); return@post }
-                    Native.engineSetSource(engine, handle).also { Native.engineSetBaseCurve(engine, !finishedPicture) }
+                    if (!Native.engineSetSource(engine, handle)) { _status.value = "Update failed"; return@post }   // the previous source stays in place
+                    Native.engineSetBaseCurve(engine, !finishedPicture)
                     srcW = info[0]; srcH = info[1]
                     rebuild(); requestRender()
                 }
@@ -423,6 +432,12 @@ class EditorSession(
     }
     private fun requestRender() { glView?.requestRender() }
 
+    /** A short inline message that clears itself (unless something else replaced it meanwhile). */
+    private fun notice(text: String) {
+        _status.value = text
+        scope.launch { kotlinx.coroutines.delay(6000); _status.compareAndSet(text, null) }
+    }
+
     private fun decodeFor(p: Photo, half: Boolean): Long {
         val uri = Uri.parse(p.uri)
         if (p.kind == Kind.RAW) {
@@ -433,14 +448,15 @@ class EditorSession(
         val bmp = ImageDecoder.decodeBitmap(ImageDecoder.createSource(context.contentResolver, uri)) { d, info, _ ->
             d.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
             d.setTargetColorSpace(android.graphics.ColorSpace.get(android.graphics.ColorSpace.Named.SRGB))
-            val long = maxOf(info.size.width, info.size.height)
-            val cap = if (half) 3072 else 8192
-            if (long > cap) { val s = cap.toFloat() / long; d.setTargetSize((info.size.width * s).toInt(), (info.size.height * s).toInt()) }
+            decodeTarget(info.size.width, info.size.height, if (half) 3072 else 8192)?.let { (w, h) -> d.setTargetSize(w, h) }
         }
         val argb = if (bmp.config == android.graphics.Bitmap.Config.ARGB_8888) bmp else bmp.copy(android.graphics.Bitmap.Config.ARGB_8888, false)
-        val buf = java.nio.ByteBuffer.allocate(argb.byteCount)
-        argb.copyPixelsToBuffer(buf)
-        return Native.rawFromRgba(buf.array(), argb.width, argb.height)
+        try {
+            return Native.rawFromBitmap(argb)   // read in place: no second copy of the picture on the Java heap
+        } finally {
+            if (argb !== bmp) argb.recycle()
+            bmp.recycle()
+        }
     }
 
     private fun rebuild() {
@@ -461,7 +477,9 @@ class EditorSession(
     private fun onSurfaceCreated() {
         if (released) return
         synchronized(pending) { glReady = false }
-        if (engine != 0L) Native.engineDestroy(engine)
+        // Only a new GL context calls this, so the previous engine's GL names died with the old context: free the object without GL
+        // calls (deleting dead names in the new context raised GL_INVALID_VALUE, which failed the first upload after a restore).
+        if (engine != 0L) Native.engineAbandon(engine)
         engine = Native.engineCreate()
         val err = Native.engineInit(engine)
         if (err != null) { _state.value = SessionState(Stage.ERROR, "GPU init failed: $err"); return }
@@ -495,7 +513,9 @@ class EditorSession(
         val vx = ((surfaceW - vpw) / 2).toInt()
         val vy = ((surfaceH - vph) / 2).toInt()
         val t0 = System.nanoTime()
-        Native.engineRender(engine, params, vx, vy, vpw.toInt().coerceAtLeast(1), vph.toInt().coerceAtLeast(1), x, y, visW, visH)
+        val drawn = Native.engineRender(engine, params, vx, vy, vpw.toInt().coerceAtLeast(1), vph.toInt().coerceAtLeast(1), x, y, visW, visH)
+        if (!drawn && !drawFailureShown) { drawFailureShown = true; notice("The picture could not be drawn (GPU error).") }
+        else if (drawn) drawFailureShown = false
         if (!firstFrameDone) {
             GLES20.glFinish()
             firstFrameDone = true

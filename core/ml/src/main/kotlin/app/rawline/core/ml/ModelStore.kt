@@ -120,7 +120,7 @@ class ModelStore(context: Context) {
                             }
                             e = z.nextEntry
                         }
-                        copy(raw, java.io.OutputStream.nullOutputStream()) {}   // the checksum covers the whole zip, including its trailer
+                        copy(raw, DiscardStream) {}   // the checksum covers the whole zip, including its trailer
                     }
                 }
             }
@@ -135,6 +135,12 @@ class ModelStore(context: Context) {
             throw e
         }
         if (!isReady(p)) throw IllegalStateException("files missing after download")
+    }
+
+    /** OutputStream.nullOutputStream() needs API 33 and minSdk is 31 (it crashed a model download on Android 12). */
+    private object DiscardStream : java.io.OutputStream() {
+        override fun write(b: Int) {}
+        override fun write(b: ByteArray, off: Int, len: Int) {}
     }
 
     private fun copy(i: java.io.InputStream, o: java.io.OutputStream, progress: (Int) -> Unit) {

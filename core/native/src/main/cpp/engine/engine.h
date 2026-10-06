@@ -14,8 +14,10 @@ public:
     ~Engine() { release(); }
     bool init(std::string &error);
     void release();
+    /** The owning GL context is already gone: forget every GL name without calling GL (see engine.cpp). */
+    void abandon();
 
-    /** RGBA half float pixels, row 0 = image top. Linear ProPhoto. Generates mipmaps. */
+    /** RGBA half float pixels, row 0 = image top. Linear ProPhoto. Generates mipmaps. On failure the previous source stays in place. */
     bool setSource(int w, int h, const uint16_t *rgbaHalf);
     bool hasSource() const { return srcW_ > 0; }
     int sourceW() const { return srcW_; }
@@ -29,8 +31,8 @@ public:
     /** Size in pixels of the final image for these params at full source resolution. */
     void outputSize(const float *params, int &w, int &h) const;
 
-    /** Draws the visible region into the current framebuffer inside the given viewport. */
-    void renderToScreen(const float *params, int vx, int vy, int vw, int vh, Rect vis);
+    /** Draws the visible region into the current framebuffer inside the given viewport. False when a target could not be built or GL reported an error. */
+    bool renderToScreen(const float *params, int vx, int vy, int vw, int vh, Rect vis);
 
     /** Renders a region into an RGBA8 buffer (top row first). Used for exports and tests. Not available in high precision mode. */
     bool renderRegion(const float *params, int pw, int ph, Rect vis, uint8_t *rgba);

@@ -1,6 +1,5 @@
 package app.rawline.core.render
 
-import android.util.Half
 import app.rawline.core.nativelib.Native
 import kotlin.math.max
 import kotlin.math.min
@@ -54,10 +53,10 @@ class HealOverlay(private val session: OverlaySink, srcW: Int, srcH: Int) {
                 }
                 ColorSpaces.displayToWorking(r / a, g / a, b / a, tmp)
                 val na = a.coerceIn(0f, 1f)
-                val oldA = Half.toFloat(buf[di + 3])
+                val oldA = Halfs.toFloat(buf[di + 3])
                 val keep = 1f - na
-                val vals = floatArrayOf(tmp[0] * na + Half.toFloat(buf[di]) * keep, tmp[1] * na + Half.toFloat(buf[di + 1]) * keep, tmp[2] * na + Half.toFloat(buf[di + 2]) * keep, na + oldA * keep)
-                for (k in 0 until 4) { val hv = Half.toHalf(vals[k]); buf[di + k] = hv; out[o + k] = hv }
+                val vals = floatArrayOf(tmp[0] * na + Halfs.toFloat(buf[di]) * keep, tmp[1] * na + Halfs.toFloat(buf[di + 1]) * keep, tmp[2] * na + Halfs.toFloat(buf[di + 2]) * keep, na + oldA * keep)
+                for (k in 0 until 4) { val hv = Halfs.toHalf(vals[k]); buf[di + k] = hv; out[o + k] = hv }
             }
         }
         // upload row by row region at once

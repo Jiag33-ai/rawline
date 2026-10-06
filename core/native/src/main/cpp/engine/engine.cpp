@@ -94,7 +94,11 @@ const ColourMats &colourMats() {
 bool Engine::build(Prog &p, const char *vs, const char *fs, std::string &err) {
     GLuint v = compile(GL_VERTEX_SHADER, expandIncludes(vs), err);
     GLuint f = compile(GL_FRAGMENT_SHADER, expandIncludes(fs), err);
-    if (!v || !f) return false;
+    if (!v || !f) {   // one compiled and its partner did not: do not leak the one that did
+        if (v) glDeleteShader(v);
+        if (f) glDeleteShader(f);
+        return false;
+    }
     p.id = glCreateProgram();
     glAttachShader(p.id, v);
     glAttachShader(p.id, f);
@@ -107,6 +111,8 @@ bool Engine::build(Prog &p, const char *vs, const char *fs, std::string &err) {
         char log[4096];
         glGetProgramInfoLog(p.id, sizeof(log), nullptr, log);
         err += log;
+        glDeleteProgram(p.id);
+        p.id = 0;
         return false;
     }
     return true;
@@ -125,10 +131,12 @@ static GLuint makeTex2D(GLenum target, GLint filter) {
 
 bool Engine::init(std::string &error) {
     if (ready_) return true;
-    if (!build(lowres_, SH_vert_glsl, SH_lowres_frag, error)) return false;
-    if (!build(blur_, SH_vert_glsl, SH_blur_frag, error)) return false;
-    if (!build(main_, SH_vert_glsl, SH_main_frag, error)) return false;
-    if (!build(out_, SH_vert_glsl, SH_out_frag, error)) return false;
+    drainErrors();
+    if (!build(lowres_, SH_vert_glsl, SH_lowres_frag, error) || !build(blur_, SH_vert_glsl, SH_blur_frag, error) ||
+        !build(main_, SH_vert_glsl, SH_main_frag, error) || !build(out_, SH_vert_glsl, SH_out_frag, error)) {
+        for (Prog *pr : {&lowres_, &blur_, &main_, &out_}) { if (pr->id) glDeleteProgram(pr->id); pr->id = 0; }   // release() skips an engine that never became ready
+        return false;
+    }
     glGenVertexArrays(1, &vao_);
 
     blocksTex_ = makeTex2D(GL_TEXTURE_2D, GL_NEAREST);
@@ -189,19 +197,51 @@ void Engine::release() {
     ready_ = false;
 }
 
+// Builds the new source texture first and swaps it in only when it is complete, so a failed upload (out of GPU memory on a 45 MP
+// file, a size over the driver limit) leaves the previous source, its size and the analysis cache exactly as they were.
+// The GL context this engine belonged to is gone (lost surface, new context). Its object names mean nothing in the current context:
+// deleting them there raises GL_INVALID_VALUE (or worse, frees someone else's objects), so forget them without any GL call.
+void Engine::abandon() {
+    for (Target *t : {&l0_, &bs_, &bl_, &bd_, &tmp_, &e_, &outT_}) *t = Target();
+    srcTex_ = blocksTex_ = masksTex_ = curvesTex_ = layersTex_ = overlayTex_ = baseTex_ = baseTex32_ = 0;
+    lowres_.id = blur_.id = main_.id = out_.id = 0;
+    vao_ = 0;
+    srcW_ = srcH_ = 0;
+    overlayW_ = 0;
+    lastCurves_.clear();
+    ready_ = false;
+}
+
 bool Engine::setSource(int w, int h, const uint16_t *rgbaHalf) {
-    glBindTexture(GL_TEXTURE_2D, srcTex_);
+    drainErrors();
+    if (w <= 0 || h <= 0 || !rgbaHalf) return false;
     int levels = 1;
     for (int m = std::max(w, h); m > 1; m >>= 1) levels++;
-    glDeleteTextures(1, &srcTex_);
-    srcTex_ = makeTex2D(GL_TEXTURE_2D, GL_LINEAR_MIPMAP_LINEAR);
+    GLuint tex = makeTex2D(GL_TEXTURE_2D, GL_LINEAR_MIPMAP_LINEAR);
     glTexStorage2D(GL_TEXTURE_2D, levels, GL_RGBA16F, w, h);
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_HALF_FLOAT, rgbaHalf);
-    glGenerateMipmap(GL_TEXTURE_2D);
+    bool ok = glGetError() == GL_NO_ERROR;
+    if (ok) {
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        // strips of about 8 MB: the driver stages one strip at a time instead of a second copy of the whole picture
+        const int rowsPer = std::max(1, int((size_t(8) << 20) / (size_t(w) * 8)));
+        for (int y = 0; y < h && ok; y += rowsPer) {
+            int rows = std::min(rowsPer, h - y);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, y, w, rows, GL_RGBA, GL_HALF_FLOAT, rgbaHalf + size_t(y) * w * 4);
+            ok = glGetError() == GL_NO_ERROR;
+        }
+        if (ok) { glGenerateMipmap(GL_TEXTURE_2D); ok = glGetError() == GL_NO_ERROR; }
+    }
+    if (!ok) {
+        glDeleteTextures(1, &tex);
+        drainErrors();
+        return false;
+    }
+    GLuint old = srcTex_;
+    srcTex_ = tex;
+    if (old) glDeleteTextures(1, &old);
     srcW_ = w; srcH_ = h; srcLevels_ = levels;
     invalidateAnalysis();
-    return glGetError() == GL_NO_ERROR;
+    return true;
 }
 
 // Bilinear resample of an 8 bit mask (pixel centre mapping). Masks cover the whole frame, so stretching is exact in meaning.
@@ -417,8 +457,10 @@ static void setOutUniforms(GLuint pr, const float *p, int pw, int ph, Rect vis, 
     glUniform1f(glGetUniformLocation(pr, "uFlipY"), flip);
 }
 
-void Engine::renderToScreen(const float *p, int vx, int vy, int vw, int vh, Rect vis) {
-    if (!hasSource() || vw < 1 || vh < 1) return;
+bool Engine::renderToScreen(const float *p, int vx, int vy, int vw, int vh, Rect vis) {
+    if (!hasSource() || vw < 1 || vh < 1) return true;   // nothing to draw is not a failure
+    drainErrors();
+    targetsOk_ = true;
     GLint prevFbo = 0;
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
     uploadTables(p);
@@ -437,6 +479,7 @@ void Engine::renderToScreen(const float *p, int vx, int vy, int vw, int vh, Rect
     outputSize(p, ow, oh);
     setOutUniforms(out_.id, p, vw, vh, vis, float(ow) / oh, 1.f, 0.f, kMargin, 0);
     draw();
+    return targetsOk_ && glGetError() == GL_NO_ERROR;   // false: the frame is black or stale, the caller can say so
 }
 
 // Draws the output pass into outT_ (RGBA8, or RGBA32F in high precision mode) and leaves outT_ bound for reading.

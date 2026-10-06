@@ -1,4 +1,5 @@
 #include <jni.h>
+#include <android/bitmap.h>
 #include <android/log.h>
 
 #include <algorithm>
@@ -83,6 +84,21 @@ JNIEXPORT jlong JNICALL Java_app_rawline_core_nativelib_Native_rawFromRgba(JNIEn
     });
 }
 
+// Converts a software ARGB_8888 bitmap straight from its pixels (no Java heap copy of the picture).
+JNIEXPORT jlong JNICALL Java_app_rawline_core_nativelib_Native_rawFromBitmap(JNIEnv *env, jobject, jobject bmp) {
+    return guarded<jlong>("rawFromBitmap", 0, [&]() -> jlong {
+        AndroidBitmapInfo info;
+        if (!bmp || AndroidBitmap_getInfo(env, bmp, &info) != ANDROID_BITMAP_RESULT_SUCCESS) return 0;
+        if (info.format != ANDROID_BITMAP_FORMAT_RGBA_8888 || info.width == 0 || info.height == 0 || info.width > 65536 || info.height > 65536) return 0;
+        void *pixels = nullptr;
+        if (AndroidBitmap_lockPixels(env, bmp, &pixels) != ANDROID_BITMAP_RESULT_SUCCESS || !pixels) return 0;
+        auto unlock = defer([&] { AndroidBitmap_unlockPixels(env, bmp); });
+        auto img = std::make_unique<RawImage>();
+        rawFromSrgb8(static_cast<const uint8_t *>(pixels), int(info.width), int(info.height), *img, info.stride);
+        return reinterpret_cast<jlong>(img.release());
+    });
+}
+
 JNIEXPORT jintArray JNICALL Java_app_rawline_core_nativelib_Native_rawInfo(JNIEnv *env, jobject, jlong h) {
     return guarded<jintArray>("rawInfo", nullptr, [&]() -> jintArray {
         auto *img = reinterpret_cast<RawImage *>(h);
@@ -119,6 +135,16 @@ JNIEXPORT jstring JNICALL Java_app_rawline_core_nativelib_Native_engineInit(JNIE
 JNIEXPORT void JNICALL Java_app_rawline_core_nativelib_Native_engineDestroy(JNIEnv *, jobject, jlong h) {
     guardedV("engineDestroy", [&]() {
         delete reinterpret_cast<Engine *>(h);
+    });
+}
+
+// For an engine whose GL context is already gone (a restored surface): frees the C++ object without any GL call.
+JNIEXPORT void JNICALL Java_app_rawline_core_nativelib_Native_engineAbandon(JNIEnv *, jobject, jlong h) {
+    guardedV("engineAbandon", [&]() {
+        auto *e = reinterpret_cast<Engine *>(h);
+        if (!e) return;
+        e->abandon();
+        delete e;
     });
 }
 
@@ -232,11 +258,11 @@ JNIEXPORT jintArray JNICALL Java_app_rawline_core_nativelib_Native_engineOutputS
     });
 }
 
-JNIEXPORT void JNICALL Java_app_rawline_core_nativelib_Native_engineRender(
+JNIEXPORT jboolean JNICALL Java_app_rawline_core_nativelib_Native_engineRender(
     JNIEnv *env, jobject, jlong h, jfloatArray params, jint vx, jint vy, jint vw, jint vh, jfloat x, jfloat y, jfloat w, jfloat hgt) {
-    guardedV("engineRender", [&]() {
+    return guarded<jboolean>("engineRender", JNI_FALSE, [&]() -> jboolean {
         ParamsRef pr(env, params);
-        reinterpret_cast<Engine *>(h)->renderToScreen(pr.p, vx, vy, vw, vh, {x, y, w, hgt});
+        return reinterpret_cast<Engine *>(h)->renderToScreen(pr.p, vx, vy, vw, vh, {x, y, w, hgt});
     });
 }
 

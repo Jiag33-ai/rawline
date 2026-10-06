@@ -1,11 +1,11 @@
 package app.rawline.core.render
 
-import app.rawline.core.nativelib.Native
 import kotlin.math.pow
 
 /** Conversions between what the screen shows (camera-look sRGB) and the linear working space the engine stores. */
 object ColorSpaces {
-    private val curve: FloatArray by lazy { Native.baseCurve() }
+    // The same table the engine holds (RenderTest checks BaseCurve.TABLE against engine/base_curve.h), so no JNI call is needed here.
+    private val curve: FloatArray get() = BaseCurve.TABLE
     /** display value (0..1) -> sRGB encoded value before the base curve */
     private val inverse: FloatArray by lazy {
         val inv = FloatArray(256)
