@@ -39,6 +39,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.material3.minimumInteractiveComponentSize
+import kotlin.math.roundToInt
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -161,24 +165,29 @@ fun EditorScreen(
     val status by session.status.collectAsState()
     val outputRev by session.outputRevision.collectAsState()
     val scope = rememberCoroutineScope()
-    var tab by remember { mutableStateOf("light") }
+    // Panel state survives a rotation (the activity is recreated): the open tool, tab and sub-view come back as they were.
+    var tab by rememberSaveable { mutableStateOf("light") }
     var mode by remember { mutableStateOf(PhotoMode.NONE) }
-    var mixBand by remember { mutableIntStateOf(0) }
-    var mixMode by remember { mutableIntStateOf(0) }
+    var mixBand by rememberSaveable { mutableIntStateOf(0) }
+    var mixMode by rememberSaveable { mutableIntStateOf(0) }
     var zoom by remember { mutableFloatStateOf(1f) }
     var cx by remember { mutableFloatStateOf(0.5f) }
     var cy by remember { mutableFloatStateOf(0.5f) }
     var viewW by remember { mutableFloatStateOf(1f) }
     var viewH by remember { mutableFloatStateOf(1f) }
-    var showHist by remember { mutableStateOf(false) }
+    var showHist by rememberSaveable { mutableStateOf(false) }
     // idle = floating dock over the canvas; open = focused editing (tray, category rail, master rail) or the crop workspace
-    var open by remember { mutableStateOf(false) }
-    var lightSub by remember { mutableStateOf("basic") }
+    var open by rememberSaveable { mutableStateOf(false) }
+    var lightSub by rememberSaveable { mutableStateOf("basic") }
+    var cropSub by rememberSaveable { mutableStateOf("crop") }
+    var dialActive by remember { mutableStateOf(false) }
     val isCrop = open && tab == "geometry"
     val feedback = remember { ValueFeedback() }
 
     LaunchedEffect(open, tab) { mode = PhotoMode.NONE }
     val extraTabsNow by androidx.compose.runtime.rememberUpdatedState(extraTabs)
+    // after a rotation, do not reopen into a tool owned by another feature (its own state is gone); the built-in tools reopen as they were
+    LaunchedEffect(Unit) { if (open && extraTabsNow.any { it.id == tab }) open = false }
     DisposableEffect(open, tab) {
         val id = if (open) tab else ""
         onDispose { extraTabsNow.firstOrNull { it.id == id }?.onExit?.invoke() }
@@ -333,7 +342,7 @@ fun EditorScreen(
                 )
             }
             val fit = session.fitRect(viewW, viewH)
-            if (isCrop) CropOverlay(state, fit, session.baseAspect())
+            if (isCrop) CropOverlay(state, fit, session.baseAspect(), fineGrid = dialActive)
             tabOverlay(if (open) tab else "", PhotoMapper(session, viewW, viewH, zoom, cx, cy))
             status?.let { Text(it, color = Color.White, style = MaterialTheme.typography.labelMedium, modifier = Modifier.align(Alignment.TopStart).padding(8.dp).background(Lr.ValuePill, androidx.compose.foundation.shape.CircleShape).padding(horizontal = 10.dp, vertical = 4.dp)) }
             if (mode != PhotoMode.NONE) {
@@ -354,9 +363,12 @@ fun EditorScreen(
     }
     val sections = listOf(Tool("light", "Light", LrIcon.LIGHT), Tool("colour", "Color", LrIcon.COLOR), Tool("effects", "Effects", LrIcon.EFFECTS), Tool("detail", "Detail", LrIcon.DETAIL), Tool("optics", "Optics", LrIcon.OPTICS))
     val sectionIds = sections.map { it.id }
-    var curveChannel by remember { mutableIntStateOf(0) }
-    var colourSub by remember { mutableStateOf("basic") }
+    var curveChannel by rememberSaveable { mutableIntStateOf(0) }
+    var colourSub by rememberSaveable { mutableStateOf("basic") }
     var menu by remember { mutableStateOf(false) }
+
+    val autoLevel: (() -> Unit)? = placeholder?.let { b -> { val a = AutoTools.autoLevel(b); state.edit("Auto level") { it.withStraighten(a, session.baseAspect()) } } }
+    val autoPerspective: (() -> Unit)? = placeholder?.let { b -> { val (v, h) = AutoTools.autoPerspective(b); state.edit("Auto perspective") { it.copy(geometry = it.geometry.copy(keystoneV = v, keystoneH = h)) } } }
 
     val panelBody: @Composable (String) -> Unit = { tab ->
         val ctx = TabContext(state, hist)
@@ -364,25 +376,21 @@ fun EditorScreen(
             "auto" -> AutoPanel(state, session, photo, placeholder)
             "light" -> Column {
                 if (lightSub == "curve") CurvePanel(state, AdjustTarget.Global, curveChannel, { curveChannel = it }, { lightSub = "basic" })
-                else {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp), horizontalArrangement = Arrangement.End) {
-                        LrOutlineButton("Curve", { lightSub = "curve" }, icon = LrIcon.CURVE)
-                    }
-                    LightPanel(state, AdjustTarget.Global)
-                }
+                else LightPanel(state, AdjustTarget.Global, onCurve = { lightSub = "curve" })
             }
             "colour" -> Column {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    LrOutlineButton("B & W", { val on = state.recipe.adjust.saturation <= -99f; state.edit("Black and white") { r -> r.copy(adjust = r.adjust.copy(saturation = if (on) 0f else -100f, vibrance = if (on) r.adjust.vibrance else 0f)) } }, active = state.recipe.adjust.saturation <= -99f)
+                Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    LrOutlineButton("B & W", { val on = state.recipe.adjust.saturation <= -99f; state.edit("Black and white") { r -> r.copy(adjust = r.adjust.copy(saturation = if (on) 0f else -100f, vibrance = if (on) r.adjust.vibrance else 0f)) } }, Modifier.minimumInteractiveComponentSize(), active = state.recipe.adjust.saturation <= -99f, small = true)
                     Spacer(Modifier.weight(1f))
-                    LrOutlineButton("Grading", { colourSub = if (colourSub == "grade") "basic" else "grade" }, active = colourSub == "grade")
-                    LrOutlineButton("Mix", { colourSub = if (colourSub == "mix") "basic" else "mix" }, active = colourSub == "mix")
+                    LrOutlineButton("Grading", { colourSub = if (colourSub == "grade") "basic" else "grade" }, Modifier.minimumInteractiveComponentSize(), active = colourSub == "grade", small = true)
+                    LrOutlineButton("Mix", { colourSub = if (colourSub == "mix") "basic" else "mix" }, Modifier.minimumInteractiveComponentSize(), active = colourSub == "mix", small = true)
                 }
                 when (colourSub) {
                     "mix" -> MixerPanel(state, AdjustTarget.Global, mixBand, { mixBand = it }, mixMode, { mixMode = it }, { mode = PhotoMode.TARGET_MIXER })
                     "grade" -> GradingPanel(state, AdjustTarget.Global)
                     else -> PanelColumn {
-                        ColourBasicsPanel(state, AdjustTarget.Global,
+                        app.rawline.core.ui.PanelHeader("Color", Resets.colourBasicsModified(state.recipe.adjust), { editAdjust(state, AdjustTarget.Global, "Reset color") { Resets.colourBasics(it) } })
+                        ColourBasicsPanel(state, AdjustTarget.Global, header = false,
                             onAutoWb = { scope.launch { session.baseStats()?.let { s -> val (t, ti) = AutoTools.autoWb(s); state.edit("Auto white balance") { r -> r.copy(adjust = r.adjust.copy(temp = t, tint = ti)) } } } },
                             onPickWb = { mode = PhotoMode.PICK_WB })
                     }
@@ -391,11 +399,7 @@ fun EditorScreen(
             "effects" -> EffectsPanel(state, AdjustTarget.Global)
             "detail" -> DetailPanel(state, onAiDenoiseChanged)
             "optics" -> OpticsPanel(state, session.lens?.name, photo.lens)
-            "geometry" -> GeometryPanel(state, session.baseAspect(), onAutoLevel = {
-                placeholder?.let { b -> val a = AutoTools.autoLevel(b); state.edit("Auto level") { it.copy(geometry = it.geometry.copy(angle = a)) } }
-            }, onAutoPerspective = {
-                placeholder?.let { b -> val (v, h) = AutoTools.autoPerspective(b); state.edit("Auto perspective") { it.copy(geometry = it.geometry.copy(keystoneV = v, keystoneH = h)) } }
-            })
+            "geometry" -> GeometryPanel(state, session.baseAspect(), cropSub, onAutoLevel = autoLevel, onAutoPerspective = autoPerspective, onStraightening = { dialActive = it })
             "presets" -> PresetsPanel(state, userPresets, onSavePreset, onDeletePreset)
             "history" -> HistoryPanel(state, onSnapshot)
             "" -> {}
@@ -406,11 +410,20 @@ fun EditorScreen(
     val autoLight = { scope.launch { session.baseStats()?.let { st -> val a = AutoTools.autoLight(st)
         state.edit("Auto") { r -> r.copy(adjust = r.adjust.copy(exposure = a.exposure, contrast = a.contrast, highlights = a.highlights, shadows = a.shadows, whites = a.whites, blacks = a.blacks)) } } }; Unit }
     val inEdit = open && tab in sectionIds
+    val config = LocalConfiguration.current
+    // Landscape: the tool controls sit in a side column so the photo keeps the full height; portrait stacks them under the photo.
+    val landscape = config.screenWidthDp > config.screenHeightDp
     // A portrait photo would shrink to a sliver above a full-height tray, so there the edit tray floats over the photo, see-through.
-    val overlayTray = inEdit && oh > ow
+    val overlayTray = inEdit && oh > ow && !landscape
+    // never let the tray take more than about 40 percent of the screen height
+    val trayCap = (config.screenHeightDp * 0.40f).dp
     val tray: @Composable (Float) -> Unit = { alpha ->
         Box(
-            Modifier.fillMaxWidth().background(Lr.Surface2.copy(alpha = alpha)).then(if (inEdit) Modifier.heightIn(max = if (alpha < 1f) 250.dp else 270.dp) else Modifier.height(300.dp)),
+            Modifier.fillMaxWidth().background(Lr.Surface2.copy(alpha = alpha)).then(
+                if (landscape) Modifier.fillMaxHeight()
+                else if (inEdit) Modifier.heightIn(max = minOf(if (alpha < 1f) 250.dp else 270.dp, trayCap))
+                else Modifier.height(minOf(300.dp, trayCap)),
+            ),
         ) {
             // category switch: outgoing 100ms fade with a 4dp shift left, incoming 140ms fade from 4dp right (spec 9.5)
             val shift = with(androidx.compose.ui.platform.LocalDensity.current) { 4.dp.roundToPx() }
@@ -426,42 +439,72 @@ fun EditorScreen(
     }
     var entryGeo by remember { mutableStateOf(state.recipe.geometry) }
     LaunchedEffect(isCrop) { if (isCrop) entryGeo = state.recipe.geometry }
+    val cancelCrop = { state.edit("Cancel crop") { it.copy(geometry = entryGeo) }; open = false }
     androidx.activity.compose.BackHandler(enabled = open) {
-        if (isCrop) state.edit("Cancel crop") { it.copy(geometry = entryGeo) }
-        open = false
+        if (isCrop) cancelCrop() else open = false
     }
     fun selectMode(t: Tool) {
         mode = PhotoMode.NONE
         val id = if (t.id == "edit") (if (tab in sectionIds) tab else "light") else t.id
         if (open && (tab == id || (t.id == "edit" && tab in sectionIds))) open = false else { tab = id; open = true }
     }
-    var aspectLock by remember { mutableStateOf(false) }
+    val cropStatus = run {
+        val gg = state.recipe.geometry
+        "${CropMath.label(gg.aspect)}  ·  ${(gg.cropW * ow).roundToInt()} × ${(gg.cropH * oh).roundToInt()}"
+    }
+
+    // the controls under (portrait) or beside (landscape) the photo
+    val controlStack: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit = {
+        if (isCrop) {
+            Box((if (landscape) Modifier.weight(1f) else Modifier.height(CropPanelHeight)).fillMaxWidth().background(Lr.Surface1)) {
+                GeometryPanel(state, session.baseAspect(), cropSub, onAutoLevel = autoLevel, onAutoPerspective = autoPerspective, onStraightening = { dialActive = it })
+            }
+            CropConfirmationBar(cropSub, { cropSub = it }, { cancelCrop() }, { open = false })
+        } else {
+            // parameter tray: straight edge, no handle, open controls on the surface (floats over the photo instead for portrait photos)
+            if (!overlayTray) Box(if (landscape) Modifier.weight(1f) else Modifier) { tray(1f) }
+            if (inEdit) {
+                Box(Modifier.fillMaxWidth().height(1.dp).background(Lr.BorderSubtle))
+                CategoryRail(sections, tab, { mode = PhotoMode.NONE; tab = it.id }, { autoLight() })
+            }
+            Box(Modifier.fillMaxWidth().height(1.dp).background(Lr.BorderDefault))
+            CompactMasterRail(modes, { t -> if (t.id == "edit") tab in sectionIds else tab == t.id }, { selectMode(it) })
+        }
+    }
 
     CompositionLocalProvider(LocalValueFeedback provides feedback) {
-    Column(Modifier.fillMaxSize().background(Lr.Canvas).navigationBarsPadding()) {
-        Box(Modifier.weight(1f).fillMaxWidth()) {
+    val canvasAndOverlays: @Composable BoxScope.() -> Unit = {
             // ---- canvas: pure black, contain fit. In idle state it leaves room for the dock. ----
-            photoArea(Modifier.fillMaxSize().statusBarsPadding().padding(bottom = if (open) 0.dp else LrDim.idleDock + 20.dp))
+            photoArea(Modifier.fillMaxSize().statusBarsPadding().padding(bottom = if (open || landscape) 0.dp else LrDim.idleDock + 20.dp))
+
+            // The tone curve is drawn before the top bar so the bar's buttons stay on top of it (a tall photo reaches under the bar).
+            if (open && tab == "light" && lightSub == "curve") {
+                val d = androidx.compose.ui.platform.LocalDensity.current
+                val fr = session.fitRect(viewW, viewH)
+                val pad = 24.dp
+                Box(Modifier.fillMaxSize().statusBarsPadding()) {
+                    with(d) {
+                        CurveGraph(state, AdjustTarget.Global, hist, curveChannel,
+                            Modifier.offset(fr[0].toDp() - pad, fr[1].toDp() - pad).size(fr[2].toDp() + pad * 2, fr[3].toDp() + pad * 2), inset = pad)
+                    }
+                }
+            }
 
             if (isCrop) {
-                // crop workspace: status pill centre, help right
+                // crop workspace: the live aspect and pixel size, centred
                 Row(Modifier.fillMaxWidth().statusBarsPadding().height(LrDim.topBar).padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Spacer(Modifier.width(LrDim.hit))
-                    Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                        CropStatusPill(state.recipe.geometry.aspect.replaceFirstChar { it.uppercase() }.replace(":", " × "))
-                    }
-                    LrIconButton(LrIcon.HELP, "Crop help", { })
+                    Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { CropStatusPill(cropStatus) }
                 }
             } else {
                 // ---- top utility bar: transparent over the canvas ----
                 Row(Modifier.fillMaxWidth().statusBarsPadding().height(LrDim.topBar).padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    LrIconButton(LrIcon.BACK, "Back", onBack)
+                    LrIconButton(LrIcon.BACK, "Back", onBack, hit = LrDim.touch)
                     Spacer(Modifier.weight(1f))
-                    LrIconButton(LrIcon.UNDO, "Undo", { state.undo() }, enabled = state.canUndo, modifier = Modifier.padding(end = 2.dp))
-                    LrIconButton(LrIcon.REDO, "Redo", { state.redo() }, enabled = state.canRedo, modifier = Modifier.padding(end = 2.dp))
-                    LrIconButton(LrIcon.SHARE, "Add to export queue", onExport, modifier = Modifier.padding(end = 2.dp))
+                    LrIconButton(LrIcon.UNDO, "Undo", { state.undo() }, enabled = state.canUndo, hit = LrDim.touch)
+                    LrIconButton(LrIcon.REDO, "Redo", { state.redo() }, enabled = state.canRedo, hit = LrDim.touch)
+                    LrIconButton(LrIcon.SHARE, "Add to export queue", onExport, hit = LrDim.touch)
                     Box {
-                        LrIconButton(LrIcon.MORE, "More", { menu = true })
+                        LrIconButton(LrIcon.MORE, "More", { menu = true }, hit = LrDim.touch)
                         LrDropdown(menu, { menu = false }) {
                             LrMenuItem("Copy edits", { menu = false; onCopy() }, LrIcon.COPY)
                             if (copied != null) LrMenuItem("Paste edits", { menu = false; onPaste(copied, "Pasted edits") }, LrIcon.COPY)
@@ -476,17 +519,7 @@ fun EditorScreen(
                     }
                 }
             }
-            if (open && tab == "light" && lightSub == "curve") {
-                val d = androidx.compose.ui.platform.LocalDensity.current
-                val fr = session.fitRect(viewW, viewH)
-                Box(Modifier.fillMaxSize().statusBarsPadding()) {
-                    with(d) {
-                        CurveGraph(state, AdjustTarget.Global, hist, curveChannel,
-                            Modifier.offset(fr[0].toDp(), fr[1].toDp()).size(fr[2].toDp(), fr[3].toDp()))
-                    }
-                }
-            }
-            ValueFeedbackPill(feedback, Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 14.dp))
+            ValueFeedbackPill(feedback, Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = if (isCrop) LrDim.topBar else 14.dp))
             if (showHist && !isCrop) Histogram(hist, Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(top = 56.dp, end = 12.dp).width(120.dp).height(54.dp))
 
             FlatVisibility(
@@ -499,42 +532,24 @@ fun EditorScreen(
                 !open, Modifier.align(Alignment.BottomCenter).padding(bottom = 8.dp),
                 enter = fadeIn(tween(LrMotion.normal, easing = LrMotion.enter)), exit = fadeOut(tween(LrMotion.instant)),
             ) { FloatingMasterDock(modes, { selectMode(it) }) }
+    }
+    if (landscape) {
+        Row(Modifier.fillMaxSize().background(Lr.Canvas).navigationBarsPadding()) {
+            Box(Modifier.weight(1f).fillMaxHeight(), content = canvasAndOverlays)
+            if (open) Column(Modifier.width(360.dp).fillMaxHeight().background(Lr.Surface1).statusBarsPadding()) { controlStack() }
         }
-
-        // ---- focused editing: parameter tray, category rail, master rail (fixed, stacked) ----
-        if (isCrop) {
-            CropRotationRuler(state.recipe.geometry.angle,
-                { v -> state.live { it.copy(geometry = it.geometry.copy(angle = v)) } }, { state.commit("Straighten") })
-            Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                CropUtilityButton(LrIcon.AUTO, "Auto level", { placeholder?.let { b -> val a = AutoTools.autoLevel(b); state.edit("Auto level") { it.copy(geometry = it.geometry.copy(angle = a)) } } })
-                CropUtilityButton(if (aspectLock) LrIcon.LOCK else LrIcon.UNLOCK, "Lock aspect", { aspectLock = !aspectLock }, active = aspectLock)
-                Spacer(Modifier.weight(1f))
-                CropUtilityButton(LrIcon.ROTATE, "Rotate right", { state.edit("Rotate right") { it.copy(geometry = it.geometry.copy(rotate90 = (it.geometry.rotate90 + 1) % 4)) } })
-                CropUtilityButton(LrIcon.RESET, "Reset crop", { state.edit("Reset crop") { it.copy(geometry = it.geometry.copy(cropX = 0f, cropY = 0f, cropW = 1f, cropH = 1f, aspect = "original", angle = 0f)) } })
-            }
-            Box(Modifier.fillMaxWidth().background(Lr.Surface1).height(190.dp)) { panelBody("geometry") }
-            CropConfirmationBar("Crop", {
-                state.edit("Cancel crop") { it.copy(geometry = entryGeo) }; open = false
-            }, { open = false })
-        } else {
-            Box(Modifier.fillMaxWidth()) {
-            FlatVisibility(
-                open,
-                // Slide and fade only: animating the size would resize the photo (and its GL surface) every frame.
-                enter = slideInVertically(tween(LrMotion.panel, easing = LrMotion.standard)) { it / 3 } + fadeIn(tween(LrMotion.normal, easing = LrMotion.enter)),
-                exit = slideOutVertically(tween(LrMotion.panel - 20, easing = LrMotion.standard)) { it / 3 } + fadeOut(tween(100)),
-            ) {
-                Column {
-                    // parameter tray: straight edge, no handle, open controls on the surface (floats over the photo instead for portrait photos)
-                    if (!overlayTray) tray(1f)
-                    if (inEdit) {
-                        Box(Modifier.fillMaxWidth().height(1.dp).background(Lr.BorderSubtle))
-                        CategoryRail(sections, tab, { mode = PhotoMode.NONE; tab = it.id }, { autoLight() })
-                    }
-                    Box(Modifier.fillMaxWidth().height(1.dp).background(Lr.BorderDefault))
-                    CompactMasterRail(modes, { t -> if (t.id == "edit") tab in sectionIds else tab == t.id }, { selectMode(it) })
-                }
-            }
+    } else {
+        Column(Modifier.fillMaxSize().background(Lr.Canvas).navigationBarsPadding()) {
+            Box(Modifier.weight(1f).fillMaxWidth(), content = canvasAndOverlays)
+            // ---- focused editing: parameter tray, category rail, master rail (fixed, stacked) ----
+            if (isCrop) Column { controlStack() }
+            else Box(Modifier.fillMaxWidth()) {
+                FlatVisibility(
+                    open,
+                    // Slide and fade only: animating the size would resize the photo (and its GL surface) every frame.
+                    enter = slideInVertically(tween(LrMotion.panel, easing = LrMotion.standard)) { it / 3 } + fadeIn(tween(LrMotion.normal, easing = LrMotion.enter)),
+                    exit = slideOutVertically(tween(LrMotion.panel - 20, easing = LrMotion.standard)) { it / 3 } + fadeOut(tween(100)),
+                ) { Column { controlStack() } }
             }
         }
     }
@@ -563,7 +578,7 @@ private fun AutoPanel(state: EditorState, session: app.rawline.core.render.Edito
         scope.launch { session.baseStats()?.let { s -> val (t, ti) = AutoTools.autoWb(s); state.edit("Auto white balance") { r -> r.copy(adjust = r.adjust.copy(temp = t, tint = ti)) } } }
     }
     Action(LrIcon.CROP, "Auto level", "Straighten the horizon") {
-        placeholder?.let { b -> val a = AutoTools.autoLevel(b); state.edit("Auto level") { it.copy(geometry = it.geometry.copy(angle = a)) } }
+        placeholder?.let { b -> val a = AutoTools.autoLevel(b); state.edit("Auto level") { it.withStraighten(a, session.baseAspect()) } }
     }
     Action(LrIcon.GEOMETRY, "Auto perspective", "Correct converging lines") {
         placeholder?.let { b -> val (v, h) = AutoTools.autoPerspective(b); state.edit("Auto perspective") { it.copy(geometry = it.geometry.copy(keystoneV = v, keystoneH = h)) } }

@@ -31,6 +31,7 @@ import app.rawline.core.ui.LrButton as Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import app.rawline.core.ui.LrTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -68,7 +69,7 @@ fun PresetsPanel(state: EditorState, userPresets: List<Preset>, onSavePreset: (S
     Column(Modifier.fillMaxSize()) {
         LrTabs(listOf("looks" to "Looks", "yours" to "Yours"), tab, { tab = it })
         Row(Modifier.padding(horizontal = 14.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            LrOutlineButton("Save current as preset", { naming = true }, small = true)
+            LrOutlineButton("Save current as preset", { naming = true }, Modifier.minimumInteractiveComponentSize(), small = true)
         }
         if (selected != null) {
             RawSlider("Strength: ${selected!!.name}", strength, 0f..100f, 100f,
@@ -115,19 +116,19 @@ fun HistoryPanel(state: EditorState, onSnapshot: (String) -> Unit) {
     var naming by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            LrOutlineButton("New snapshot", { naming = true }, small = true)
-            LrOutlineButton("Reset all", { state.reset() }, small = true)
+            LrOutlineButton("New snapshot", { naming = true }, Modifier.minimumInteractiveComponentSize(), small = true)
+            LrOutlineButton("Reset all", { state.reset() }, Modifier.minimumInteractiveComponentSize(), small = true)
         }
         LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
             if (state.snapshots.isNotEmpty()) item { SectionTitle("Snapshots") }
             items(state.snapshots) { s ->
-                Row(Modifier.fillMaxWidth().height(LrDim.menuRow).clickable { state.applySnapshot(s) }.padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) { Text(s.name, style = MaterialTheme.typography.bodySmall) }
+                Row(Modifier.fillMaxWidth().height(LrDim.touch).clickable { state.applySnapshot(s) }.padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) { Text(s.name, style = MaterialTheme.typography.bodySmall) }
             }
             item { SectionTitle("History") }
             items(state.history.size) { i0 ->
                 val i = state.history.lastIndex - i0
                 val e = state.history[i]
-                Row(Modifier.fillMaxWidth().height(LrDim.menuRow).clickable { state.jump(i) }.padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().height(LrDim.touch).clickable { state.jump(i) }.padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(e.label, style = MaterialTheme.typography.bodySmall, color = if (i == state.historyIndex) MaterialTheme.colorScheme.primary else if (i > state.historyIndex) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface)
                 }
             }

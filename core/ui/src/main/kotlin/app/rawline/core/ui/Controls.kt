@@ -241,20 +241,28 @@ fun RawSlider(
 
 /** PanelTabs: 44 dp, light underline on the active one, no filled pills. */
 @Composable
-fun LrTabs(items: List<Pair<String, String>>, selected: String, onSelect: (String) -> Unit, modifier: Modifier = Modifier) {
-    Row(modifier.fillMaxWidth().height(LrDim.tabBar).padding(horizontal = 14.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+fun LrTabs(
+    items: List<Pair<String, String>>, selected: String, onSelect: (String) -> Unit, modifier: Modifier = Modifier,
+    /** Double tap on a tab (it is selected first): reset what that tab holds. A note "Tab: reset" shows in the value pill. */
+    onDoubleTap: ((String) -> Unit)? = null,
+    /** Extra content at the right end of the row, such as a Reset text button. */
+    trailing: (@Composable () -> Unit)? = null,
+) {
+    val feedback = LocalValueFeedback.current
+    Row(modifier.fillMaxWidth().height(LrDim.tabBar).padding(start = 14.dp, end = if (trailing != null) 4.dp else 14.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
         items.forEach { (id, label) ->
             val on = id == selected
             val colour by animateColorAsState(if (on) Lr.TextPrimary else Lr.TextSecondary.copy(alpha = 0.85f), tween(140), label = "tab")
             val line by animateColorAsState(if (on) Lr.TextPrimary else Color.Transparent, tween(140), label = "tabline")
             Column(
-                Modifier.height(LrDim.tabBar).clickable { onSelect(id) }.padding(horizontal = 4.dp).semantics { contentDescription = label },
+                Modifier.height(LrDim.tabBar).tapOrDoubleTap(onTap = { onSelect(id) }, onDoubleTap = { onDoubleTap?.let { it(id); feedback.flash(label, "reset") } }).padding(horizontal = 4.dp).semantics { contentDescription = label },
                 horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
             ) {
                 Text(label, color = colour, style = MaterialTheme.typography.titleSmall.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Normal))
                 Box(Modifier.padding(top = 3.dp).height(2.dp).width(IntrinsicSize.Max).fillMaxWidth().background(line))
             }
         }
+        trailing?.invoke()
     }
 }
 
@@ -482,10 +490,14 @@ fun SectionTitle(text: String, onReset: (() -> Unit)? = null) {
 /**
  * The first row of an editor panel: the section title on the left and a Reset text button on the right (dimmed while nothing differs
  * from the default). A double tap on the title does the same as the button. Either one shows "Title: reset" in the value pill.
- * [trailing] holds any extra action (for example the Curve button) between the title and Reset.
+ * [trailing] holds any extra action (for example the Curve button) between the title and Reset; [trailingEnd] sits after Reset (Done).
  */
 @Composable
-fun PanelHeader(title: String, modified: Boolean, onReset: () -> Unit, modifier: Modifier = Modifier, trailing: (@Composable androidx.compose.foundation.layout.RowScope.() -> Unit)? = null) {
+fun PanelHeader(
+    title: String, modified: Boolean, onReset: () -> Unit, modifier: Modifier = Modifier,
+    trailing: (@Composable androidx.compose.foundation.layout.RowScope.() -> Unit)? = null,
+    trailingEnd: (@Composable androidx.compose.foundation.layout.RowScope.() -> Unit)? = null,
+) {
     val feedback = LocalValueFeedback.current
     val reset by rememberUpdatedState(onReset)
     val doReset = { reset(); feedback.flash(title, "reset") }
@@ -495,6 +507,7 @@ fun PanelHeader(title: String, modified: Boolean, onReset: () -> Unit, modifier:
         }
         trailing?.invoke(this)
         TextButton(doReset, Modifier.height(LrDim.touch), enabled = modified) { Text("Reset") }
+        trailingEnd?.invoke(this)
     }
 }
 
