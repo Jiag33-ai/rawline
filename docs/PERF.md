@@ -18,6 +18,8 @@ Targets (S24 Ultra, S5IIX RW2). **Nothing here is measured on the phone yet.** T
 | Studio: 20 layer 24 MP pan/zoom frame | < 16.6 ms | not measured |
 | Studio: export flatten 24 MP | < 6 s | not measured |
 | Studio: autosave after a stroke | not set | not measured |
+| Studio: export flatten 12 MP JPEG (`studio_export_ms`) | not set | not measured |
+| Studio: home first paint (`studio_home_first_paint_ms`) | not set | not measured |
 | Studio: memory high-water mark | under 2.2 GB | not measured |
 
 Timers recorded by the app (names in the report): `tier2_total_ms`, `tier2_parse_ms`, `tier2_read_ms`, `tier2_decode_ms`, `swipe_cold_ms`, `grid frames`, `grid jank_frames(>25ms)`, `index_total_ms`, `edit_decode_ms`, `edit_upload_ms`, `edit_first_frame_ms`, `frame_render_ms`, `full_decode_ms`, `export_render_ms`, `ai_*_run_ms`, `heal_*_ms`, `denoise_total_ms`.

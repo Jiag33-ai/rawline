@@ -41,9 +41,26 @@ Not verified (the Compose and GL code cannot run here; everything below is compi
 
 Jai's check on the phone: open a debug build, Settings, long press Version. Make a project, add a photo, add a layer, set it to Multiply, paint 20 strokes (finger and S Pen), move and scale the photo layer, undo five and redo two, force stop in the middle of a stroke, reopen, Open the last project, check it is there, then Copy report.
 
-## Handoff to S1c
-- Entry: replace `DebugEntry` and `StudioDebugActivity` with `ModeHost` behind `BuildConfig.STUDIO_ENABLED`; `StudioHost` and `StudioProjects` become the project list backed by `studio.db`. Projects live in `files/studio/{id}` already.
-- `StudioSession(fs, root, gl, env, doc, pixels, onDisk, recovered)` is the whole API; export (flatten) can render through `StudioNative.render` at document size with the same layer list (`StudioSession` builds `FrameSpec`).
-- Known limits carried forward: no mip chain, bilinear only, LINEAR blend space stored but not applied, full texture per layer (tiles in S2), `PixelContainer` replaced by tiles in S2 through a schema bump.
-- `project.json` stays version 1; never edit `sample_v1.json`.
-- CI: `studio-golden.sh` now runs the brush scenes after `studio_blend3`.
+## S1c: home, mode switch, studio.db, flatten export, flag and CI (delivered, phone checks pending)
+Studio is in the CI release APK (`-PstudioEnabled=true`, the switch is visible); local and default builds have it off (`studio.enabled` is `false`). See DECISIONS.md "Studio S1c decisions".
+
+Delivered
+- `:core:studio-model` (+26 host tests, 104 in all): `Mode.kt` (`AppMode`, `ModeState`, `StartGuard`: two failed starts fall back to Develop with a notice), `Catalog.kt` (`ProjectCatalog` scan, duplicate, rename, delete; `NewProject` presets and the 12 MP fit; `IndexDiff`), `Flatten.kt` (strips, matte over white, streaming `PngWriter`), `Fs` gained `dirs`, `size`, `deleteTree`.
+- `:core:studio-render` (+11 host tests, 41 in all): `StudioExporter` (flatten to PNG or JPEG, progress, cancel, `studio_export_ms`, thumbnails), `StudioSession.exportSnapshot / renderStrip / renderThumbnail`, `StudioGpu.render`, `StudioProjects.writeThumbnail`. `StudioNative.kt` moved here from `:core:native` (same package, same JNI names).
+- `:feature:studio` (+2 host tests, 5 in all): `StudioRoot`, `StudioHome` (3 column grid, New with four presets and From a photo, Open, Duplicate, Rename, Delete with a question, "Cannot open" cells that can only be deleted, empty state, Projects tab only), `StudioHomeViewModel` (index first paint, then the scan; one operation at a time), `StudioDb` (Room, schema `schemas/.../1.json`), `ExportSheet` and `ExportTargets` (Pictures/Rawline, Save as, Share, progress, Cancel). The canvas menu has Export; leaving the canvas writes `thumb.jpg` (best effort, 3 seconds).
+- App: `StudioEntry` in `src/studioOn` (ModeHost with `ModeState`, the switch, notice, Copy report block, Settings note) and a stub in `src/studioOff`. The `LrSegmentedToggle` (core:ui) is passed to `LibraryScreen` (`modeSwitch`, null leaves the bar as it was) and to the Studio home only; never to the loupe, editor or canvas. Settings has a Studio note ("Studio is new ...") in builds that contain Studio.
+- Golden: `studio_blend3` has the flatten strip line (two 96 row strips stitched equal the whole render byte for byte). Develop goldens: all `ok`, references untouched.
+- CI: `studio-flag` job (both values: tests, debug build, `tools/check-studio-apk.sh`), the publish build passes `-PstudioEnabled=true` and checks the APK before it is copied, lint job blocking.
+- Housekeeping: `tools/studio/__pycache__` untracked and ignored; the stray directory beside `Blend.kt` deleted.
+
+Not verified (the UI cannot run here; compiled, linted and reviewed only)
+- Every Compose screen and dialog, the switch and mode memory, the notice toast, the Room database on a device, thumbnails and their decoding, the photo picker, the three export targets (MediaStore, the document picker, FileProvider share), JPEG and ICC embedding through the platform encoder, memory with a 12 MP 10 layer export, the start guard on a real crash, and every phone number (`studio_export_ms`, home first paint).
+- Verified on the host: mode and guard, catalogue, flatten strips, PNG round trip (independent decoder), JPEG row handling and white matte (through a fake canvas), cancel and GPU failure, export through the reference compositor, thumbnails.
+
+Jai on the phone (one message): make a project from a photo, paint, export a PNG and a JPEG and open them in Gallery; duplicate and delete a project; switch to Develop and back; force stop during a stroke, reopen; paste the Copy report (the Studio block is at the end).
+
+Known limits carried forward: the export is on a coroutine in the app process (no foreground service until S9); a canvas that is left by a switch or a kill keeps its older thumbnail; Back on the home goes to Develop; the review findings of review-s1b.md are untouched.
+
+## Handoff to S2
+- `StudioSession.exportSnapshot` plus `renderStrip` is the way to render the whole canvas at any size; layered export reuses it.
+- Open in Studio from Develop and the export service are S2 and S9. `project.json` stays version 1; never edit `sample_v1.json`.
