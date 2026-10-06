@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- BK-392. Names: title_ (sentence case), body_, button_ (starts with a verb), link_, choice_, note_. Checked by CopyRulesTest. -->
+    <string name="title_welcome">Edit your RAW photos on your phone</string>
+    <string name="body_welcome">Rawline opens your Panasonic RW2 files fast and edits them without ever changing the originals.</string>
+    <string name="button_get_started">Get started</string>
+
+    <string name="title_photos">Let Rawline see your photos</string>
+    <string name="body_photos">Rawline needs to see your photos to show them. Nothing leaves your phone.</string>
+    <string name="button_allow_photos">Allow photos</string>
+    <string name="link_why_photos">Why do you need this?</string>
+    <string name="body_why_photos">Android lists JPEG and HEIC photos by itself, but it often hides RAW files. Allow all files access on the next screen to see your RW2 files.</string>
+
+    <string name="title_raw_files">Show your RAW files</string>
+    <string name="body_raw_files">Turn on All files access so your RW2 files appear next to your other photos.</string>
+    <string name="button_open_settings">Open settings</string>
+    <string name="button_skip_for_now">Skip for now</string>
+    <string name="note_raw_skipped">You can turn this on later in Settings. Until then RAW files may be missing.</string>
+
+    <string name="title_where_from">Where are your photos?</string>
+    <string name="choice_camera_roll">Camera roll</string>
+    <string name="choice_folder_or_card">Choose a folder or SD card</string>
+    <string name="choice_import_files">Import files</string>
+    <string name="note_where_from">Rawline reads your photos where they are. It does not copy them unless you import from a card.</string>
+
+    <string name="title_gestures">Three things to try</string>
+    <string name="body_gesture_select">Touch and hold a photo to select it.</string>
+    <string name="body_gesture_original">In the editor, hold the photo to see the original.</string>
+    <string name="body_gesture_reset">Double tap a slider name to reset it.</string>
+    <string name="button_open_my_photos">Open my photos</string>
+
+    <string name="title_notifications">Keep exports running</string>
+    <string name="body_notifications">Rawline shows a notification while it exports so Android keeps it running. You can turn it off any time.</string>
+    <string name="button_allow">Allow</string>
+    <string name="button_not_now">Not now</string>
+
+    <string name="button_skip">Skip</string>
+    <string name="button_back">Back</string>
+    <string name="button_continue">Continue</string>
+
+    <!-- Settings > Help -->
+    <string name="title_help">Help</string>
+    <string name="action_show_welcome_again">Show the welcome screens again</string>
+    <string name="action_reset_tips">Reset tips</string>
+    <string name="action_report_problem">Report a problem</string>
+    <string name="action_show_explanations">Show explanations</string>
+    <string name="note_show_explanations">Touch and hold a slider name to see what it does.</string>
+</resources>

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- BK-394. Shown on long press of a slider name when "Show explanations" is on. Each under 140 characters. -->
+    <string name="help_gloss_exposure">Exposure: overall brightness. Move right to brighten.</string>
+    <string name="help_gloss_highlights">Highlights: only the brightest parts. Pull left to bring back sky detail.</string>
+    <string name="help_gloss_shadows">Shadows: only the darkest parts. Move right to lift them.</string>
+    <string name="help_gloss_whites_blacks">Whites and Blacks: set the brightest and darkest points.</string>
+    <string name="help_gloss_texture">Texture: fine detail such as skin and bark.</string>
+    <string name="help_gloss_clarity">Clarity: contrast in the middle tones. Adds punch.</string>
+    <string name="help_gloss_dehaze">Dehaze: cuts through haze and mist, or adds it.</string>
+    <string name="help_gloss_vibrance">Vibrance: boosts dull colours and protects strong ones.</string>
+    <string name="help_gloss_saturation">Saturation: all colours at once.</string>
+    <string name="help_gloss_grain">Grain: film-like noise for a classic look.</string>
+</resources>

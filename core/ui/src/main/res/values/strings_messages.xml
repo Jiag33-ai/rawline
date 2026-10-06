@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- BK-395. The 14 messages Jai will actually see. Each says what happened and what to try. Details go behind a Copy details action. -->
+    <string name="error_no_photos">No photos yet. Allow access to see your camera roll.</string>
+    <string name="error_raw_missing">RAW files are missing. Turn on All files access.</string>
+    <string name="error_cannot_open">This photo could not be opened. The file may be damaged.</string>
+    <string name="error_no_space">Not enough space. Free about 300 MB and try again.</string>
+    <string name="error_export_folder">Export folder not available. Choose another folder or save to Pictures/Rawline.</string>
+    <string name="error_newer_edit">This edit was made by a newer version of Rawline, so it was left alone.</string>
+    <string name="error_model_download">The AI model could not be downloaded. Check your connection and try again.</string>
+    <string name="error_ai_slow">AI tools are running slower on your phone\'s processor right now.</string>
+    <string name="error_warm">Your phone is warm. Rawline paused to cool down.</string>
+    <string name="error_battery_low">Battery is low. Export paused until you charge.</string>
+    <string name="error_backup_damaged">The backup is damaged and was not restored.</string>
+    <string name="error_nothing_to_import">Nothing new to import.</string>
+    <string name="error_card_removed">The card was removed. Put it back to continue.</string>
+    <string name="error_large_file">This file is very large, so it opened at half size.</string>
+    <string name="action_copy_details">Copy details</string>
+</resources>

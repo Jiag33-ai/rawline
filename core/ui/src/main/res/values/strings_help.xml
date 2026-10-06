@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- BK-393. One array per screen, each item under 140 characters. Checked by CopyRulesTest (kind help_). -->
+    <string name="title_help_library">Photos</string>
+    <string name="title_help_viewer">Viewer</string>
+    <string name="title_help_editor">Editor</string>
+    <string name="title_help_masks">Masks</string>
+    <string name="title_help_remove">Removing things</string>
+    <string name="title_help_export">Exporting</string>
+    <string-array name="help_library">
+        <item>Touch and hold a photo to select it. Then tap more photos.</item>
+        <item>Pinch to change how many photos fit across.</item>
+        <item>Use the filter button to show picks, ratings or edited photos.</item>
+        <item>Rejected photos are hidden. Tap Rejects to see them.</item>
+        <item>Pick or reject while culling: open a photo and use the flag buttons.</item>
+    </string-array>
+    <string-array name="help_viewer">
+        <item>Swipe left or right to move between photos.</item>
+        <item>Double tap to zoom. Pinch for more.</item>
+        <item>Swipe up for details about the shot.</item>
+        <item>Tap Edit to open the photo in the editor.</item>
+    </string-array>
+    <string-array name="help_editor">
+        <item>Drag a slider to change it. Double tap its name to reset.</item>
+        <item>Tap the number to type an exact value.</item>
+        <item>Hold the photo to see the original.</item>
+        <item>Undo and Redo are at the top. Your edits save by themselves.</item>
+        <item>Tap the photo to hide the panel.</item>
+    </string-array>
+    <string-array name="help_masks">
+        <item>A mask changes only part of the photo. Add one, then set what it does.</item>
+        <item>Subtract takes an area away. Intersect keeps only where two masks overlap.</item>
+        <item>AI tools download a model the first time. Use Wi-Fi if you can.</item>
+    </string-array>
+    <string-array name="help_remove">
+        <item>Paint over what you want gone. Heal and Clone copy from nearby. Remove uses AI.</item>
+    </string-array>
+    <string-array name="help_export">
+        <item>Export makes a new file. Your original is never changed.</item>
+        <item>Choose a size and format, then tap Export. You can leave the app while it runs.</item>
+        <item>Find your photos in Pictures/Rawline, or in the folder you chose.</item>
+    </string-array>
+</resources>

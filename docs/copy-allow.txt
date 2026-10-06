@@ -1,0 +1,7 @@
+# Exceptions to the copy rules (docs/COPY.md). One per line: the exact text, a tab, the reason. A line without a reason fails the test.
+Sky selection (SegFormer-B0, ADE20K)	Open source model named where the person needs it: the name in the AI downloads list and the licence credit (BK-396 allows names where needed)
+Apache-2.0 (weights: NVIDIA SegFormer, ADE20K)	Open source model named where the person needs it: the name in the AI downloads list and the licence credit (BK-396 allows names where needed)
+Select object (MobileSAM)	Open source model named where the person needs it: the name in the AI downloads list and the licence credit (BK-396 allows names where needed)
+Apache-2.0 (MobileSAM)	Open source model named where the person needs it: the name in the AI downloads list and the licence credit (BK-396 allows names where needed)
+Remove objects (LaMa)	Open source model named where the person needs it: the name in the AI downloads list and the licence credit (BK-396 allows names where needed)
+Apache-2.0 (LaMa)	Open source model named where the person needs it: the name in the AI downloads list and the licence credit (BK-396 allows names where needed)
