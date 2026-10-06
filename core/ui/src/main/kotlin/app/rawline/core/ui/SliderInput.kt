@@ -13,7 +13,7 @@ object SliderInput {
      * counts as a minus. Returns null when it is not a number.
      */
     fun parse(text: String): Float? {
-        val t = text.trim().replace('−', '-').replace('–', '-').replace(',', '.')
+        val t = text.trim().replace('\u2212', '-').replace('\u2013', '-').replace(',', '.')
         val cleaned = t.filter { it.isDigit() || it == '.' || it == '-' || it == '+' }
         if (cleaned.isEmpty() || cleaned.drop(1).any { it == '-' || it == '+' }) return null
         return cleaned.toFloatOrNull()?.takeIf { it.isFinite() }

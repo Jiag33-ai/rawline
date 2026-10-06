@@ -17,7 +17,7 @@ class SliderInputTest {
 
     @Test fun decimalCommaAndTypographicMinusWork() {
         assertEquals(1.25f, SliderInput.parse("1,25")!!, 0f)
-        assertEquals(-3f, SliderInput.parse("−3")!!, 0f)
+        assertEquals(-3f, SliderInput.parse("\u22123")!!, 0f)
     }
 
     @Test fun nonNumbersAreRejectedNotSilentlyDropped() {
