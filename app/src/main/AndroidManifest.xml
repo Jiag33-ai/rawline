@@ -20,6 +20,8 @@
         android:label="Rawline"
         android:theme="@style/Theme.Rawline">
         <service android:name=".ExportService" android:exported="false" android:foregroundServiceType="dataSync|mediaProcessing" />
+        <!-- card import (W15): copies from a card or reader the person picked; dataSync like the export service (permission declared above) -->
+        <service android:name=".ingest.ImportService" android:exported="false" android:foregroundServiceType="dataSync" />
         <!-- scheduled backups (JobScheduler, no extra library): runs the backup in this process, nothing in the foreground -->
         <service android:name=".backup.BackupJobService" android:exported="false" android:permission="android.permission.BIND_JOB_SERVICE" />
         <provider

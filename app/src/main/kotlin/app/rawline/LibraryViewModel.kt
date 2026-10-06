@@ -20,6 +20,7 @@ import app.rawline.backup.BackupScheduler
 import app.rawline.backup.BackupTargets
 import app.rawline.backup.TargetKind
 import app.rawline.core.data.RestoreCheck
+import app.rawline.ingest.ImportService
 import app.rawline.core.data.RestoreStaging
 import app.rawline.core.data.RestoreText
 import app.rawline.feature.settings.BackupItem
@@ -431,6 +432,17 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
     fun enqueueExport(list: List<Photo>) = viewModelScope.launch(Dispatchers.IO) {
         graph.exportRunner.enqueue(list, exportSettings())
         message.value = if (list.size == 1) "Added to export queue" else "Added ${Plurals.photos(list.size)} to export queue"
+    }
+
+    // ---- card import (W15) ----
+    /** Where the card picker starts: the card used last time, so the next insert is one tap. */
+    fun lastCardTree(): Uri? = graph.prefs.getString("card_tree", null)?.let { Uri.parse(it) }
+
+    fun importFromCard(tree: Uri) {
+        runCatching { app.contentResolver.takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION) }      // read only: the card is never written to
+        graph.prefs.edit().putString("card_tree", tree.toString()).apply()
+        if (!android.os.Environment.isExternalStorageManager()) { message.value = "Allow All files access in Settings first, then try again"; return }
+        runCatching { ImportService.start(app, tree) }.onSuccess { message.value = "Importing from the card" }.onFailure { message.value = "Could not start the import: ${it.message}" }
     }
 
     // ---- backup ----

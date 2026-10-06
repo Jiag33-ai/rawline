@@ -39,5 +39,8 @@ Measured on the build machine, only to show where work goes; the phone is a diff
 - Studio S1b timers now in the Copy report (all "not measured" until the phone): `studio_frame_ms` (render plus display pass, per frame), `studio_stroke_stamp_ms` (addStamps), `studio_commit_ms` (readback plus bake), `studio_autosave_ms` (encode plus writes), `studio_input_to_pixel_ms` (event time to the frame that shows it; recorded, no target), gauges `studio_texture_mb`, `studio_history_mb`, and a Studio section (canvas size, layers, memory guard state, autosave state). Sandbox: the brush goldens run on Mesa llvmpipe; no speed number was taken.
 - Studio W13 follow-ups: the Studio section of the Copy report ends with three counters, `studio_gl_attach`, `studio_gl_detach`, `studio_gl_create` (since the project opened). After five rotations of one open project, create 1 and detach 0 means the surface moves between layouts untouched; create 6 means each rotation rebuilds it (then BK-508 fix (b)). Not measured until the phone. An export now keeps the screen on and waits up to 10 minutes in total for the app to come back to the foreground; no timing taken.
 
+## Card import and DNG probe (W15): all "not measured" until the phone
+- Copy report, "Card import": files remembered, the last run's counts, MB/s of the card read and write, the speed class. "DNG files (Compression tag)": compression number and support of the newest 20 DNGs in the library.
+
 ## Checks that need the phone
 Sliders under 16 ms; grid 120 fps; swipe timings; Edit to first frame; export time; AI mask readiness (< 2 s after editing starts, tap-to-select < 300 ms); remove a person-sized object from 24 MP in under 10 s; 30 minute soak test.

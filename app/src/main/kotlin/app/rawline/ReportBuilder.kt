@@ -46,6 +46,14 @@ object ReportBuilder {
         }.getOrElse { "unavailable (${it.javaClass.simpleName})" }
         sections += "Settings" to "XMP sidecars ${if (graph.prefs.getBoolean("xmp", false)) "on" else "off"}, overlay ${if (graph.prefs.getBoolean("overlay", false)) "on" else "off"}, " +
             "LibRaw ${runCatching { app.rawline.core.nativelib.Native.librawVersion() }.getOrElse { "failed: ${it.javaClass.simpleName}" }}"
+        sections += "Card import" to run {
+            val last = graph.prefs.getString(app.rawline.ingest.ImportService.PREF_LAST, null)
+            val at = graph.prefs.getLong(app.rawline.ingest.ImportService.PREF_LAST_AT, 0L)
+            val ledger = java.io.File(context.filesDir, "import-ledger.txt").let { f -> if (f.isFile) f.readLines().count { it.isNotBlank() } else 0 }
+            "service running ${app.rawline.ingest.ImportService.isRunning}, ${ledger} files remembered as imported\n" +
+                (if (last != null) "Last run ${((now - at) / 60_000).coerceAtLeast(0)} min ago: $last" else "No card import has been run on this phone")
+        }
+        sections += "DNG files (Compression tag)" to dngSection(context, graph)
         sections += "Backups" to run {
             val p = graph.prefs
             val last = app.rawline.core.data.RestoreText.lastLine(p.getLong(app.rawline.backup.BackupPrefs.LAST, 0), p.getLong(app.rawline.backup.BackupPrefs.LAST_BYTES, 0), now)
@@ -57,4 +65,23 @@ object ReportBuilder {
         StudioEntry.reportSection(context, graph.prefs)?.let { sections += it }   // null when this build has no Studio
         return PerfLog.report(context, version, sections, now)
     }
+
+    /**
+     * W15 section 3: the Compression tag of the newest DNG files in the library, read from the TIFF directory only (no pixel is decoded), so one
+     * look at the report tells whether Samsung Expert RAW files are written with a compression LibRaw can develop (1, 7 and 8) or not (52546 is
+     * JPEG XL). Reads at most 20 files, each a few small windows.
+     */
+    private fun dngSection(context: Context, graph: Graph): String = runCatching {
+        val rows = kotlinx.coroutines.runBlocking { graph.db.photos().newestDng(20) }
+        if (rows.isEmpty()) return@runCatching "no DNG files in the library"
+        val tally = java.util.TreeMap<Int, Int>()
+        val lines = rows.map { p ->
+            val probe = runCatching {
+                context.contentResolver.openFileDescriptor(android.net.Uri.parse(p.uri), "r")?.use { pfd -> java.io.FileInputStream(pfd.fileDescriptor).use { app.rawline.core.data.ingest.DngProber.probeChannel(it.channel) } }
+            }.getOrNull() ?: app.rawline.core.data.ingest.DngProbe(app.rawline.core.data.ingest.DngSupport.UNREADABLE, -1, "could not open the file")
+            tally.merge(probe.compression, 1, Int::plus)
+            "${p.name}: compression ${probe.compression}, ${probe.support.name} (${probe.reason})"
+        }
+        "newest ${rows.size}: " + tally.entries.joinToString { "compression ${it.key} x${it.value}" } + "\n" + lines.joinToString("\n")
+    }.getOrElse { "unavailable (${it.javaClass.simpleName})" }
 }

@@ -11,7 +11,7 @@ Re-run this list whenever Android publishes behaviour changes for the next API l
 | Notifications | asked once at the first export, Android 13 and later | NotificationRule test, phone |
 | Photo access | the media permission is asked once at first launch; All files access is a separate, explained step | MediaAccess tests, phone |
 | Scheduled backup | a `JobService` bound by the system (`BIND_JOB_SERVICE`), not exported, no foreground service; the daily job is re-armed at every start (jobs are not persisted across a reboot) | PlatformRulesTest (service rules), phone |
-| Foreground service | types dataSync and mediaProcessing declared; the app keeps working when the notification is hidden | phone |
+| Foreground service | types dataSync and mediaProcessing declared (export: both; card import: dataSync only); the app keeps working when the notification is hidden | phone |
 
 ## Back order (innermost first)
 BackHandler stays; predictive back is on for the application, so the system shows its back-to-home animation only where no handler is enabled. Handlers work by registration order: the newest, innermost enabled one wins. A change to any handler updates this table and `BackInventory.EXPECTED` (app/src/test/kotlin/app/rawline/platform/GuardRules.kt) in the same commit; `PlatformRulesTest.everyBackHandlerInTheAppIsInTheInventory` fails until both agree.

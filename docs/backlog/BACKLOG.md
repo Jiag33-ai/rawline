@@ -241,7 +241,7 @@ After these 25: baseline profile and macrobenchmarks (BK-002, BK-003, after W01 
 | N. Studio | 6 | 32 | 19 | 3 | 60 |
 | **All** | 38 | 203 | 217 | 54 | 512 |
 
-Status of the 512 entries: 25 DONE, 47 PARTLY DONE, 10 MERGED into another entry (dedupe pass, 6 Oct 2026), 19 SPEC COVERS and 2 SPEC WINS (Studio entries settled by docs/STUDIO_SPEC.md), 1 DECLINED and 1 BLOCKED; the rest are open. Merged and done entries are kept for their history and acceptance details.
+Status of the 512 entries: 25 DONE, 48 PARTLY DONE, 10 MERGED into another entry (dedupe pass, 6 Oct 2026), 19 SPEC COVERS and 2 SPEC WINS (Studio entries settled by docs/STUDIO_SPEC.md), 1 DECLINED and 1 BLOCKED; the rest are open. Merged and done entries are kept for their history and acceptance details.
 
 ## Top 30 overall (ranked)
 
@@ -252,7 +252,7 @@ Order weighs risk of losing Jai's work first, then measurement, then speed and l
 | 1 | BK-142 | G | [DONE] Automatic backups of the catalogue (edits, meta, presets, snapshots) on every N edits and daily, kept as the last 7 rotating files | Automatic rotating catalogue backups outside the app: uninstall or a key change still wipes everything. |
 | 2 | BK-226 | L | Move release signing to a private key held only in Actions secrets (and plan the one-time reinstall safely) | Private release signing key via Actions secrets with key rotation: the public key lets anyone forge an update. |
 | 3 | BK-001 | A | Get the first real phone timings and gate CI on a budget file | First real phone timings and a one-tap speed test: all speed work is guesswork until measured. |
-| 4 | BK-096 | E | [PARTLY DESIGNED] Import from SD card or USB-C reader: copy RW2/JPG into a dated folder with a progress queue, skip duplicates, verify, then eject prompt | Import from the SD card or camera over USB: the first step of every shoot, missing today. |
+| 4 | BK-096 | E | [PARTLY DONE] Import from SD card or USB-C reader: copy RW2/JPG into a dated folder with a progress queue, skip duplicates, verify, then eject prompt | Import from the SD card or camera over USB: the first step of every shoot, missing today. |
 | 5 | BK-291 | G | Lighter identity fix after the BK-141 decision: content fingerprint as a secondary lookup, never replacing the legacy key | Content fingerprint as a secondary lookup: protects edits from a changed modified time without the re-key the decision rejected. |
 | 6 | BK-308 | G | [PARTLY DONE] Catalogue work runs on the main dispatcher: XMP writes, edit pastes and ratings can block the UI | Catalogue work (XMP writes, pastes, ratings) runs on the main thread: a real jank and ANR risk. |
 | 7 | BK-261 | A | Catalog.reapply loads the whole photos table and runs one SELECT per photo on every device scan | Stop the full-table reload and per-photo queries on every MediaStore change (exports trigger it too). |
@@ -519,7 +519,7 @@ Dependencies: BK-263 and BK-098 before BK-099; BK-096 before BK-112 and BK-256; 
 | BK-474 | P1 | S |  | Imported RAWs must keep the card file's modified time, or `Photo.keyOf` (`name/size/modified`) makes every imported copy a new photo and breaks sync with edits made on the original |
 | BK-475 | P1 | M |  | A DNG that LibRaw opens but cannot decode shows no error: `unpack` returns -2 and the user sees a blank or grey frame |
 | BK-476 | P1 | S |  | Samsung Expert RAW spike: find out what compression the S24 Ultra writes before promising DNG support |
-| BK-096 | P0 | L | PARTLY DESIGNED | Import from SD card or USB-C reader: copy RW2/JPG into a dated folder with a progress queue, skip duplicates, verify, then eject prompt |
+| BK-096 | P0 | L | PARTLY DONE | Import from SD card or USB-C reader: copy RW2/JPG into a dated folder with a progress queue, skip duplicates, verify, then eject prompt |
 | BK-097 | P0 | M |  | Reject-to-trash and delete with undo (MediaStore trash and a 30 day bin) |
 | BK-098 | P0 | M |  | Search: text, camera, lens, ISO, aperture, focal length, date range, rating, label, edited, file type, with saved searches |
 | BK-099 | P1 | L |  | Natural language search over the library (on-device, no cloud) |
@@ -1843,8 +1843,8 @@ Reading of the pipeline (core/native/cpp/shaders/main.frag, out.frag, raw_decode
 
 What exists: sources (camera roll via MediaStore, other albums, imported files, one SAF folder plus 8 recents), filter by minimum rating, flag, edited, camera, 4 sort orders, colour labels, multi-select, copy/paste/sync edits, batch export queue, backup zip, optional XMP sidecars. What is missing (checked by reading LibraryViewModel, Library.kt, Db.kt): text search, collections/albums, keywords, captions, stacks, duplicate handling, delete/reject-to-trash, date and lens filters, map/geotag, SD card import, "recently imported", compare/survey mode.
 
-### BK-096 [P0] [PARTLY DESIGNED] Import from SD card or USB-C reader: copy RW2/JPG into a dated folder with a progress queue, skip duplicates, verify, then eject prompt
-- Status: W15-card-import.md: engine with 14 passing host tests (copy, verify, resume, ledger, speed, DNG probe); UI is W17. Not merged.
+### BK-096 [P0] [PARTLY DONE] Import from SD card or USB-C reader: copy RW2/JPG into a dated folder with a progress queue, skip duplicates, verify, then eject prompt
+- Status: Done on main: the engine (core/data/ingest: SHA-256 verify, .part then rename, resume by ledger, cancel, disk full, a card pulled mid file, card file time kept, speed class), the SAF card walk, a dataSync service and one Import from a card entry in the Add photos menu. Only host tested (26 tests); the SAF walk, the service and the menu are compiled, not run. Left for W17: the Preview only badge and editor text (D7), Settings toggle, USB attach.
 - Problem: Jai shoots a Panasonic S5IIX; the real workflow is card to phone. Today the app can read a folder in place via SAF or list MediaStore; there is no ingest (no copy, no rename, no duplicate detection, no checksum).
 - Why: this is the first thing every session starts with. Lightroom Mobile has "Add photos from a card". Without it Jai must use another file manager.
 - Acceptance: Import screen detects a removable volume (`StorageManager`/`Intent.ACTION_MEDIA_MOUNTED` or the SAF tree of `DCIM/`), shows thumbnails of new files (embedded previews, nothing copied yet), selectable; destination folder pattern `Pictures/Rawline/{yyyy}/{yyyy-MM-dd}`; copy with `Files.copy`/streams with SHA-256 or size+time check; skips files already in the catalogue by (name, size, taken time); shows throughput; a foreground user-initiated transfer (BK-228 FGS type); an "Import done" summary with a count and "Eject card" hint.

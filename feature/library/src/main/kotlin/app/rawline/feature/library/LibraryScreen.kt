@@ -113,6 +113,8 @@ class LibraryActions(
     val onDismissWhatsNew: () -> Unit = {},
     /** BK-497: true while a finger is down on the grid, it is scrolling or photos are selected (the order is held while it is). */
     val onGridBusy: (Boolean) -> Unit = {},
+    /** W15: copy the RAW photos of a card or USB-C reader into DCIM/Rawline. */
+    val onImportCard: () -> Unit = {},
 )
 
 /** Saves a selection across recreation. Beyond 5000 ids it saves nothing (a huge Bundle can crash the save), so the selection resets. */
@@ -245,6 +247,7 @@ fun LibraryScreen(
                     IconTap(LrIcon.ADD, "Add photos") { addMenu = true }
                     LrDropdown(addMenu, { addMenu = false }) {
                         LrMenuItem("Import from files", { addMenu = false; actions.onImportFiles() }, LrIcon.IMPORT)
+                        LrMenuItem("Import from a card", { addMenu = false; actions.onImportCard() }, LrIcon.CAMERA)
                         LrMenuItem("Add a folder", { addMenu = false; actions.onAddFolder() }, LrIcon.FOLDER)
                     }
                 }

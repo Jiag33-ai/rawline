@@ -193,6 +193,7 @@ private fun RawlineRoot(openRoute: String?, modeSwitch: (@Composable () -> Unit)
         vm.enqueueExport(list)
     }
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> if (uri != null) vm.addFolder(uri) }
+    val cardPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> if (uri != null) vm.importFromCard(uri) }
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> if (uris.isNotEmpty()) vm.importFiles(uris) }
     val backupOut = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri -> if (uri != null) vm.backupTo(uri) }
     val backupIn = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.prepareRestoreFromFile(uri) }
@@ -288,6 +289,7 @@ private fun RawlineRoot(openRoute: String?, modeSwitch: (@Composable () -> Unit)
                                 onSelectSource = { vm.selectSource(it) },
                                 onImportFiles = { filePicker.launch(arrayOf("*/*")) },
                                 onAddFolder = { folderPicker.launch(null) },
+                                onImportCard = { cardPicker.launch(vm.lastCardTree()) },
                                 onRequestPermission = { mediaPermission.launch(vm.mediaPermission) },
                                 onOpenSettings = { openSettings(context, vm.appSettingsIntent(), "Open Settings, Apps, Rawline, Permissions and allow Photos") { showToast(it) } },
                                 onRequestAllFiles = { openSettings(context, vm.allFilesIntent(), "Open Settings, Apps, Special app access, All files access", fallback = android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)) { showToast(it) } },
