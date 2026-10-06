@@ -17,6 +17,10 @@ import app.rawline.core.ui.LrDim
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.stateDescription
 import app.rawline.core.ui.Lr
 import app.rawline.core.ui.LrIcon
 import app.rawline.core.ui.LrIconView
@@ -87,12 +91,28 @@ fun LoupeScreen(
     onLabel: (Photo, Int) -> Unit,
     onExport: (Photo) -> Unit,
     onDwell: (Photo) -> Unit = {},
+    /** False until the library list has been read once: an empty list before that is "not loaded yet", not "nothing to show". */
+    loaded: Boolean = true,
+    /** Set by the editor when it moved to another photo, so Back lands on the photo that was edited last. Cleared with [onJumped]. */
+    jumpTo: Int? = null,
+    onJumped: () -> Unit = {},
+    /** The photo the pager rests on, so the library can scroll back to it. */
+    onPageSettled: (Photo) -> Unit = {},
 ) {
-    if (photos.isEmpty()) { LaunchedEffect(Unit) { onBack() }; return }
+    if (photos.isEmpty()) {
+        if (loaded) LaunchedEffect(Unit) { onBack() }
+        else Box(Modifier.fillMaxSize().background(Lr.Canvas), contentAlignment = Alignment.Center) { app.rawline.core.ui.LocalLoader(size = 28.dp) }
+        return
+    }
+    app.rawline.core.ui.KeepScreenOn(true)   // culling a card of photos should not be cut off by the screen timeout
     val pager = rememberPagerState(initialPage = startIndex.coerceIn(0, photos.lastIndex)) { photos.size }
+    LaunchedEffect(jumpTo, photos.size) {
+        if (jumpTo != null) { if (jumpTo in photos.indices) pager.scrollToPage(jumpTo); onJumped() }
+    }
     LaunchedEffect(pager) {
         snapshotFlow { pager.currentPage }.collect { page ->
-            // Current first, then three ahead and two behind. Wider than that costs memory for little gain.
+            photos.getOrNull(page)?.let(onPageSettled)
+            // Current first, then four ahead and three behind. Wider than that costs memory for little gain.
             val want = (listOf(page) + (1..4).map { page + it } + (1..3).map { page - it }).mapNotNull { photos.getOrNull(it) }
             previews.prefetch(want)
         }
@@ -101,6 +121,8 @@ fun LoupeScreen(
     var chrome by remember { mutableStateOf(true) }
     var stars by remember { mutableStateOf(false) }
     androidx.activity.compose.BackHandler(enabled = info || stars) { info = false; stars = false }
+    // hiding the bars also closes the sheet, so Back is never swallowed by something that is not on screen
+    LaunchedEffect(chrome) { if (!chrome) { info = false; stars = false } }
     LaunchedEffect(pager.currentPage) {
         kotlinx.coroutines.delay(1500)
         photos.getOrNull(pager.currentPage)?.let(onDwell)
@@ -134,17 +156,17 @@ fun LoupeScreen(
         if (chrome && p != null) {
             Column(Modifier.align(Alignment.BottomStart).fillMaxWidth().background(Lr.Surface1).navigationBarsPadding()) {
                 if (stars) Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                    for (i in 1..5) Box(Modifier.size(44.dp).clickable { onRate(p, if (p.rating == i) 0 else i) }, contentAlignment = Alignment.Center) {
+                    for (i in 1..5) Box(Modifier.size(44.dp).clickable { onRate(p, if (p.rating == i) 0 else i) }.semantics { contentDescription = app.rawline.core.ui.Plurals.count(i, "star"); role = Role.RadioButton; selected = (i == p.rating) }, contentAlignment = Alignment.Center) {
                         LrIconView(if (i <= p.rating) LrIcon.STAR_FILLED else LrIcon.STAR, Lr.IconPrimary, size = 24.dp)
                     }
                 }
                 Text(exifLine(p), color = Lr.TextMuted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp))
                 Row(Modifier.fillMaxWidth().height(LrDim.confirmBar), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-                    BarIcon(LrIcon.INFO, "Info", info) { info = !info }
-                    BarIcon(if (p.flag == 1) LrIcon.FLAG_FILLED else LrIcon.FLAG, "Pick", p.flag == 1) { onFlag(p, if (p.flag == 1) 0 else 1) }
-                    BarIcon(if (p.rating > 0) LrIcon.STAR_FILLED else LrIcon.STAR, "Rating", stars) { stars = !stars }
-                    BarIcon(LrIcon.REJECT, "Reject", p.flag == -1) { onFlag(p, if (p.flag == -1) 0 else -1) }
-                    BarIcon(LrIcon.SHARE, "Add to export queue", false) { onExport(p) }
+                    BarIcon(LrIcon.INFO, "Info", info, toggle = true) { info = !info }
+                    BarIcon(if (p.flag == 1) LrIcon.FLAG_FILLED else LrIcon.FLAG, "Pick", p.flag == 1, toggle = true) { onFlag(p, if (p.flag == 1) 0 else 1) }
+                    BarIcon(if (p.rating > 0) LrIcon.STAR_FILLED else LrIcon.STAR, "Rating", stars, toggle = true) { stars = !stars }
+                    BarIcon(LrIcon.REJECT, "Reject", p.flag == -1, toggle = true) { onFlag(p, if (p.flag == -1) 0 else -1) }
+                    BarIcon(LrIcon.QUEUE, "Add to export queue", false) { onExport(p) }
                     Box(Modifier.height(40.dp).clip(RoundedCornerShape(4.dp)).background(Lr.Accent).clickable { onEdit(p) }.padding(horizontal = 16.dp), contentAlignment = Alignment.Center) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             LrIconView(LrIcon.EDIT, Color.White, size = 18.dp)
@@ -154,14 +176,17 @@ fun LoupeScreen(
                     }
                 }
             }
-            if (info) InfoSheet(p, previews.peek(p.id), Modifier.align(Alignment.Center))
         }
+        if (info && p != null) InfoSheet(p, previews, onClose = { info = false }, Modifier.align(Alignment.Center))
     }
 }
 
 @Composable
-private fun BarIcon(icon: LrIcon, description: String, active: Boolean, onClick: () -> Unit) {
-    Box(Modifier.size(44.dp).clickable(onClick = onClick).semantics { contentDescription = description }, contentAlignment = Alignment.Center) {
+private fun BarIcon(icon: LrIcon, description: String, active: Boolean, toggle: Boolean = false, onClick: () -> Unit) {
+    Box(Modifier.size(44.dp).clickable(onClick = onClick).semantics {
+        contentDescription = description
+        if (toggle) stateDescription = if (active) "On" else "Off"   // "Pick" reads the same whether it is on or off otherwise
+    }, contentAlignment = Alignment.Center) {
         LrIconView(icon, if (active) Lr.Accent else Lr.IconPrimary, size = 22.dp)
     }
 }
@@ -180,11 +205,16 @@ private fun exifLine(p: Photo): String {
 @Composable
 private fun LoupePage(p: Photo, previews: PreviewCache, thumbs: ThumbStore, isCurrent: Boolean, onTap: () -> Unit) {
     val thumb by produceState(thumbs.peek(p.id), p.id) { if (value == null) value = thumbs.obtain(p) }
-    val preview by produceState(previews.peek(p.id), p.id) {
+    var retry by remember(p.id) { mutableStateOf(0) }
+    var failed by remember(p.id) { mutableStateOf(false) }
+    val preview by produceState(previews.peek(p.id), p.id, retry) {
         if (value == null) {
+            failed = false
             val t0 = System.nanoTime()
-            value = previews.load(p)
-            if (isCurrent) PerfLog.record("swipe_cold_ms", (System.nanoTime() - t0) / 1_000_000)
+            // a decode cancelled by a quick swipe comes back empty: look once more before calling it a failure
+            value = previews.load(p) ?: previews.load(p)
+            failed = value == null
+            if (isCurrent && value != null) PerfLog.record("swipe_cold_ms", (System.nanoTime() - t0) / 1_000_000)
         } else if (isCurrent) PerfLog.record("swipe_cached_ms", 0)
     }
 
@@ -246,22 +276,35 @@ private fun LoupePage(p: Photo, previews: PreviewCache, thumbs: ThumbStore, isCu
                 modifier = Modifier.fillMaxSize().then(app.rawline.core.ui.LocalSharedPhoto.current(p.id)).graphicsLayer { scaleX = scale; scaleY = scale; translationX = offset.x; translationY = offset.y },
             )
         }
+        // the sharp preview is still coming (spinner) or could not be read (message and a way to try again)
+        if (preview == null) {
+            if (failed) Column(Modifier.align(Alignment.Center).background(Color(0xB3000000), RoundedCornerShape(6.dp)).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("Could not read this photo", color = Lr.TextPrimary, style = MaterialTheme.typography.bodyMedium)
+                TextButton(onClick = { retry++ }) { Text("Try again", color = Lr.Accent) }
+            } else app.rawline.core.ui.LocalLoader(Modifier.align(Alignment.Center), size = 28.dp)
+        }
     }
 }
 
 
 @Composable
-private fun InfoSheet(p: Photo, preview: android.graphics.Bitmap?, modifier: Modifier) {
-    val hist = remember(preview) { preview?.let { histogram(it) } }
-    Column(modifier.padding(24.dp).background(Lr.Modal, androidx.compose.foundation.shape.RoundedCornerShape(6.dp)).border(1.dp, Lr.BorderSubtle, androidx.compose.foundation.shape.RoundedCornerShape(6.dp)).padding(16.dp)) {
+private fun InfoSheet(p: Photo, previews: PreviewCache, onClose: () -> Unit, modifier: Modifier) {
+    // the histogram reads pixels back from the preview, so it is built off the main thread
+    val preview by produceState(previews.peek(p.id), p.id) { if (value == null) value = previews.load(p) }
+    val hist by produceState<IntArray?>(null, preview) { value = preview?.let { b -> withContext(Dispatchers.Default) { runCatching { histogram(b) }.getOrNull() } } }
+    Column(modifier.padding(24.dp).fillMaxWidth().background(Lr.Modal, androidx.compose.foundation.shape.RoundedCornerShape(6.dp)).border(1.dp, Lr.BorderSubtle, androidx.compose.foundation.shape.RoundedCornerShape(6.dp)).padding(16.dp)) {
         Text(p.name, color = Color.White, style = MaterialTheme.typography.titleMedium)
-        Text("${p.width} x ${p.height} px   ${p.size / 1024 / 1024} MB", color = Color(0xFFB8B8B8), style = MaterialTheme.typography.bodySmall)
+        val facts = InfoText.facts(p.width, p.height, p.size)
+        if (facts.isNotEmpty()) Text(facts, color = Color(0xFFB8B8B8), style = MaterialTheme.typography.bodySmall)
         p.camera?.let { Text(it, color = Color.White, style = MaterialTheme.typography.bodyMedium) }
         p.lens?.let { Text(it, color = Color(0xFFB8B8B8), style = MaterialTheme.typography.bodySmall) }
-        Text(exifLine(p), color = Color.White, style = MaterialTheme.typography.bodyMedium)
-        if (p.takenAt > 0) Text(java.text.SimpleDateFormat("d MMM yyyy HH:mm", java.util.Locale.getDefault()).format(java.util.Date(p.takenAt)), color = Color(0xFFB8B8B8), style = MaterialTheme.typography.bodySmall)
-        app.rawline.core.ui.Histogram(hist, Modifier.fillMaxWidth().size(height = 80.dp, width = 280.dp).padding(top = 8.dp))
-        Text("Swipe down to close", color = Color(0xFF888888), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 6.dp))
+        exifLine(p).let { if (it.isNotEmpty()) Text(it, color = Color.White, style = MaterialTheme.typography.bodyMedium) }
+        if (p.takenAt > 0) Text(app.rawline.core.ui.DateText.dateTime(p.takenAt), color = Color(0xFFB8B8B8), style = MaterialTheme.typography.bodySmall)
+        app.rawline.core.ui.Histogram(hist, Modifier.fillMaxWidth().height(80.dp).padding(top = 8.dp))
+        Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Swipe down to close", color = Color(0xFF888888), style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f))
+            TextButton(onClick = onClose) { Text("Close") }
+        }
     }
 }
 

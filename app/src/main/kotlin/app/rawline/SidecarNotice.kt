@@ -13,3 +13,14 @@ object SidecarNotice {
         else -> null
     }
 }
+
+/** What to say after "Import from files". Android keeps at most about 512 picked-file grants and drops the oldest. */
+object ImportNotice {
+    const val GRANT_CAP = 512
+    const val WARN_AT = 450
+
+    fun text(added: Int, persistedGrants: Int): String {
+        val base = if (added == 0) "Nothing new to import (already added, or not photos)" else "Imported ${Plurals.photos(added)}"
+        return if (persistedGrants >= WARN_AT) "$base. Android only remembers about $GRANT_CAP picked files, so use Add a folder for big batches." else base
+    }
+}

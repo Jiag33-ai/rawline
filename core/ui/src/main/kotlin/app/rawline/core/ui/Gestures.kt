@@ -9,6 +9,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -18,7 +20,12 @@ import kotlinx.coroutines.withTimeoutOrNull
  * what was just selected" (colour chips, swatches, curve channels) without a 300 ms lag on the plain tap.
  * A drag or a scroll that takes over (the pointer is consumed, or it moved past the touch slop) cancels the tap. Both callbacks are read fresh each time.
  */
-fun Modifier.tapOrDoubleTap(onTap: () -> Unit = {}, onDoubleTap: () -> Unit = {}): Modifier = tapOrDoubleTapAt({ onTap() }, { onDoubleTap() })
+fun Modifier.tapOrDoubleTap(onTap: () -> Unit = {}, onDoubleTap: () -> Unit = {}): Modifier = composed {
+    val tap by rememberUpdatedState(onTap)
+    // pointerInput alone exposes no click action, so TalkBack, Switch Access and Voice Access could not operate these controls
+    // (only here, where the tap has no position; a position based tap has no meaning for an assistive click)
+    Modifier.semantics { onClick { tap(); true } }.tapOrDoubleTapAt({ onTap() }, { onDoubleTap() })
+}
 
 /** [tapOrDoubleTap] that also reports where the (first, for a tap; second, for a double tap) finger landed, in this element's pixels. */
 fun Modifier.tapOrDoubleTapAt(onTap: (Offset) -> Unit = {}, onDoubleTap: (Offset) -> Unit = {}): Modifier = composed {

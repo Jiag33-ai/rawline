@@ -8,6 +8,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -70,14 +71,31 @@ import app.rawline.feature.library.LibraryScreen
 import app.rawline.feature.loupe.LoupeScreen
 import app.rawline.feature.settings.SettingsScreen
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
+    /** Set when a notification asks for a screen ("queue"); the root navigates there and clears it. */
+    private val openRoute = mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
-        setContent { RawlineTheme { Surface(color = Lr.Canvas) { RawlineRoot() } } }
+        // The canvas is always black, so the clock, battery and navigation icons must always be light: the default style follows the
+        // phone's light/dark setting and drew dark icons on black in light mode.
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+        )
+        openRoute.value = intent?.getStringExtra(EXTRA_OPEN)
+        setContent { RawlineTheme { Surface(color = Lr.Canvas) { RawlineRoot(openRoute.value) { openRoute.value = null } } } }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        openRoute.value = intent.getStringExtra(EXTRA_OPEN)
     }
 
     /** Saves the timings and errors so they survive if Android kills the process while the app is in the background. */
@@ -85,6 +103,8 @@ class MainActivity : ComponentActivity() {
         super.onStop()
         PerfLog.flushSoon()
     }
+
+    companion object { const val EXTRA_OPEN = "open" }
 }
 
 private val TopLevel = listOf("photos", "queue", "settings")
@@ -102,13 +122,16 @@ private fun openSettings(context: Context, intent: android.content.Intent, byHan
 }
 
 @Composable
-private fun RawlineRoot() {
+private fun RawlineRoot(openRoute: String?, onOpened: () -> Unit) {
     val context = LocalContext.current
     val graph = (context.applicationContext as RawlineApplication).graph
     val vm: LibraryViewModel = viewModel()
     val scope = rememberCoroutineScope()
-    val photos by vm.photos.collectAsStateWithLifecycle()
+    val listing by vm.listing.collectAsStateWithLifecycle()
+    val photos = listing.photos
     val allPhotos by vm.allPhotos.collectAsStateWithLifecycle()
+    val loaded by vm.loaded.collectAsStateWithLifecycle()
+
     val cameras by vm.cameras.collectAsStateWithLifecycle()
     val filter by vm.filter.collectAsStateWithLifecycle()
     val progress by vm.progress.collectAsStateWithLifecycle()
@@ -121,7 +144,13 @@ private fun RawlineRoot() {
     val copied by vm.copied.collectAsStateWithLifecycle()
     val lastEdited by vm.lastEdited.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
-    val jobs by graph.db.exports().observe().collectAsStateWithLifecycle(emptyList())
+    // remembered: observe() returns a new Flow each call, and the root recomposes on every job progress write
+    val jobsFlow = remember { graph.db.exports().observe() }
+    val jobs by jobsFlow.collectAsStateWithLifecycle(emptyList())
+    // only the running flag, not every progress fraction (those arrive several times a second and would recompose the whole root)
+    val exportRunningFlow = remember { graph.exportRunner.progress.map { it.running }.distinctUntilChanged() }
+    val exportRunning by exportRunningFlow.collectAsStateWithLifecycle(false)
+    val workerAlive = exportRunning || ExportService.isRunning
     var toast by remember { mutableStateOf<ToastMsg?>(null) }
     fun showToast(text: String) { toast = Toasts.make(text, toast) }
     // keyed on the sequence number, so the same text twice restarts the timer; errors stay longer
@@ -135,6 +164,16 @@ private fun RawlineRoot() {
     fun rationale() = context.findActivity()?.let { androidx.core.app.ActivityCompat.shouldShowRequestPermissionRationale(it, vm.mediaPermission) } ?: false
     val mediaPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { vm.onPermissionResult(rationale()) }
     val notifPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    // The notification permission is asked once, when the first export is queued (with the reason obvious), not at launch alongside
+    // the photo permission, where Android would drop one of the two dialogs.
+    fun queueExport(list: List<Photo>) {
+        if (android.os.Build.VERSION.SDK_INT >= 33 && !graph.prefs.getBoolean("notifAsked", false) &&
+            androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            graph.prefs.edit().putBoolean("notifAsked", true).apply()
+            notifPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
+        vm.enqueueExport(list)
+    }
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> if (uri != null) vm.addFolder(uri) }
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> if (uris.isNotEmpty()) vm.importFiles(uris) }
     val backupOut = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri -> if (uri != null) vm.backupTo(uri) }
@@ -142,7 +181,7 @@ private fun RawlineRoot() {
 
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
-        val o = androidx.lifecycle.LifecycleEventObserver { _, e -> if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) vm.onResume(rationale()) }
+        val o = androidx.lifecycle.LifecycleEventObserver { _, e -> if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) { vm.onResume(rationale()); scope.launch(Dispatchers.IO) { runCatching { graph.exportRunner.recoverAfterStart() } } } }
         lifecycleOwner.lifecycle.addObserver(o)
         onDispose { lifecycleOwner.lifecycle.removeObserver(o) }
     }
@@ -152,18 +191,24 @@ private fun RawlineRoot() {
     LaunchedEffect(Unit) {
         val prompt = if (permission) MediaPrompt.GRANTED else if (permissionBlocked) MediaPrompt.OPEN_SETTINGS else MediaPrompt.ASK
         if (MediaAccess.autoAsk(prompt, vm.mediaAsked, autoAsked)) { autoAsked = true; mediaPermission.launch(vm.mediaPermission) }
-        if (android.os.Build.VERSION.SDK_INT >= 33) notifPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-        // jobs left running by a killed process go back to waiting, and the queue restarts if anything is waiting
-        runCatching { graph.exportRunner.recoverAfterStart() }
     }
     LaunchedEffect(message) {
         message?.let { if (it.isNotEmpty() && nav.currentDestination?.route != "settings") { showToast(it); vm.message.value = null } }
     }
 
+    // The editor swaps photos within the list the viewer was opened from (see Browse), not the live filtered list: editing a photo
+    // can make it leave "Unedited", and the next swipe must still go to its neighbour.
+    fun browseList() = Browse.resolve(vm.browseIds.value, allPhotos, photos)
     fun openEditor(from: Photo, delta: Int) {
-        val i = photos.indexOfFirst { it.id == from.id }
-        val next = photos.getOrNull(i + delta) ?: return
+        val (index, next) = Browse.step(browseList(), from.id, delta) ?: return
+        // Back from the editor should land on the photo edited last, so tell the viewer entry below where to be
+        nav.previousBackStackEntry?.savedStateHandle?.set("jump", index)
         nav.navigate("edit/${next.id}") { popUpTo("edit/{id}") { inclusive = true } }
+    }
+
+    // Open from a notification ("queue")
+    LaunchedEffect(openRoute) {
+        if (openRoute == "queue") { nav.navigate("queue") { popUpTo("photos"); launchSingleTop = true }; onOpened() } else if (openRoute != null) onOpened()
     }
 
     val currentRoute = route?.destination?.route
@@ -195,23 +240,29 @@ private fun RawlineRoot() {
                 },
             ) {
                 composable("photos") {
+                    // read here, not in the root: the viewer updates these as the user swipes and the whole root should not recompose for it
+                    val scanning by vm.scanning.collectAsStateWithLifecycle()
+                    val lastViewedId by vm.lastViewedId.collectAsStateWithLifecycle()
                     val sharedPhoto = photoShared(this@SharedTransitionLayout, this)
                     androidx.compose.runtime.CompositionLocalProvider(app.rawline.core.ui.LocalSharedPhoto provides sharedPhoto) {
                     Box(Modifier.statusBarsPadding()) {
                         LibraryScreen(
-                            photos = photos, allCount = allPhotos.size, cameras = cameras, filter = filter, thumbs = graph.thumbs, progress = progress,
+                            photos = photos, rows = listing.rows, scanning = scanning, scrollToId = lastViewedId, onScrolledTo = { vm.lastViewedId.value = null },
+                            allCount = allPhotos.size, cameras = cameras, filter = filter, thumbs = graph.thumbs, progress = progress,
                             sources = sources, selectedSource = source, permissionGranted = permission, permissionBlocked = permissionBlocked, allFilesGranted = allFiles,
                             actions = LibraryActions(
                                 onOpen = { p ->
                                     val i = photos.indexOfFirst { it.id == p.id }
                                     // start decoding the tapped photo and its neighbours before the viewer is even on screen
                                     graph.previews.prefetch((listOf(i) + (1..3).map { i + it } + (1..2).map { i - it }).mapNotNull { photos.getOrNull(it) })
-                                    nav.navigate("loupe/$i")
+                                    vm.browseIds.value = photos.map { it.id }     // the viewer browses this order even if a rating changes the filter
+                                    // singleTop: a double tap must not stack two viewers
+                                    nav.navigate("loupe/$i") { launchSingleTop = true }
                                 },
                                 onFilter = { vm.filter.value = it },
                                 onRate = { l, r -> vm.rate(l, r) }, onFlag = { l, f -> vm.flag(l, f) }, onLabel = { l, c -> vm.label(l, c) },
                                 onCopyEdits = { vm.copyEdits(it) }, onPasteEdits = { l, s -> vm.pasteEdits(l, s) }, onSyncEdits = { f, t -> vm.syncEdits(f, t) },
-                                onExport = { vm.enqueueExport(it) },
+                                onExport = { queueExport(it) },
                                 onSelectSource = { vm.selectSource(it) },
                                 onImportFiles = { filePicker.launch(arrayOf("*/*")) },
                                 onAddFolder = { folderPicker.launch(null) },
@@ -227,9 +278,10 @@ private fun RawlineRoot() {
                 composable("queue") {
                     Box(Modifier.statusBarsPadding()) {
                         QueueScreen(
-                            jobs = jobs,
+                            jobs = QueueOrder.sort(jobs), workerAlive = workerAlive,
                             onCancel = { j -> if (j.status == 1) graph.exportRunner.cancelCurrent() else scope.launch { graph.db.exports().cancel(j.id) } },
-                            onRetry = { j -> scope.launch { graph.db.exports().retry(j.id); graph.exportRunner.startService() } },
+                            // a job marked running with no export alive is put back in line (retry), or removed
+                            onRetry = { j -> scope.launch { if (j.status == 1) graph.db.exports().requeueRunning(j.id) else graph.db.exports().retry(j.id); graph.exportRunner.startService() } },
                             onRemove = { j -> scope.launch { graph.db.exports().delete(j.id) } },
                             onClearFinished = { scope.launch { graph.db.exports().clearFinished() } },
                             onCancelAll = { scope.launch { graph.db.exports().cancelWaiting() } },
@@ -240,14 +292,19 @@ private fun RawlineRoot() {
                 composable("loupe/{index}", arguments = listOf(navArgument("index") { type = NavType.IntType })) { entry ->
                     val sharedPhoto = photoShared(this@SharedTransitionLayout, this)
                     androidx.compose.runtime.CompositionLocalProvider(app.rawline.core.ui.LocalSharedPhoto provides sharedPhoto) {
+                    val browseIds by vm.browseIds.collectAsStateWithLifecycle()
+                    val viewerPhotos = remember(browseIds, allPhotos, if (browseIds.isEmpty()) photos else null) { Browse.resolve(browseIds, allPhotos, photos) }
+                    val jump by entry.savedStateHandle.getStateFlow<Int?>("jump", null).collectAsStateWithLifecycle()
                     LoupeScreen(
-                        photos = photos, startIndex = entry.arguments?.getInt("index") ?: 0,
+                        photos = viewerPhotos, startIndex = entry.arguments?.getInt("index") ?: 0,
                         previews = graph.previews, thumbs = graph.thumbs, showOverlay = overlay,
                         onBack = { nav.popBackStack() },
-                        onEdit = { p -> nav.navigate("edit/${p.id}") },
+                        onEdit = { p -> nav.navigate("edit/${p.id}") { launchSingleTop = true } },
                         onRate = { p, r -> vm.rate(listOf(p), r) }, onFlag = { p, f -> vm.flag(listOf(p), f) }, onLabel = { p, l -> vm.label(listOf(p), l) },
-                        onExport = { p -> vm.enqueueExport(listOf(p)) },
+                        onExport = { p -> queueExport(listOf(p)) },
                         onDwell = { p -> graph.rawPrefetch.prefetch(p) },
+                        loaded = loaded, jumpTo = jump, onJumped = { entry.savedStateHandle["jump"] = null },
+                        onPageSettled = { p -> vm.lastViewedId.value = p.id },
                     )
                                     }
                 }
@@ -257,23 +314,29 @@ private fun RawlineRoot() {
                     val id = entry.arguments?.getLong("id") ?: 0L
                     val photo = allPhotos.firstOrNull { it.id == id } ?: photos.firstOrNull { it.id == id }
                     if (photo != null) {
-                        val i = photos.indexOfFirst { it.id == id }
+                        val browseIds by vm.browseIds.collectAsStateWithLifecycle()
+                        val neighbours = remember(browseIds, allPhotos, if (browseIds.isEmpty()) photos else null, id) { Browse.neighbours(Browse.resolve(browseIds, allPhotos, photos), id) }
                         EditorHost(
                             photo, graph,
-                            neighbors = listOfNotNull(photos.getOrNull(i + 1), photos.getOrNull(i + 2), photos.getOrNull(i - 1)),
+                            neighbors = neighbours,
                             copied = copied, lastEdited = lastEdited,
                             onCopied = { vm.copied.value = it },
                             onLeftEdited = { r -> if (r != app.rawline.core.model.EditRecipe()) vm.lastEdited.value = r },
                             onNotify = { vm.message.value = it },
-                            onExport = { vm.enqueueExport(listOf(it)) },
+                            onExport = { queueExport(listOf(it)) },
                             onExportSettings = { exportSettingsFor = true to it },
                             onSwipe = { delta -> openEditor(photo, delta) },
                             onBack = { nav.popBackStack() },
                         )
+                    } else if (!loaded) {
+                        // the library list is still being read (cold restore): show a spinner, not a black screen
+                        Box(Modifier.fillMaxSize().background(Lr.Canvas), contentAlignment = Alignment.Center) { app.rawline.core.ui.LocalLoader(size = 28.dp) }
                     }
                                     }
                 }
                 composable("settings") {
+                    // a "Backup saved" shown here must not still be there next time Settings opens
+                    DisposableEffect(Unit) { onDispose { vm.message.value = null } }
                     Box(Modifier.statusBarsPadding()) {
                         SettingsScreen(
                             versionName = BuildConfig.VERSION_NAME, buildNumber = BuildConfig.BUILD_NUMBER, buildDate = BuildConfig.BUILD_DATE,

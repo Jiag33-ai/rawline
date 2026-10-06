@@ -87,6 +87,8 @@ interface ExportDao {
     @Query("UPDATE export_jobs SET progress = :p WHERE id = :id") suspend fun progress(id: Long, p: Float)
     @Query("UPDATE export_jobs SET status = 0, progress = 0, message = NULL WHERE status IN (3, 4) AND id = :id") suspend fun retry(id: Long)
     @Query("UPDATE export_jobs SET status = 0 WHERE status = 1") suspend fun resetRunning()
+    /** A job shown as running while no export is alive (the process or service died): put it back in line. */
+    @Query("UPDATE export_jobs SET status = 0, progress = 0, message = NULL WHERE status = 1 AND id = :id") suspend fun requeueRunning(id: Long)
     @Query("UPDATE export_jobs SET status = 4, message = 'Cancelled' WHERE status = 0") suspend fun cancelWaiting()
     @Query("UPDATE export_jobs SET status = 4, message = 'Cancelled' WHERE id = :id AND status = 0") suspend fun cancel(id: Long)
     @Query("DELETE FROM export_jobs WHERE status IN (2, 3, 4)") suspend fun clearFinished()
@@ -168,6 +170,12 @@ interface PhotoDao {
     @Query("SELECT * FROM photos")
     suspend fun all(): List<PhotoEntity>
 
+    @Query("SELECT * FROM photos WHERE folderUri = :folder")
+    suspend fun inFolder(folder: String): List<PhotoEntity>
+
+    @Query("SELECT * FROM photos WHERE folderUri LIKE :prefix")
+    suspend fun inFolderLike(prefix: String): List<PhotoEntity>
+
     @Query("UPDATE photos SET rating = :rating, flag = :flag, label = :label, edited = :edited WHERE uri = :uri")
     suspend fun restoreMeta(uri: String, rating: Int, flag: Int, label: Int, edited: Boolean)
 }
@@ -178,6 +186,8 @@ interface EditDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun put(e: EditEntity)
     @Query("DELETE FROM edits WHERE `key` = :key") suspend fun delete(key: String)
     @Query("SELECT * FROM edits") suspend fun all(): List<EditEntity>
+    /** Which of [keys] have a saved edit (one query for a chunk instead of one per photo). Keep chunks under 900. */
+    @Query("SELECT `key` FROM edits WHERE `key` IN (:keys)") suspend fun editedAmong(keys: List<String>): List<String>
 
     @Query("SELECT * FROM snapshots WHERE `key` = :key ORDER BY createdAt DESC") suspend fun snapshots(key: String): List<SnapshotEntity>
     @Insert suspend fun addSnapshot(s: SnapshotEntity)

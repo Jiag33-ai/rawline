@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -26,6 +27,7 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
@@ -37,6 +39,9 @@ import androidx.compose.material3.Text
 import app.rawline.core.ui.LrTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
+import kotlinx.coroutines.flow.first
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -53,6 +58,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import app.rawline.core.cache.FrameMonitor
@@ -102,11 +108,21 @@ class LibraryActions(
     val hasCopied: Boolean,
 )
 
+/** Saves a selection across recreation. Beyond 5000 ids it saves nothing (a huge Bundle can crash the save), so the selection resets. */
+private val SelectionSaver = listSaver<androidx.compose.runtime.MutableState<Set<Long>>, Long>(
+    save = { st -> if (st.value.size <= 5000) st.value.toList() else emptyList() },
+    restore = { androidx.compose.runtime.mutableStateOf(it.toSet()) },
+)
+
 val LabelColors = listOf(Color.Transparent, Color(0xFFE53935), Color(0xFFFDD835), Color(0xFF43A047), Color(0xFF1E88E5), Color(0xFF8E24AA))
 
 @Composable
 fun LibraryScreen(
     photos: List<Photo>,
+    rows: List<GridRow>,
+    scanning: Boolean,
+    scrollToId: Long?,
+    onScrolledTo: () -> Unit,
     allCount: Int,
     cameras: List<String>,
     filter: LibraryFilter,
@@ -119,10 +135,11 @@ fun LibraryScreen(
     allFilesGranted: Boolean,
     actions: LibraryActions,
 ) {
-    var columns by remember { mutableIntStateOf(5) }
+    // Saved, so a rotation, a visit to the viewer or another tab keeps the density, the selection and the open filter bar.
+    var columns by rememberSaveable { mutableStateOf(5) }
     val gridState = rememberLazyGridState()
-    val selected = remember { mutableStateOf(setOf<Long>()) }
-    var showFilters by remember { mutableStateOf(false) }
+    val selected = rememberSaveable(saver = SelectionSaver) { mutableStateOf(setOf<Long>()) }
+    var showFilters by rememberSaveable { mutableStateOf(false) }
     var pasting by remember { mutableStateOf(false) }
     var sourceMenu by remember { mutableStateOf(false) }
     var addMenu by remember { mutableStateOf(false) }
@@ -132,26 +149,41 @@ fun LibraryScreen(
     }
     // Leaving the screen mid fling cancels the effect above without a "stopped scrolling" step, so stop the frame callbacks here.
     androidx.compose.runtime.DisposableEffect(Unit) { onDispose { FrameMonitor.stop("grid") } }
-    val selecting = selected.value.isNotEmpty()
+    // The selection is whatever of it is still in the list: a photo that leaves the filter (rated to 0 under "Rating 3+") or is
+    // removed by a scan cannot leave a ghost "0 selected" bar behind.
+    val sel = remember(photos, selected.value) { if (selected.value.isEmpty()) emptyList() else photos.filter { it.id in selected.value } }
+    val selecting = sel.isNotEmpty()
+    LaunchedEffect(sel) { if (selected.value.size != sel.size) selected.value = sel.mapTo(HashSet()) { it.id } }
     androidx.activity.compose.BackHandler(enabled = selecting) { selected.value = emptySet() }
-    val sel = photos.filter { it.id in selected.value }
+    app.rawline.core.ui.KeepScreenOn(progress.running)   // a first index of a big library takes minutes: do not let the screen sleep on it
+    // coming back from the viewer: scroll to the photo it ended on when that tile is off screen
+    LaunchedEffect(scrollToId, rows) {
+        if (scrollToId != null && rows.isNotEmpty()) {
+            val i = GridRows.indexOfPhoto(rows, scrollToId)
+            if (i >= 0) {
+                androidx.compose.runtime.snapshotFlow { gridState.layoutInfo.visibleItemsInfo.isNotEmpty() }.first { it }
+                if (gridState.layoutInfo.visibleItemsInfo.none { it.index == i }) gridState.scrollToItem(i)
+            }
+            onScrolledTo()
+        }
+    }
     val current = sources.firstOrNull { it.key == selectedSource }
 
     Column(Modifier.fillMaxSize().background(Lr.Black)) {
         // ---- top bar: source picker on the left, tools on the right ----
-        Row(Modifier.fillMaxWidth().height(LrDim.libraryHeader).padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().heightIn(min = LrDim.libraryHeader).padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             if (selecting) {
                 IconTap(LrIcon.CLOSE, "Clear selection") { selected.value = emptySet() }
                 Text("${sel.size} selected", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f).padding(start = 4.dp))
                 IconTap(LrIcon.SELECT, "Select all") { selected.value = photos.map { it.id }.toSet() }
             } else {
-                Row(Modifier.weight(1f).clickable { sourceMenu = true }.padding(start = 10.dp).height(LrDim.libraryHeader), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.weight(1f).clickable { sourceMenu = true }.padding(start = 10.dp).heightIn(min = LrDim.libraryHeader), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f, fill = false)) {
                         Text(current?.label ?: "Photos", style = MaterialTheme.typography.titleMedium, maxLines = 1)
                         val sub = when {
                             progress.running -> "Reading ${progress.done} of ${progress.total}"
                             filter.isActive -> "${photos.size} of $allCount (filtered)"
-                            else -> "${photos.size} photos"
+                            else -> app.rawline.core.ui.Plurals.photos(photos.size)
                         }
                         Text(sub, style = MaterialTheme.typography.labelSmall, color = Lr.TextMuted)
                     }
@@ -193,11 +225,17 @@ fun LibraryScreen(
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when {
                 !permissionGranted && selectedSource.startsWith("device:") && photos.isEmpty() -> PermissionPrompt(permissionBlocked, actions.onRequestPermission, actions.onOpenSettings, actions.onImportFiles)
+                photos.isEmpty() && scanning && !filter.isActive -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        app.rawline.core.ui.LocalLoader(size = 28.dp, color = Lr.IconSecondary)
+                        Text("Reading your photos", style = MaterialTheme.typography.bodyMedium, color = Lr.TextSecondary, modifier = Modifier.padding(top = 12.dp))
+                    }
+                }
                 photos.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    EmptyState(LrIcon.PHOTOS, if (filter.isActive) "No photos match" else "Nothing here yet", if (filter.isActive) "Change or clear the filter to see more." else "Tap + to import photos or a folder.")
+                    EmptyState(LrIcon.PHOTOS, if (filter.isActive) "No photos match" else "Nothing here yet", if (filter.isActive) "Change or clear the filter to see more." else "Tap + to import photos or a folder.",
+                        action = if (filter.isActive) ({ SecondaryButton("Clear filters", { actions.onFilter(LibraryFilter(sort = filter.sort)) }) }) else null)
                 }
                 else -> {
-                val rows = remember(photos, filter.sort) { gridRows(photos, filter.sort) }
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(columns), state = gridState,
                     horizontalArrangement = Arrangement.spacedBy(2.dp), verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -216,7 +254,9 @@ fun LibraryScreen(
                             Thumb(
                                 p, thumbs, isSel, selecting,
                                 Modifier.aspectRatio(1f).combinedClickable(
+                                    onClickLabel = if (selecting) "Toggle selection" else "Open",
                                     onClick = { if (selecting) selected.value = if (isSel) selected.value - p.id else selected.value + p.id else actions.onOpen(p) },
+                                    onLongClickLabel = "Select",
                                     onLongClick = { selected.value = if (isSel) selected.value - p.id else selected.value + p.id },
                                 ),
                             )
@@ -252,9 +292,14 @@ private fun FilterBar(f: LibraryFilter, cameras: List<String>, onChange: (Librar
             Text("Rating", style = MaterialTheme.typography.labelMedium, color = Lr.TextDim)
             (0..5).forEach { r -> ChipButton(if (r == 0) "Any" else "$r+", f.minRating == r, { onChange(f.copy(minRating = r)) }) }
         }
-        Row(Modifier.horizontalScroll(rememberScrollState()).padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(Modifier.horizontalScroll(rememberScrollState()).padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Flag", style = MaterialTheme.typography.labelMedium, color = Lr.TextDim)
             FlagFilter.entries.forEach { ChipButton(it.label, f.flag == it, { onChange(f.copy(flag = it)) }) }
+        }
+        Row(Modifier.horizontalScroll(rememberScrollState()).padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Edited", style = MaterialTheme.typography.labelMedium, color = Lr.TextDim)
             EditedFilter.entries.forEach { ChipButton(it.label, f.edited == it, { onChange(f.copy(edited = it)) }) }
+            if (f.isActive) ChipButton("Clear filters", false, { onChange(LibraryFilter(sort = f.sort)) })
         }
         if (cameras.size > 1) Row(Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             ChipButton("All cameras", f.camera == null, { onChange(f.copy(camera = null)) })
@@ -287,10 +332,12 @@ private fun PasteDialog(onDismiss: () -> Unit, onPaste: (Set<PasteScope>) -> Uni
     AlertDialog(
         onDismissRequest = onDismiss, title = { Text("Paste which edits?") },
         text = {
-            Column {
+            // eleven rows are taller than a landscape phone: scroll, so Paste and Cancel never fall off the bottom
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 PasteScope.entries.forEach { s ->
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(s in chosen, { on -> chosen = if (on) chosen + s else chosen - s })
+                    val on = s in chosen
+                    Row(Modifier.fillMaxWidth().clickable { chosen = if (on) chosen - s else chosen + s }, verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(on, { v -> chosen = if (v) chosen + s else chosen - s })
                         Text(s.label, style = MaterialTheme.typography.bodyMedium)
                     }
                 }
@@ -304,7 +351,10 @@ private fun PasteDialog(onDismiss: () -> Unit, onPaste: (Set<PasteScope>) -> Uni
 @Composable
 private fun Thumb(p: Photo, thumbs: ThumbStore, selected: Boolean, selecting: Boolean, modifier: Modifier) {
     val bmp by produceState(thumbs.peek(p.id), p.id) { if (value == null) value = thumbs.obtain(p) }
-    Box(modifier.background(Lr.Surface2).semantics { contentDescription = p.name + (if (p.rating > 0) ", ${p.rating} stars" else "") + (if (p.edited) ", edited" else "") }) {
+    Box(modifier.background(Lr.Surface2).semantics {
+        contentDescription = p.name + (if (p.rating > 0) ", ${app.rawline.core.ui.Plurals.count(p.rating, "star")}" else "") + (if (p.edited) ", edited" else "")
+        if (selecting) this.selected = selected
+    }) {
         bmp?.let { b ->
             val img = remember(b) { b.asImageBitmap() }
             Image(img, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().then(app.rawline.core.ui.LocalSharedPhoto.current(p.id)))
@@ -344,27 +394,4 @@ private fun Modifier.pinchColumns(current: Int, set: (Int) -> Unit): Modifier = 
         } while (ev.changes.any { it.pressed })
     }
   }
-}
-
-private sealed interface GridRow {
-    class Head(val label: String, val count: Int) : GridRow
-    class Pic(val p: Photo) : GridRow
-}
-
-/** Date headers like Lightroom ("October 3, 2026" and a count) when sorted by date; a plain grid otherwise. */
-private fun gridRows(photos: List<Photo>, sort: SortOrder): List<GridRow> {
-    if (sort != SortOrder.NEWEST && sort != SortOrder.OLDEST) return photos.map { GridRow.Pic(it) }
-    val fmt = java.time.format.DateTimeFormatter.ofPattern("MMMM d, yyyy", java.util.Locale.ENGLISH)
-    val zone = java.time.ZoneId.systemDefault()
-    fun day(p: Photo) = java.time.Instant.ofEpochMilli(if (p.takenAt > 0) p.takenAt else p.modified).atZone(zone).toLocalDate()
-    val out = ArrayList<GridRow>(photos.size + 32)
-    var i = 0
-    while (i < photos.size) {
-        val d = day(photos[i]); var j = i
-        while (j < photos.size && day(photos[j]) == d) j++
-        out.add(GridRow.Head(d.format(fmt), j - i))
-        for (k in i until j) out.add(GridRow.Pic(photos[k]))
-        i = j
-    }
-    return out
 }

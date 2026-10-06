@@ -37,7 +37,12 @@ class ExportService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val runner = graph().exportRunner
-        if (intent?.action == ACTION_CANCEL) { runner.cancelCurrent(); return START_NOT_STICKY }
+        if (intent?.action == ACTION_CANCEL) {
+            runner.cancelCurrent()
+            // a stale Cancel tap with nothing running must not leave an idle service instance behind
+            if (!running.get()) stopSelf(startId)
+            return START_NOT_STICKY
+        }
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         nm.createNotificationChannel(NotificationChannel(CHANNEL, "Export queue", NotificationManager.IMPORTANCE_LOW))
         startForeground(NOTIF_ID, build(0, 0, "Starting"),
@@ -54,9 +59,10 @@ class ExportService : Service() {
                 }
             }
             var ok = 0
+            var failed = 0
             try {
                 // jobs added while working are picked up by the loop; look again once more before stopping
-                do { ok += runner.processQueue() } while (!runner.stopRequested && runBlockingActive())
+                do { val r = runner.processQueue(); ok += r.written; failed += r.failed } while (!runner.stopRequested && runBlockingActive())
             } finally {
                 watcher.interrupt(); runCatching { watcher.join(1500) }
                 running.set(false)
@@ -66,8 +72,12 @@ class ExportService : Service() {
                 // a job queued after the last check but before running was cleared would otherwise wait for the next export
                 if (!runner.stopRequested && runCatching { runBlockingActive() }.getOrDefault(false)) runCatching { androidx.core.content.ContextCompat.startForegroundService(this, Intent(this, ExportService::class.java)) }
             }
-            if (ok > 0) nm.notify(NOTIF_ID + 1, NotificationCompat.Builder(this, CHANNEL).setSmallIcon(android.R.drawable.stat_sys_download_done)
-                .setContentTitle("Export finished").setContentText("$ok photos saved").setAutoCancel(true).build())
+            // always say how it ended (a failed batch used to be silent), and tapping it opens the queue
+            ExportNotice.finished(ok, failed)?.let { n ->
+                nm.notify(NOTIF_ID + 1, NotificationCompat.Builder(this, CHANNEL).setSmallIcon(android.R.drawable.stat_sys_download_done)
+                    .setContentTitle(n.title).setContentText(n.body).setStyle(NotificationCompat.BigTextStyle().bigText(n.body))
+                    .setContentIntent(openQueue()).setAutoCancel(true).build())
+            }
             stopSelf(startId)
         }
         return START_NOT_STICKY
@@ -75,12 +85,18 @@ class ExportService : Service() {
 
     private fun runBlockingActive() = kotlinx.coroutines.runBlocking { graph().db.exports().nextWaiting() != null }
 
+    /** Opens the app on the Queue tab. */
+    private fun openQueue() = android.app.PendingIntent.getActivity(
+        this, 1, Intent(this, MainActivity::class.java).putExtra(MainActivity.EXTRA_OPEN, "queue").addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+        android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT,
+    )
+
     private fun graph() = (application as RawlineApplication).graph
 
     private fun build(done: Int, total: Int, name: String): Notification {
         val cancel = android.app.PendingIntent.getService(this, 0, Intent(this, ExportService::class.java).setAction(ACTION_CANCEL), android.app.PendingIntent.FLAG_IMMUTABLE)
         return NotificationCompat.Builder(this, CHANNEL).setSmallIcon(android.R.drawable.stat_sys_upload)
-            .setContentTitle("Exporting photos").setContentText("$done of $total  $name").setOngoing(true)
+            .setContentTitle("Exporting photos").setContentText("$done of $total  $name").setOngoing(true).setContentIntent(openQueue())
             .setProgress(total, done, total == 0).addAction(0, "Cancel", cancel).build()
     }
 

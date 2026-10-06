@@ -23,6 +23,8 @@ import app.rawline.core.model.PasteScope
 import app.rawline.core.model.Photo
 import app.rawline.core.render.ExportSettings
 import app.rawline.core.model.RecipeMerge
+import app.rawline.feature.library.GridRows
+import app.rawline.feature.library.GridRow
 import app.rawline.feature.library.SourceItem
 import app.rawline.core.ui.LrIcon
 import app.rawline.core.ui.Plurals
@@ -86,20 +88,35 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
         out
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    /** Every photo of the shown source, newest first. Updates are throttled while the indexer is filling in rows. */
+    private val _loaded = MutableStateFlow(false)
+    /** True once the list has emitted at least once, so an empty list means "nothing here" and not "not read yet". */
+    val loaded: StateFlow<Boolean> = _loaded
+
+    /** Every photo of the shown source, newest first. Updates are throttled, more so while the indexer is filling in rows. */
     val allPhotos: StateFlow<List<Photo>> = source.flatMapLatest { key ->
         val rows = when {
             key == "device:*" -> graph.db.photos().observeLike("device:%")
             else -> graph.db.photos().observe(key)
         }
-        rows.map { l -> l.map { it.toModel() } }.flowOn(Dispatchers.Default).conflate().transform { emit(it); delay(250) }
+        rows.map { l -> l.map { it.toModel() } }.flowOn(Dispatchers.Default).conflate()
+            .transform { _loaded.value = true; emit(it); delay(ListThrottle.delayMs(graph.indexer.progress.value.running)) }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val photos: StateFlow<List<Photo>> = combine(allPhotos, filter) { all, f -> f.apply(all) }
-        .flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    /** The filtered list and its grid rows (date headings), both built off the main thread. */
+    class Listing(val photos: List<Photo>, val rows: List<GridRow>) { companion object { val EMPTY = Listing(emptyList(), emptyList()) } }
+
+    val listing: StateFlow<Listing> = combine(allPhotos, filter) { all, f -> val p = f.apply(all); Listing(p, GridRows.build(p, f.sort)) }
+        .flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), Listing.EMPTY)
 
     val cameras: StateFlow<List<String>> = allPhotos.map { l -> l.mapNotNull { it.camera }.distinct().sorted() }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** The ids that were on screen when the viewer opened, in order (see [Browse]). Not saved: after a restart the live list is used. */
+    val browseIds = MutableStateFlow<List<Long>>(emptyList())
+    /** The photo the viewer or editor last showed, so the grid can scroll back to it. */
+    val lastViewedId = MutableStateFlow<Long?>(null)
+    /** True while a device scan runs, so an empty grid says "Reading your photos" instead of "Nothing here yet". */
+    val scanning = MutableStateFlow(false)
 
     private var observer: ContentObserver? = null
     private var scanJob: Job? = null
@@ -165,12 +182,31 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
         observer = o
     }
 
+    private val gate = RescanGate()
+    private val scanCount = java.util.concurrent.atomic.AtomicInteger()
+
+    /** Keeps [scanning] true while any listing step runs (several can overlap). */
+    private suspend fun <T> scanTracked(block: suspend () -> T): T {
+        scanning.value = scanCount.incrementAndGet() > 0
+        try { return block() } finally { scanning.value = scanCount.decrementAndGet() > 0 }
+    }
+
     fun rescanDevice(delayMs: Long = 0) {
-        scanJob?.cancel()
+        if (!gate.request(delayMs)) return    // a pass is running: it will go round again
         scanJob = viewModelScope.launch(Dispatchers.IO) {
-            if (delayMs > 0) delay(delayMs)
-            runCatching { graph.deviceScanner.scanDevice() }.onFailure { PerfLog.error("device scan: ${it.message}") }
-            runCatching { graph.indexer.indexPendingLike("device:%") }
+            try {
+                while (true) {
+                    val d = gate.next() ?: break
+                    if (d > 0) {
+                        delay(d)
+                        // a running export writes into the library and would fire this again and again: wait for it to finish
+                        var waited = 0
+                        while (ExportService.isRunning && waited < 300) { delay(2000); waited++ }
+                    }
+                    scanTracked { runCatching { graph.deviceScanner.scanDevice() }.onFailure { PerfLog.error("device scan: ${it.message}") } }
+                    runCatching { graph.indexer.indexPendingLike("device:%") }
+                }
+            } finally { gate.release() }
         }
     }
 
@@ -180,9 +216,11 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
 
     fun importFiles(uris: List<Uri>) {
         viewModelScope.launch(Dispatchers.IO) {
-            val n = graph.deviceScanner.importFiles(uris)
-            message.value = if (n == 0) "Nothing new to import" else "Imported ${Plurals.photos(n)}"
-            withContext(Dispatchers.Main) { selectSource("imported") }
+            val n = scanTracked { graph.deviceScanner.importFiles(uris) }
+            val kept = runCatching { app.contentResolver.persistedUriPermissions.size }.getOrDefault(0)
+            message.value = ImportNotice.text(n, kept)
+            // only jump to the Imported source when something was added, never to an empty list
+            if (n > 0) withContext(Dispatchers.Main) { selectSource("imported") }
             graph.indexer.indexPendingLike("imported")
         }
     }

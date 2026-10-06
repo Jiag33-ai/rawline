@@ -1,0 +1,36 @@
+package app.rawline.feature.library
+
+import app.rawline.core.model.Photo
+import app.rawline.core.model.SortOrder
+import app.rawline.core.ui.DateText
+import java.time.ZoneId
+
+/** One row of the library grid: a date heading or a photo. */
+sealed interface GridRow {
+    class Head(val label: String, val count: Int) : GridRow
+    class Pic(val p: Photo) : GridRow
+}
+
+object GridRows {
+    /**
+     * Date headings like Lightroom ("3 October 2026" and a count) when sorted by date; a plain grid otherwise.
+     * Built by the view model off the main thread, so the screen never groups tens of thousands of photos while drawing.
+     */
+    fun build(photos: List<Photo>, sort: SortOrder, zone: ZoneId = ZoneId.systemDefault()): List<GridRow> {
+        if (sort != SortOrder.NEWEST && sort != SortOrder.OLDEST) return photos.map { GridRow.Pic(it) }
+        fun day(p: Photo) = java.time.Instant.ofEpochMilli(if (p.takenAt > 0) p.takenAt else p.modified).atZone(zone).toLocalDate()
+        val out = ArrayList<GridRow>(photos.size + 32)
+        var i = 0
+        while (i < photos.size) {
+            val d = day(photos[i]); var j = i
+            while (j < photos.size && day(photos[j]) == d) j++
+            out.add(GridRow.Head(DateText.day(d), j - i))
+            for (k in i until j) out.add(GridRow.Pic(photos[k]))
+            i = j
+        }
+        return out
+    }
+
+    /** Position of a photo in [rows] (headings count), or -1. */
+    fun indexOfPhoto(rows: List<GridRow>, id: Long): Int = rows.indexOfFirst { it is GridRow.Pic && it.p.id == id }
+}

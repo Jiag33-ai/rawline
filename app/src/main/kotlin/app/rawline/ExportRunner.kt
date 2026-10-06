@@ -23,6 +23,9 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/** How one pass over the queue ended: files written and jobs that failed (cancelled jobs are neither). */
+data class QueueRun(val written: Int, val failed: Int)
+
 data class ExportProgress(val total: Int = 0, val done: Int = 0, val current: String = "", val fraction: Float = 0f, val running: Boolean = false, val lastMessage: String? = null)
 
 /** Writes finished files. One instance in the graph; the foreground service and the share button both use it. */
@@ -60,12 +63,13 @@ class ExportRunner(private val context: Context, private val graph: Graph) {
         if (dao.nextWaiting() != null) startService()
     }
 
-    /** Works through waiting jobs one at a time (blocking; runs on the service's thread). Returns how many files were written. */
-    fun processQueue(): Int {
+    /** Works through waiting jobs one at a time (blocking; runs on the service's thread). Returns how many files were written and how many jobs failed. */
+    fun processQueue(): QueueRun {
         val dao = graph.db.exports()
         File(context.cacheDir, "export-tmp").listFiles()?.forEach { it.delete() }   // leftovers from a killed process
         runBlocking { dao.resetRunning() }
         var written = 0
+        var failed = 0
         var n = 0
         while (!stopRequested) {
             val job = runBlocking { dao.nextWaiting() } ?: break
@@ -75,7 +79,7 @@ class ExportRunner(private val context: Context, private val graph: Graph) {
             val remaining = runBlocking { dao.activeCount() }
             progress.value = ExportProgress(remaining + n - 1, n - 1, job.photoName, 0f, true)
             val entity = runBlocking { graph.db.photos().byUri(job.photoUri) }
-            if (entity == null) { runBlocking { dao.finish(job.id, 3, "Photo no longer in the library", null, 0f) }; continue }
+            if (entity == null) { failed++; runBlocking { dao.finish(job.id, 3, "Photo no longer in the library", null, 0f) }; continue }
             val photo = entity.toModel()
             val settings = ExportSettings.fromJson(job.settingsJson)
             var lastWrite = 0L
@@ -88,26 +92,27 @@ class ExportRunner(private val context: Context, private val graph: Graph) {
                 if (stopRequested) { runBlocking { dao.finish(job.id, 0, null, null, 0f) }; break }
                 else if (cancelled) runBlocking { dao.finish(job.id, 4, "Cancelled", null, 0f) }
                 else if (uri != null) { written++; runBlocking { dao.finish(job.id, 2, null, uri.toString(), 1f) } }
-                else runBlocking { dao.finish(job.id, 3, "Could not write the file", null, 0f) }
+                else { failed++; runBlocking { dao.finish(job.id, 3, "Could not write the file", null, 0f) } }
             } catch (e: Throwable) {
                 app.rawline.core.cache.PerfLog.error("export ${photo.name}: ${e.message}")
                 if (stopRequested) { runBlocking { dao.finish(job.id, 0, null, null, 0f) }; break }
-                runBlocking { dao.finish(job.id, 3, e.message ?: e.javaClass.simpleName, null, 0f) }
+                failed++
+                runBlocking { dao.finish(job.id, 3, ExportErrors.plain(e), null, 0f) }
             }
         }
         progress.value = ExportProgress(n, n, "", 1f, false, if (n == 0) null else "Exported $written of $n")
-        return written
+        return QueueRun(written, failed)
     }
 
     /** Renders to a cache file for the share sheet. */
-    fun exportForShare(p: Photo, s: ExportSettings): File? {
+    fun exportForShare(p: Photo, s: ExportSettings, isCancelled: () -> Boolean = { false }): File? {
         // Never delete a file another app may still be reading: only clear shares older than an hour, and give each share its own folder.
         val root = File(context.cacheDir, "share").apply { mkdirs() }
         val cutoff = System.currentTimeMillis() - 60 * 60 * 1000L
         root.listFiles()?.forEach { if (it.lastModified() < cutoff) it.deleteRecursively() }
         val dir = File(root, "s" + System.currentTimeMillis() + "-" + System.nanoTime() % 100000).apply { mkdirs() }
         val f = File(dir, fileName(p, s, 1))
-        f.outputStream().use { out -> write(p, s.copy(destination = null), out, f.toURI().toString(), null) { false } ?: return null }
+        f.outputStream().use { out -> write(p, s.copy(destination = null), out, f.toURI().toString(), null, isCancelled) ?: return null }
         applyExif(f, p, s)
         return f
     }

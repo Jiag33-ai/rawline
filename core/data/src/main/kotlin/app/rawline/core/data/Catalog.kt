@@ -127,17 +127,21 @@ class Catalog(private val context: Context, private val db: RawlineDb, private v
         }
     }
 
-    /** After a re-scan, give new rows their saved ratings and edit marks back. */
+    /**
+     * After a re-scan, give new rows their saved ratings and edit marks back. One query for the folder's rows, one per 500 keys
+     * for ratings and one per 500 keys for edits (it used to be one query per photo), and the writes share one transaction.
+     */
     suspend fun reapply(folderKey: String) {
         val like = folderKey.endsWith("%")
-        val all = photos.all().filter { if (like) it.folderUri.startsWith(folderKey.dropLast(1)) else it.folderUri == folderKey }
+        val all = if (like) photos.inFolderLike(folderKey) else photos.inFolder(folderKey)
         if (all.isEmpty()) return
         val keys = all.map { Photo.keyOf(it.name, it.size, it.modified) }
         val meta = HashMap<String, MetaEntity>()
-        keys.chunked(500).forEach { c -> edits.metaFor(c).forEach { meta[it.key] = it } }
         val edited = HashSet<String>()
-        keys.chunked(500).forEach { c -> c.forEach { k -> if (edits.get(k) != null) edited.add(k) } }
-        Reapply.plan(all, meta, edited).forEach { photos.restoreMeta(it.uri, it.rating, it.flag, it.label, it.edited) }
+        keys.chunked(500).forEach { c -> edits.metaFor(c).forEach { meta[it.key] = it }; edited.addAll(edits.editedAmong(c)) }
+        val plan = Reapply.plan(all, meta, edited)
+        if (plan.isEmpty()) return
+        db.withTransaction { plan.forEach { photos.restoreMeta(it.uri, it.rating, it.flag, it.label, it.edited) } }
     }
 }
 

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.Rawline" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">#2A2A2A</item>
+        <item name="android:windowBackground">#000000</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>

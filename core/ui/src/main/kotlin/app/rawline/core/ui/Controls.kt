@@ -30,6 +30,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -102,7 +105,7 @@ fun ValueFeedbackPill(feedback: ValueFeedback, modifier: Modifier = Modifier) {
     // hold about 350 ms after release, then fade (160 ms)
     LaunchedEffect(feedback.held, feedback.text, feedback.stamp) { if (!feedback.held && feedback.text != null) { delay(feedback.holdMs); feedback.text = null } }
     AnimatedVisibility(
-        feedback.text != null && (feedback.held || true), modifier,
+        feedback.text != null, modifier,
         enter = fadeIn(tween(LrMotion.instant, easing = LrMotion.enter)) + scaleIn(tween(LrMotion.instant, easing = LrMotion.enter), initialScale = 0.97f),
         exit = fadeOut(tween(160)),
     ) {
@@ -215,24 +218,46 @@ fun RawSlider(
         }
     }
     if (typing) {
-        var input by remember { mutableStateOf(text) }
+        // starts with the plain number (never "5500 K"), opens the keyboard at once, Done confirms, a bad entry says so
+        var input by remember { mutableStateOf(SliderInput.initial(value, decimals)) }
+        var bad by remember { mutableStateOf(false) }
+        val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+        val confirm = {
+            val v = SliderInput.parse(input)
+            if (v == null) bad = true else { currentChange(v.coerceIn(range.start, range.endInclusive)); currentCommit(); typing = false }
+        }
+        LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
         AlertDialog(
             onDismissRequest = { typing = false },
             title = { Text(label) },
             text = {
-                // spec 7.22: 40 dp high, #242424, 1 px #454545 border, 4 dp radius, 12 dp inline padding, 14 sp
-                androidx.compose.foundation.text.BasicTextField(
-                    input, { input = it }, singleLine = true,
-                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = Lr.TextPrimary, fontSize = 14.sp),
-                    cursorBrush = androidx.compose.ui.graphics.SolidColor(Lr.Focus),
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier.fillMaxWidth().height(40.dp).clip(RoundedCornerShape(4.dp)).background(Lr.Input)
-                        .border(1.dp, Lr.InputBorder, RoundedCornerShape(4.dp)).padding(horizontal = 12.dp),
-                    decorationBox = { inner -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterStart) { inner() } },
-                )
+                Column {
+                    // spec 7.22: 40 dp high, #242424, 1 px #454545 border, 4 dp radius, 12 dp inline padding, 14 sp
+                    androidx.compose.foundation.text.BasicTextField(
+                        input, { input = it; bad = false }, singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(color = Lr.TextPrimary, fontSize = 14.sp),
+                        cursorBrush = androidx.compose.ui.graphics.SolidColor(Lr.Focus),
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = androidx.compose.ui.text.input.ImeAction.Done),
+                        keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = { confirm() }),
+                        modifier = Modifier.fillMaxWidth().height(40.dp).clip(RoundedCornerShape(4.dp)).background(Lr.Input)
+                            .border(1.dp, if (bad) Lr.Error else Lr.InputBorder, RoundedCornerShape(4.dp)).padding(horizontal = 12.dp).focusRequester(focus),
+                        decorationBox = { inner -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterStart) { inner() } },
+                    )
+                    Text(
+                        if (bad) "Enter a number from ${SliderInput.initial(range.start, decimals)} to ${SliderInput.initial(range.endInclusive, decimals)}"
+                        else "Range ${SliderInput.initial(range.start, decimals)} to ${SliderInput.initial(range.endInclusive, decimals)}",
+                        style = MaterialTheme.typography.bodySmall, color = if (bad) Lr.Error else Lr.TextMuted, modifier = Modifier.padding(top = 6.dp),
+                    )
+                }
             },
-            confirmButton = { TextButton(onClick = { input.toFloatOrNull()?.let { currentChange(it.coerceIn(range.start, range.endInclusive)); currentCommit() }; typing = false }) { Text("Set") } },
-            dismissButton = { TextButton(onClick = { typing = false }) { Text("Cancel") } },
+            confirmButton = { TextButton(onClick = { confirm() }) { Text("Set") } },
+            dismissButton = {
+                Row {
+                    // many keyboards have no minus key on the decimal pad
+                    if (range.start < 0f) TextButton(onClick = { input = SliderInput.flipSign(input); bad = false }) { Text("+/-") }
+                    TextButton(onClick = { typing = false }) { Text("Cancel") }
+                }
+            },
         )
     }
 }
@@ -298,7 +323,7 @@ fun ChipButton(text: String, selected: Boolean, onClick: () -> Unit, modifier: M
 @Composable
 fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     Box(
-        modifier.height(LrDim.button).clip(RoundedCornerShape(4.dp)).background(if (enabled) Lr.Accent else Lr.SurfaceSelected).clickable(enabled = enabled, onClick = onClick).padding(horizontal = 16.dp),
+        modifier.heightIn(min = LrDim.button).clip(RoundedCornerShape(4.dp)).background(if (enabled) Lr.Accent else Lr.SurfaceSelected).clickable(enabled = enabled, onClick = onClick).padding(horizontal = 16.dp),
         contentAlignment = Alignment.Center,
     ) { Text(text, color = if (enabled) Color.White else Lr.TextDisabled, style = MaterialTheme.typography.labelLarge) }
 }
@@ -306,7 +331,7 @@ fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifi
 @Composable
 fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     Box(
-        modifier.height(LrDim.button).clip(RoundedCornerShape(4.dp)).border(1.dp, Lr.ButtonBorder, RoundedCornerShape(4.dp)).clickable(enabled = enabled, onClick = onClick).padding(horizontal = 16.dp),
+        modifier.heightIn(min = LrDim.button).clip(RoundedCornerShape(4.dp)).border(1.dp, Lr.ButtonBorder, RoundedCornerShape(4.dp)).clickable(enabled = enabled, onClick = onClick).padding(horizontal = 16.dp),
         contentAlignment = Alignment.Center,
     ) { Text(text, color = if (enabled) Color(0xFFE9E9E9) else Lr.TextDisabled, style = MaterialTheme.typography.labelLarge) }
 }
@@ -317,7 +342,8 @@ fun LrToggle(checked: Boolean, onChange: (Boolean) -> Unit, modifier: Modifier =
     val track by animateColorAsState(if (checked) Lr.Accent else Lr.ToggleOff, tween(140), label = "toggle")
     val x by animateDpAsState(if (checked) 16.dp else 2.dp, tween(140, easing = LrMotion.standard), label = "thumb")
     Box(
-        modifier.size(width = 44.dp, height = 44.dp).clickable(enabled = enabled) { onChange(!checked) }.semantics { contentDescription = if (checked) "On" else "Off" },
+        // toggleable gives TalkBack the switch role and its on/off state, and keeps the name of the row it sits in
+        modifier.size(width = 44.dp, height = 44.dp).toggleable(value = checked, enabled = enabled, role = androidx.compose.ui.semantics.Role.Switch, onValueChange = onChange),
         contentAlignment = Alignment.Center,
     ) {
         Box(Modifier.size(width = 32.dp, height = 18.dp).clip(CircleShape).background(if (enabled) track else track.copy(alpha = 0.38f))) {
@@ -329,7 +355,7 @@ fun LrToggle(checked: Boolean, onChange: (Boolean) -> Unit, modifier: Modifier =
 /** Label left, toggle right, 44 dp. */
 @Composable
 fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
-    Row(modifier.fillMaxWidth().height(44.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(modifier.fillMaxWidth().heightIn(min = 44.dp).semantics(mergeDescendants = true) {}.padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(label, style = MaterialTheme.typography.bodyMedium, color = if (enabled) Lr.TextPrimary else Lr.TextDisabled, modifier = Modifier.weight(1f))
         LrToggle(checked, onChange, enabled = enabled)
     }
@@ -354,7 +380,7 @@ fun LrButton(onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolea
     androidx.compose.runtime.CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides if (enabled) Color.White else Lr.TextDisabled) {
         androidx.compose.material3.ProvideTextStyle(MaterialTheme.typography.labelLarge) {
             Row(
-                modifier.height(LrDim.button).clip(RoundedCornerShape(4.dp)).background(if (enabled) Lr.Accent else Lr.SurfaceSelected)
+                modifier.heightIn(min = LrDim.button).clip(RoundedCornerShape(4.dp)).background(if (enabled) Lr.Accent else Lr.SurfaceSelected)
                     .clickable(enabled = enabled, onClick = onClick).padding(horizontal = 16.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center, content = content,
             )
@@ -367,7 +393,7 @@ fun LrOutlinedButton(onClick: () -> Unit, modifier: Modifier = Modifier, enabled
     androidx.compose.runtime.CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides if (enabled) Color(0xFFE9E9E9) else Lr.TextDisabled) {
         androidx.compose.material3.ProvideTextStyle(MaterialTheme.typography.labelLarge) {
             Row(
-                modifier.height(LrDim.button).clip(RoundedCornerShape(4.dp)).border(1.dp, Lr.ButtonBorder, RoundedCornerShape(4.dp))
+                modifier.heightIn(min = LrDim.button).clip(RoundedCornerShape(4.dp)).border(1.dp, Lr.ButtonBorder, RoundedCornerShape(4.dp))
                     .clickable(enabled = enabled, onClick = onClick).padding(horizontal = 16.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center, content = content,
             )
@@ -380,7 +406,7 @@ fun LrTextButton(onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Bo
     androidx.compose.runtime.CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides if (enabled) Lr.TextPrimary else Lr.TextDisabled) {
         androidx.compose.material3.ProvideTextStyle(MaterialTheme.typography.labelLarge) {
             Row(
-                modifier.height(LrDim.button).defaultMinSize(minWidth = 44.dp).clip(RoundedCornerShape(4.dp)).clickable(enabled = enabled, onClick = onClick).padding(horizontal = 12.dp),
+                modifier.heightIn(min = LrDim.button).defaultMinSize(minWidth = 44.dp).clip(RoundedCornerShape(4.dp)).clickable(enabled = enabled, onClick = onClick).padding(horizontal = 12.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center, content = content,
             )
         }
@@ -395,7 +421,7 @@ fun LrSwitch(checked: Boolean, onCheckedChange: ((Boolean) -> Unit)?, modifier: 
 /** 16 dp checkbox with a 40 dp touch target. */
 @Composable
 fun LrCheckbox(checked: Boolean, onCheckedChange: ((Boolean) -> Unit)?, modifier: Modifier = Modifier, enabled: Boolean = true) {
-    Box(modifier.size(40.dp).clickable(enabled = enabled && onCheckedChange != null) { onCheckedChange?.invoke(!checked) }, contentAlignment = Alignment.Center) {
+    Box(modifier.size(40.dp).toggleable(value = checked, enabled = enabled && onCheckedChange != null, role = androidx.compose.ui.semantics.Role.Checkbox) { onCheckedChange?.invoke(it) }, contentAlignment = Alignment.Center) {
         Box(
             Modifier.size(16.dp).clip(RoundedCornerShape(2.dp)).background(if (checked) Lr.Accent else Color.Transparent)
                 .border(1.dp, if (checked) Lr.Accent else Lr.FunctionBorder, RoundedCornerShape(2.dp)),
