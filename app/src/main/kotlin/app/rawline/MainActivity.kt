@@ -183,9 +183,10 @@ private fun RawlineRoot(openRoute: String?, modeSwitch: (@Composable () -> Unit)
     // The notification permission is asked once, when the first export is queued (with the reason obvious), not at launch alongside
     // the photo permission, where Android would drop one of the two dialogs.
     fun queueExport(list: List<Photo>) {
-        if (android.os.Build.VERSION.SDK_INT >= 33 && !graph.prefs.getBoolean("notifAsked", false) &&
-            androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+        val granted = androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (app.rawline.platform.NotificationRule.shouldAsk(android.os.Build.VERSION.SDK_INT, granted, graph.prefs.getBoolean("notifAsked", false))) {
             graph.prefs.edit().putBoolean("notifAsked", true).apply()
+            showToast("Rawline shows a notification while it exports so Android keeps it running.")
             notifPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         }
         vm.enqueueExport(list)
@@ -259,6 +260,7 @@ private fun RawlineRoot(openRoute: String?, modeSwitch: (@Composable () -> Unit)
                     // read here, not in the root: the viewer updates these as the user swipes and the whole root should not recompose for it
                     val scanning by vm.scanning.collectAsStateWithLifecycle()
                     val lastViewedId by vm.lastViewedId.collectAsStateWithLifecycle()
+                    val restoreTopId by vm.restoreTopId.collectAsStateWithLifecycle()
                     val sharedPhoto = photoShared(this@SharedTransitionLayout, this)
                     androidx.compose.runtime.CompositionLocalProvider(app.rawline.core.ui.LocalSharedPhoto provides sharedPhoto) {
                     Box(Modifier.statusBarsPadding()) {
@@ -288,6 +290,8 @@ private fun RawlineRoot(openRoute: String?, modeSwitch: (@Composable () -> Unit)
                                 hasCopied = copied != null,
                             ),
                             modeSwitch = modeSwitch,
+                            startColumns = vm.columns, onColumnsChanged = { vm.setColumns(it) },
+                            restoreTopId = restoreTopId, onTopRestored = { vm.topRestored() }, onTopPhoto = { vm.saveTopPhoto(it) },
                         )
                     }
                                     }

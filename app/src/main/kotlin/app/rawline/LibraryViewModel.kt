@@ -18,6 +18,7 @@ import app.rawline.core.data.IndexProgress
 import app.rawline.core.data.SidecarResult
 import app.rawline.core.data.RecipeRead
 import app.rawline.core.model.EditRecipe
+import app.rawline.platform.LibraryFilterJson
 import app.rawline.core.model.LibraryFilter
 import app.rawline.core.model.PasteScope
 import app.rawline.core.model.Photo
@@ -57,7 +58,8 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
 
     val overlay = MutableStateFlow(graph.prefs.getBoolean("overlay", false))
     val xmp = MutableStateFlow(graph.prefs.getBoolean("xmp", false))
-    val filter = MutableStateFlow(LibraryFilter())
+    /** BK-120: the filter and sort come back after a cold start (JSON in the preferences, damaged or unknown values fall back to the defaults). */
+    val filter = MutableStateFlow(LibraryFilterJson.read(graph.prefs.getString("libraryFilter", null)))
     val progress: StateFlow<IndexProgress> = graph.indexer.progress
     val copied = MutableStateFlow<EditRecipe?>(null)
     /** The look of the photo most recently edited and left, for "Paste from last". */
@@ -125,7 +127,15 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
     private val gate = RescanGate()
     private val scanCount = java.util.concurrent.atomic.AtomicInteger()
 
+    /** BK-120: the grid column count and the photo that was at the top when the app last paused. Read once; [topRestored] drops the top so the grid scrolls to it once per process. */
+    val columns: Int = graph.prefs.getInt("columns", 5).coerceIn(2, 8)
+    fun setColumns(n: Int) { graph.prefs.edit().putInt("columns", n.coerceIn(2, 8)).apply() }
+    val restoreTopId = MutableStateFlow<Long?>(graph.prefs.getLong("libraryTop", -1L).takeIf { it >= 0 })
+    fun saveTopPhoto(id: Long?) { graph.prefs.edit().apply { if (id == null) remove("libraryTop") else putLong("libraryTop", id) }.apply() }
+    fun topRestored() { restoreTopId.value = null }
+
     init {
+        viewModelScope.launch { filter.collect { graph.prefs.edit().putString("libraryFilter", LibraryFilterJson.write(it)).apply() } }
         // First run: no saved choice. Show the camera roll (falls back to everything on the phone if there is no "Camera" album).
         viewModelScope.launch {
             if (graph.prefs.getString("source", null) == null) {

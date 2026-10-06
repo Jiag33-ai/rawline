@@ -137,9 +137,17 @@ fun LibraryScreen(
     actions: LibraryActions,
     /** The Develop | Studio switch, drawn at the start of the top bar. Null (Studio not in this build) leaves the bar exactly as it was. */
     modeSwitch: (@Composable () -> Unit)? = null,
+    /** BK-120: the column count stored in the preferences (the saveable state below does not survive the user swiping the app away). */
+    startColumns: Int = 5,
+    onColumnsChanged: (Int) -> Unit = {},
+    /** BK-120: the photo that was at the top when the app last paused; the grid scrolls to it once, then [onTopRestored] is called. Null: nothing to restore. */
+    restoreTopId: Long? = null,
+    onTopRestored: () -> Unit = {},
+    /** BK-120: called when the app pauses, with the photo at the top of the grid, so a cold start can return to it. */
+    onTopPhoto: (Long?) -> Unit = {},
 ) {
     // Saved, so a rotation, a visit to the viewer or another tab keeps the density, the selection and the open filter bar.
-    var columns by rememberSaveable { mutableStateOf(5) }
+    var columns by rememberSaveable { mutableStateOf(startColumns) }
     val gridState = rememberLazyGridState()
     val selected = rememberSaveable(saver = SelectionSaver) { mutableStateOf(setOf<Long>()) }
     var showFilters by rememberSaveable { mutableStateOf(false) }
@@ -159,6 +167,24 @@ fun LibraryScreen(
     LaunchedEffect(sel) { if (selected.value.size != sel.size) selected.value = sel.mapTo(HashSet()) { it.id } }
     androidx.activity.compose.BackHandler(enabled = selecting) { selected.value = emptySet() }
     app.rawline.core.ui.KeepScreenOn(progress.running)   // a first index of a big library takes minutes: do not let the screen sleep on it
+    // BK-120: remember the photo at the top whenever the app pauses (a swipe away kills the process after this)
+    val rowsNow = androidx.compose.runtime.rememberUpdatedState(rows)
+    val topPhotoNow = androidx.compose.runtime.rememberUpdatedState(onTopPhoto)
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val o = androidx.lifecycle.LifecycleEventObserver { _, e ->
+            if (e == androidx.lifecycle.Lifecycle.Event.ON_PAUSE && rowsNow.value.isNotEmpty()) topPhotoNow.value(GridRows.topPhotoId(rowsNow.value, gridState.firstVisibleItemIndex))
+        }
+        lifecycleOwner.lifecycle.addObserver(o)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(o) }
+    }
+    // BK-120: after a cold start, go back to that photo once the list is there (not when the viewer is sending the grid to a photo itself)
+    LaunchedEffect(restoreTopId, rows.isNotEmpty(), scrollToId) {
+        if (restoreTopId != null && rows.isNotEmpty()) {
+            if (scrollToId == null) gridState.scrollToItem(GridRows.restoreIndex(rows, restoreTopId))
+            onTopRestored()
+        }
+    }
     // coming back from the viewer: scroll to the photo it ended on when that tile is off screen
     LaunchedEffect(scrollToId, rows) {
         if (scrollToId != null && rows.isNotEmpty()) {
@@ -244,7 +270,7 @@ fun LibraryScreen(
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(columns), state = gridState,
                     horizontalArrangement = Arrangement.spacedBy(2.dp), verticalArrangement = Arrangement.spacedBy(2.dp),
-                    modifier = Modifier.fillMaxSize().pinchColumns(columns) { columns = it },
+                    modifier = Modifier.fillMaxSize().pinchColumns(columns) { columns = it; onColumnsChanged(it) },
                 ) {
                     items(rows, key = { r -> if (r is GridRow.Head) "h${r.label}" else (r as GridRow.Pic).p.id }, span = { r -> if (r is GridRow.Head) GridItemSpan(maxLineSpan) else GridItemSpan(1) },
                         contentType = { r -> if (r is GridRow.Head) "head" else "photo" }) { r ->

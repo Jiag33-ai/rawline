@@ -61,6 +61,8 @@ android {
         compose = true
         buildConfig = true
     }
+    // the guard tests (manifest rules, BackHandler inventory) read the repository's own files
+    testOptions { unitTests.all { it.systemProperty("repo.root", rootDir.path) } }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -101,4 +103,5 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
     testImplementation(libs.junit)
+    testImplementation(libs.json)
 }

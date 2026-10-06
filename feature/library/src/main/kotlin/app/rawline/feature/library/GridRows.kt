@@ -33,4 +33,13 @@ object GridRows {
 
     /** Position of a photo in [rows] (headings count), or -1. */
     fun indexOfPhoto(rows: List<GridRow>, id: Long): Int = rows.indexOfFirst { it is GridRow.Pic && it.p.id == id }
+
+    /** BK-120: the id of the first photo at or after the grid position [firstVisible] (a heading at the top stands for the photo under it), or null for an empty grid. */
+    fun topPhotoId(rows: List<GridRow>, firstVisible: Int): Long? {
+        for (i in firstVisible.coerceAtLeast(0) until rows.size) { val r = rows[i]; if (r is GridRow.Pic) return r.p.id }
+        return null
+    }
+
+    /** BK-120: where the grid goes after a cold start: the saved photo's position (headings count), or 0 (the top) when nothing was saved or the photo has gone. */
+    fun restoreIndex(rows: List<GridRow>, savedId: Long?): Int = if (savedId == null) 0 else indexOfPhoto(rows, savedId).coerceAtLeast(0)
 }

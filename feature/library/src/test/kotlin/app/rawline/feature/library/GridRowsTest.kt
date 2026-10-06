@@ -4,6 +4,7 @@ import app.rawline.core.model.Kind
 import app.rawline.core.model.Photo
 import app.rawline.core.model.SortOrder
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.ZoneId
@@ -36,4 +37,16 @@ class GridRowsTest {
     }
 
     @Test fun emptyListHasNoRows() { assertTrue(GridRows.build(emptyList(), SortOrder.NEWEST, zone).isEmpty()) }
+
+    @Test fun restorePointFindsThePhotoOrStartsAtTheTop() {
+        val rows = GridRows.build(listOf(photo(5, at(2026, 1, 2, 1)), photo(6, at(2026, 1, 1, 2)), photo(7, at(2026, 1, 1, 1))), SortOrder.NEWEST, zone)
+        assertEquals(GridRows.indexOfPhoto(rows, 7), GridRows.restoreIndex(rows, 7))
+        assertEquals(0, GridRows.restoreIndex(rows, 99)); assertEquals(0, GridRows.restoreIndex(rows, null)); assertEquals(0, GridRows.restoreIndex(emptyList(), 1))
+    }
+
+    @Test fun topPhotoIsTheFirstPhotoAtOrAfterTheFirstVisibleRow() {
+        val rows = GridRows.build(listOf(photo(5, at(2026, 1, 2, 1)), photo(6, at(2026, 1, 1, 2))), SortOrder.NEWEST, zone)   // Head, 5, Head, 6
+        assertEquals(5L, GridRows.topPhotoId(rows, 0)); assertEquals(5L, GridRows.topPhotoId(rows, 1)); assertEquals(6L, GridRows.topPhotoId(rows, 2))
+        assertNull(GridRows.topPhotoId(rows, 4)); assertNull(GridRows.topPhotoId(emptyList(), 0)); assertEquals(5L, GridRows.topPhotoId(rows, -3))
+    }
 }
