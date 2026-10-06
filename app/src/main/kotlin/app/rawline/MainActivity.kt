@@ -98,6 +98,7 @@ class MainActivity : ComponentActivity() {
         )
         // only on a fresh start: after a restore the same intent is replayed and must not jump to the queue again
         if (savedInstanceState == null) openRoute.value = intent?.getStringExtra(EXTRA_OPEN)
+        if (savedInstanceState == null && intent?.action == android.hardware.usb.UsbManager.ACTION_USB_DEVICE_ATTACHED) cardAttached.value = true
         setContent {
             RawlineTheme {
                 Surface(color = Lr.Canvas) {
@@ -112,6 +113,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         openRoute.value = intent.getStringExtra(EXTRA_OPEN)
+        if (intent.action == android.hardware.usb.UsbManager.ACTION_USB_DEVICE_ATTACHED) cardAttached.value = true
     }
 
     /** Saves the timings and errors so they survive if Android kills the process while the app is in the background. */
@@ -120,7 +122,7 @@ class MainActivity : ComponentActivity() {
         PerfLog.flushSoon()
     }
 
-    companion object { const val EXTRA_OPEN = "open" }
+    companion object { const val EXTRA_OPEN = "open"; val cardAttached = mutableStateOf(false) }
 }
 
 private val TopLevel = listOf("photos", "queue", "settings")
@@ -202,6 +204,8 @@ private fun RawlineRoot(openRoute: String?, modeSwitch: (@Composable () -> Unit)
     }
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> if (uri != null) vm.addFolder(uri) }
     val cardPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> if (uri != null) vm.importFromCard(uri) }
+    // a card reader was plugged in (the manifest's USB_DEVICE_ATTACHED filter opens the app): offer the folder picker where the last card was; the person still chooses
+    androidx.compose.runtime.LaunchedEffect(MainActivity.cardAttached.value) { if (MainActivity.cardAttached.value) { MainActivity.cardAttached.value = false; cardPicker.launch(vm.lastCardTree()) } }
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> if (uris.isNotEmpty()) vm.importFiles(uris) }
     val backupOut = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri -> if (uri != null) vm.backupTo(uri) }
     val backupIn = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.prepareRestoreFromFile(uri) }
@@ -330,6 +334,7 @@ private fun RawlineRoot(openRoute: String?, modeSwitch: (@Composable () -> Unit)
                                 onImportFiles = { filePicker.launch(arrayOf("*/*")) },
                                 onAddFolder = { folderPicker.launch(null) },
                                 onImportCard = { cardPicker.launch(vm.lastCardTree()) },
+                                isPreviewOnly = vm::isPreviewOnly,
                                 onRequestPermission = { mediaPermission.launch(vm.mediaPermission) },
                                 onOpenSettings = { openSettings(context, vm.appSettingsIntent(), "Open Settings, Apps, Rawline, Permissions and allow Photos") { showToast(it) } },
                                 onRequestAllFiles = { openSettings(context, vm.allFilesIntent(), "Open Settings, Apps, Special app access, All files access", fallback = android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)) { showToast(it) } },
@@ -442,6 +447,7 @@ private fun RawlineRoot(openRoute: String?, modeSwitch: (@Composable () -> Unit)
                             onVersionLongPress = StudioEntry.debugLongPress(context),
                             studioNote = StudioEntry.settingsNote(),
                             showExplanations = explanations,
+                            rememberImported = vm.rememberImported.collectAsStateWithLifecycle().value, onRememberImported = vm::setRememberImported,
                             onShowExplanations = { explanations = it; graph.prefs.edit().putBoolean(HelpPrefs.EXPLANATIONS, it).apply() },
                             onShowWelcome = { onboarding.restart(); onboardingShown = true },
                             onBack = { nav.popBackStack() },

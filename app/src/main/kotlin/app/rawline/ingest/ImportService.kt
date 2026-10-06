@@ -72,7 +72,8 @@ class ImportService : Service() {
         val files = SafCardSource(contentResolver, tree).list()
         if (files.isEmpty()) return "No RAW photos were found on the card."
         val dest = File(File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM), "Rawline"), LocalDate.now().toString())
-        val ledger = ImportLedger.load(File(filesDir, "import-ledger.txt"))
+        // "Remember imported" off: nothing is read from or added to the ledger, so a file deleted from the phone is copied again (a copy still in the folder is still found by name, size and time)
+        val ledger = if ((application as RawlineApplication).graph.prefs.getBoolean(PREF_REMEMBER, true)) ImportLedger.load(File(filesDir, "import-ledger.txt")) else ImportLedger()
         val total = files.sumOf { maxOf(it.size, 0L) }
         val t0 = System.nanoTime()
         var doneBytes = 0L
@@ -109,6 +110,7 @@ class ImportService : Service() {
     companion object {
         const val ACTION_CANCEL = "app.rawline.CANCEL_IMPORT"
         const val EXTRA_TREE = "tree"
+        const val PREF_REMEMBER = "import_remember"
         const val PREF_LAST = "import_last"
         const val PREF_LAST_AT = "import_last_at"
         private const val CHANNEL = "import"

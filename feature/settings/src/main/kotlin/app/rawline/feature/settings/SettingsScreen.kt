@@ -68,6 +68,9 @@ fun SettingsScreen(
     showExplanations: Boolean = true,
     onShowExplanations: (Boolean) -> Unit = {},
     onShowWelcome: () -> Unit = {},
+    /** W17 (D4): remember which card files were imported, so a photo deleted from the phone is not copied again. */
+    rememberImported: Boolean = true,
+    onRememberImported: (Boolean) -> Unit = {},
 ) {
     var helpTopic by remember { mutableStateOf<HelpTopic?>(null) }
     val libraw = runCatching { Native.librawVersion() }.getOrElse { "failed: ${it.message}" }
@@ -94,6 +97,13 @@ fun SettingsScreen(
                 Text("Saves ratings and colour labels next to photos in folders you add. Camera roll photos and imported files are not covered.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Switch(xmpOn, onXmpChange)
+        }
+        Row(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(Modifier.weight(1f)) {
+                Text("Remember imported", style = MaterialTheme.typography.bodyLarge)
+                Text("Card import skips photos it has copied before, even ones you have since deleted from the phone.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Switch(rememberImported, onRememberImported)
         }
         Spacer(Modifier.height(8.dp))
         Text("Backups", style = MaterialTheme.typography.titleSmall)

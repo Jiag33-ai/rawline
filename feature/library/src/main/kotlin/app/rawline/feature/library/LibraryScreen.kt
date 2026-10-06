@@ -115,6 +115,8 @@ class LibraryActions(
     val onGridBusy: (Boolean) -> Unit = {},
     /** W15: copy the RAW photos of a card or USB-C reader into DCIM/Rawline. */
     val onImportCard: () -> Unit = {},
+    /** W17: true for a DNG whose raw data cannot be developed yet (the DNG probe says PREVIEW_ONLY); the grid then shows a "Preview only" badge. */
+    val isPreviewOnly: suspend (Photo) -> Boolean = { false },
 )
 
 /** Saves a selection across recreation. Beyond 5000 ids it saves nothing (a huge Bundle can crash the save), so the selection resets. */
@@ -315,7 +317,7 @@ fun LibraryScreen(
                             val p = (r as GridRow.Pic).p
                             val isSel = p.id in selected.value
                             Thumb(
-                                p, thumbs, isSel, selecting,
+                                p, thumbs, isSel, selecting, actions.isPreviewOnly,
                                 Modifier.aspectRatio(1f).combinedClickable(
                                     onClickLabel = if (selecting) "Toggle selection" else "Open",
                                     onClick = { if (selecting) selected.value = if (isSel) selected.value - p.id else selected.value + p.id else actions.onOpen(p) },
@@ -434,7 +436,8 @@ private fun PasteDialog(onDismiss: () -> Unit, onPaste: (Set<PasteScope>) -> Uni
 }
 
 @Composable
-private fun Thumb(p: Photo, thumbs: ThumbStore, selected: Boolean, selecting: Boolean, modifier: Modifier) {
+private fun Thumb(p: Photo, thumbs: ThumbStore, selected: Boolean, selecting: Boolean, isPreviewOnly: suspend (Photo) -> Boolean, modifier: Modifier) {
+    val previewOnly by produceState(false, p.id) { if (p.kind == Kind.RAW && p.name.endsWith(".dng", ignoreCase = true)) value = isPreviewOnly(p) }
     val bmp by produceState(thumbs.peek(p.id), p.id) { if (value == null) value = thumbs.obtain(p) }
     Box(modifier.background(Lr.Surface2).semantics {
         contentDescription = p.name + (if (p.rating > 0) ", ${app.rawline.core.ui.Plurals.count(p.rating, "star")}" else "") + (if (p.edited) ", edited" else "")
@@ -451,6 +454,8 @@ private fun Thumb(p: Photo, thumbs: ThumbStore, selected: Boolean, selecting: Bo
         if (p.label in 1..5) Box(Modifier.align(Alignment.BottomEnd).padding(end = 24.dp, bottom = 7.dp).size(9.dp).background(LabelColors[p.label], CircleShape))
         if (p.kind == Kind.RAW && !selecting) Text("RAW", color = Lr.TextPrimary, style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, lineHeight = 11.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium),
             modifier = Modifier.align(Alignment.TopEnd).padding(3.dp).background(Color(0xB3000000), androidx.compose.foundation.shape.RoundedCornerShape(2.dp)).padding(horizontal = 3.dp, vertical = 1.dp))
+        if (previewOnly && !selecting) Text("Preview only", color = Lr.TextPrimary, style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, lineHeight = 11.sp),
+            modifier = Modifier.align(Alignment.TopStart).padding(top = if (p.flag != 0) 26.dp else 3.dp, start = 3.dp).background(Color(0xB3000000), RoundedCornerShape(2.dp)).padding(horizontal = 3.dp, vertical = 1.dp))
         if (p.edited) Box(Modifier.align(Alignment.BottomEnd).padding(3.dp).background(Color(0xB3000000), RoundedCornerShape(2.dp)).padding(2.dp)) { LrIconView(LrIcon.EDIT, Color.White, size = 14.dp) }
         if (selecting) Box(Modifier.align(Alignment.TopEnd).padding(6.dp).size(20.dp).clip(CircleShape).background(if (selected) Lr.Accent else Color(0x66000000))) {
             if (selected) LrIconView(LrIcon.CHECK, Color.White, size = 12.dp)

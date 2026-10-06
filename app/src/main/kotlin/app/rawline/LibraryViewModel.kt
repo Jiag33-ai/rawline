@@ -20,6 +20,9 @@ import app.rawline.backup.BackupScheduler
 import app.rawline.backup.BackupTargets
 import app.rawline.backup.TargetKind
 import app.rawline.core.data.RestoreCheck
+import app.rawline.core.data.ingest.DngProbe
+import app.rawline.core.data.ingest.DngProber
+import app.rawline.core.data.ingest.DngSupport
 import app.rawline.ingest.ImportService
 import app.rawline.core.data.RestoreStaging
 import app.rawline.core.data.RestoreText
@@ -346,6 +349,8 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
     }
 
     fun setOverlay(on: Boolean) { graph.prefs.edit().putBoolean("overlay", on).apply(); overlay.value = on }
+    fun setRememberImported(on: Boolean) { graph.prefs.edit().putBoolean(ImportService.PREF_REMEMBER, on).apply(); rememberImported.value = on }
+    val rememberImported = MutableStateFlow(graph.prefs.getBoolean(ImportService.PREF_REMEMBER, true))
     fun setXmp(on: Boolean) { graph.prefs.edit().putBoolean("xmp", on).apply(); xmp.value = on }
 
     fun labelOf(uri: String): String = runCatching { DocumentsContract.getTreeDocumentId(Uri.parse(uri)).substringAfterLast(':').substringAfterLast('/').ifEmpty { "Storage" } }.getOrDefault(uri)
@@ -437,6 +442,15 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
     // ---- card import (W15) ----
     /** Where the card picker starts: the card used last time, so the next insert is one tap. */
     fun lastCardTree(): Uri? = graph.prefs.getString("card_tree", null)?.let { Uri.parse(it) }
+
+    private val previewOnlyCache = java.util.concurrent.ConcurrentHashMap<Long, Boolean>()
+
+    /** BK-431: true when the DNG probe says the raw data cannot be developed yet (read once per photo, the TIFF directory only). */
+    suspend fun isPreviewOnly(p: Photo): Boolean = previewOnlyCache[p.id] ?: withContext(Dispatchers.IO) {
+        runCatching<DngProbe?> {
+            app.contentResolver.openFileDescriptor(Uri.parse(p.uri), "r")?.use { pfd -> java.io.FileInputStream(pfd.fileDescriptor).use { DngProber.probeChannel(it.channel) } }
+        }.getOrNull()?.support == DngSupport.PREVIEW_ONLY
+    }.also { previewOnlyCache[p.id] = it }
 
     fun importFromCard(tree: Uri) {
         runCatching { app.contentResolver.takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION) }      // read only: the card is never written to
