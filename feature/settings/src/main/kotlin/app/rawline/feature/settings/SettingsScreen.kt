@@ -1,6 +1,8 @@
 package app.rawline.feature.settings
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -23,6 +25,14 @@ import androidx.compose.material3.Text
 import app.rawline.core.ui.LrTextButton as TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import app.rawline.core.ui.HelpSheet
+import app.rawline.core.ui.HelpTopic
+import app.rawline.core.ui.R
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -54,7 +64,12 @@ fun SettingsScreen(
     onVersionLongPress: (() -> Unit)? = null,
     /** About text for Studio, shown only in builds that contain it. */
     studioNote: String? = null,
+    /** "Show explanations" (the glossary on a long press of a slider name) and a way to see the welcome screens again (BK-392, BK-394). */
+    showExplanations: Boolean = true,
+    onShowExplanations: (Boolean) -> Unit = {},
+    onShowWelcome: () -> Unit = {},
 ) {
+    var helpTopic by remember { mutableStateOf<HelpTopic?>(null) }
     val libraw = runCatching { Native.librawVersion() }.getOrElse { "failed: ${it.message}" }
     // the tab bar below already pads the navigation bar and the screen above the status bar, so only the sides are inset here
     Column(modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)).padding(16.dp).verticalScroll(rememberScrollState())) {
@@ -112,6 +127,21 @@ fun SettingsScreen(
             Text(studioNote, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Spacer(Modifier.height(16.dp))
+        Text(stringResource(R.string.title_help), style = MaterialTheme.typography.titleSmall, modifier = Modifier.semantics { heading() })
+        for (topic in HelpTopic.values()) {
+            val name = stringResource(topic.title)
+            Text(name, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(role = Role.Button) { helpTopic = topic }.padding(vertical = 12.dp))
+        }
+        Row(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(Modifier.weight(1f)) {
+                Text(stringResource(R.string.action_show_explanations), style = MaterialTheme.typography.bodyLarge)
+                Text(stringResource(R.string.note_show_explanations), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Switch(showExplanations, onShowExplanations)
+        }
+        TextButton(onClick = onShowWelcome) { Text(stringResource(R.string.action_show_welcome_again)) }
+        TextButton(onClick = onCopyReport) { Text(stringResource(R.string.action_report_problem)) }
+        Spacer(Modifier.height(16.dp))
         Text("Gestures", style = MaterialTheme.typography.titleSmall)
         Text(
             "Library: long press to select, pinch to change columns.\n" +
@@ -126,6 +156,7 @@ fun SettingsScreen(
             TextButton(onClick = onClearCrash) { Text("Clear crash reports") }
         }
     }
+    helpTopic?.let { HelpSheet(it) { helpTopic = null } }
     val list = backup.list
     val offer = backup.offer
     if (list != null && offer == null) androidx.compose.material3.AlertDialog(

@@ -61,6 +61,14 @@ import androidx.navigation.navArgument
 import app.rawline.core.cache.CrashStore
 import app.rawline.core.cache.PerfLog
 import app.rawline.core.model.Photo
+import app.rawline.core.model.onboarding.Entry
+import app.rawline.core.model.onboarding.Onboarding
+import app.rawline.core.model.onboarding.Perms
+import app.rawline.core.ui.GlossaryHost
+import app.rawline.core.ui.LocalGlossary
+import app.rawline.feature.onboarding.OnboardingActions
+import app.rawline.feature.onboarding.OnboardingHost
+import app.rawline.feature.onboarding.OnboardingState
 import app.rawline.core.ui.Lr
 import app.rawline.core.ui.LrIcon
 import app.rawline.core.ui.LrIconView
@@ -199,6 +207,26 @@ private fun RawlineRoot(openRoute: String?, modeSwitch: (@Composable () -> Unit)
     val backupIn = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.prepareRestoreFromFile(uri) }
     val backupFolderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> if (uri != null) vm.setBackupFolder(uri) }
 
+    // First run (BK-392, docs/COPY.md). Decided once, after the library has loaded, so the photo grid is never held back: a fresh install sees the welcome screens, a returning person
+    // with photos never does (marked done without a word), and a flow that was started always resumes. Every screen has Skip; finishing or skipping is remembered in the prefs.
+    val onboardingFlow = remember { Onboarding(PrefsStore(graph.prefs), StudioEntry.available) { Perms(vm.permissionGranted.value, vm.allFilesGranted.value) } }
+    val onboarding = remember { OnboardingState(onboardingFlow) }
+    val studioText = StudioEntry.onboardingText()
+    var onboardingDecided by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    var onboardingShown by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(loaded, allPhotos.size) {
+        if (!onboardingDecided) when (Onboarding.entry(onboardingFlow.done, onboardingFlow.started, loaded, allPhotos.size)) {
+            Entry.WAIT -> {}
+            Entry.SHOW -> { onboardingDecided = true; onboardingShown = true }
+            Entry.MARK_DONE -> { onboardingFlow.skipAll(); onboardingDecided = true }
+            Entry.NONE -> onboardingDecided = true
+        }
+    }
+    // coming back from the system permission screen or dialog: a granted permission moves the flow past its own screen
+    LaunchedEffect(permission, allFiles) { if (onboardingShown) onboarding.permissionsChanged() }
+    var explanations by remember { mutableStateOf(graph.prefs.getBoolean(HelpPrefs.EXPLANATIONS, true)) }
+    val glossaryHost = remember(explanations) { if (explanations) GlossaryHost { showToast(it) } else null }
+
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val o = androidx.lifecycle.LifecycleEventObserver { _, e -> if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) { vm.onResume(rationale()); scope.launch(Dispatchers.IO) { runCatching { graph.exportRunner.recoverAfterStart() } } } }
@@ -208,7 +236,9 @@ private fun RawlineRoot(openRoute: String?, modeSwitch: (@Composable () -> Unit)
     // The camera roll shows up by itself: ask for access on the very first launch only. The flag survives rotation, so the dialog
     // is not launched twice, and later launches use the library's own button (Allow access, or Open settings once Android stops asking).
     var autoAsked by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
+    LaunchedEffect(onboardingDecided) {
+        // the welcome screens ask for photo access themselves (their second screen); this is only for a phone that is not showing them
+        if (!onboardingDecided || onboardingShown) return@LaunchedEffect
         val prompt = if (permission) MediaPrompt.GRANTED else if (permissionBlocked) MediaPrompt.OPEN_SETTINGS else MediaPrompt.ASK
         if (MediaAccess.autoAsk(prompt, vm.mediaAsked, autoAsked)) { autoAsked = true; mediaPermission.launch(vm.mediaPermission) }
     }
@@ -234,6 +264,16 @@ private fun RawlineRoot(openRoute: String?, modeSwitch: (@Composable () -> Unit)
     val currentRoute = route?.destination?.route
     // BK-497: the grid's order is held only while the grid is on screen
     LaunchedEffect(currentRoute) { vm.gridVisible.value = currentRoute == "photos" }
+    // the glossary is mentioned once, the first time the editor opens
+    val glossaryHint = androidx.compose.ui.res.stringResource(app.rawline.core.ui.R.string.note_show_explanations)
+    LaunchedEffect(currentRoute) {
+        if (currentRoute?.startsWith("edit") == true && explanations && !graph.prefs.getBoolean(HelpPrefs.EXPLANATIONS_HINT, false)) {
+            graph.prefs.edit().putBoolean(HelpPrefs.EXPLANATIONS_HINT, true).apply()
+            showToast(glossaryHint)
+        }
+    }
+    androidx.compose.runtime.CompositionLocalProvider(LocalGlossary provides glossaryHost) {
+    Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
         Box(Modifier.weight(1f)) {
             // Library to editor and back is a horizontal move (320 ms, no bounce); the tabs and photo to photo swipes do not slide.
@@ -401,6 +441,9 @@ private fun RawlineRoot(openRoute: String?, modeSwitch: (@Composable () -> Unit)
                             message = message,
                             onVersionLongPress = StudioEntry.debugLongPress(context),
                             studioNote = StudioEntry.settingsNote(),
+                            showExplanations = explanations,
+                            onShowExplanations = { explanations = it; graph.prefs.edit().putBoolean(HelpPrefs.EXPLANATIONS, it).apply() },
+                            onShowWelcome = { onboarding.restart(); onboardingShown = true },
                             onBack = { nav.popBackStack() },
                         )
                     }
@@ -417,6 +460,23 @@ private fun RawlineRoot(openRoute: String?, modeSwitch: (@Composable () -> Unit)
                 NavItem(LrIcon.SETTINGS, "Settings", currentRoute == "settings", 0, Modifier.weight(1f)) { nav.navigate("settings") { popUpTo("photos"); launchSingleTop = true } }
             }
         }
+    }
+    if (onboardingShown) OnboardingHost(
+        onboarding, studioText,
+        OnboardingActions(
+            onAllowPhotos = {
+                // the same state machine as the library's button: ask while Android still shows the dialog, otherwise the app's page in system Settings
+                if (MediaAccess.prompt(permission, allFiles, vm.mediaAsked, rationale()) == MediaPrompt.OPEN_SETTINGS)
+                    openSettings(context, vm.appSettingsIntent(), "Open Settings, Apps, Rawline, Permissions and allow Photos") { showToast(it) }
+                else mediaPermission.launch(vm.mediaPermission)
+            },
+            onOpenAllFilesSettings = { openSettings(context, vm.allFilesIntent(), "Open Settings, Apps, Special app access, All files access", fallback = android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)) { showToast(it) } },
+            onPickFolder = { folderPicker.launch(null) },
+            onImportFiles = { filePicker.launch(arrayOf("*/*")) },
+        ),
+        onDone = { onboardingShown = false },
+    )
+    }
     }
     exportSettingsFor?.let { (_, p) -> ExportSettingsDialog(graph, p, onDismiss = { exportSettingsFor = null }) }
 }

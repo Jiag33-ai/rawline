@@ -69,7 +69,11 @@ android {
     }
     sourceSets {
         // the flag decides which StudioEntry exists (the real one or the stub); the debug long press entry follows the flag too, not the build type
-        getByName("main") { kotlin.directories.add(if (studioEnabled) "src/studioOn/kotlin" else "src/studioOff/kotlin") }
+        getByName("main") {
+            kotlin.directories.add(if (studioEnabled) "src/studioOn/kotlin" else "src/studioOff/kotlin")
+            // the words of the Studio welcome screen live with Studio, so a build without it carries none of them
+            if (studioEnabled) res.directories.add("src/studioOn/res")
+        }
         getByName("debug") {
             if (studioEnabled) kotlin.directories.add("src/debugStudioOn/kotlin")
             manifest.srcFile(if (studioEnabled) "src/debugStudioOn/AndroidManifest.xml" else "src/debugStudioOff/AndroidManifest.xml")
@@ -94,6 +98,7 @@ dependencies {
     implementation(project(":feature:export"))
     implementation(libs.androidx.exifinterface)
     implementation(project(":feature:settings"))
+    implementation(project(":feature:onboarding"))
     // Studio is on the classpath only when the flag is on, in every build type
     if (studioEnabled) implementation(project(":feature:studio"))
     implementation(libs.kotlinx.coroutines.android)

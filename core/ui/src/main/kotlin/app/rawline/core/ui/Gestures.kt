@@ -8,6 +8,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
@@ -56,4 +57,25 @@ fun Modifier.tapOrDoubleTapAt(onTap: (Offset) -> Unit = {}, onDoubleTap: (Offset
  */
 fun Modifier.blockPointerInput(): Modifier = pointerInput(Unit) {
     awaitPointerEventScope { while (true) awaitPointerEvent().changes.forEach { it.consume() } }
+}
+
+/**
+ * Reports a long press without taking part in the gesture: nothing is consumed, so a double tap, a drag or a tap handled by an element around this one still works
+ * exactly as before. The press is lost when the finger lifts or moves past the touch slop before the system long press time.
+ */
+fun Modifier.longPressOnly(onLongPress: () -> Unit): Modifier = composed {
+    val long by rememberUpdatedState(onLongPress)
+    Modifier.pointerInput(Unit) {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false)
+            var released = false
+            withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                while (!released) {
+                    val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id }
+                    if (change == null || change.changedToUp() || change.isConsumed || (change.position - down.position).getDistance() > viewConfiguration.touchSlop) released = true
+                }
+            }
+            if (!released) long()
+        }
+    }
 }

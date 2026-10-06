@@ -3,6 +3,7 @@ package app.rawline
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.compose.runtime.Composable
+import app.rawline.feature.onboarding.StudioText
 
 /** Flag off (studio.enabled false and no -PstudioEnabled=true): Studio does not exist in this build. No Studio class is compiled in and the Studio modules are not on the classpath. */
 object StudioEntry {
@@ -15,4 +16,8 @@ object StudioEntry {
     fun reportSection(context: Context, prefs: SharedPreferences): Pair<String, String>? = null
     fun debugLongPress(context: Context): (() -> Unit)? = null
     fun settingsNote(): String? = null
+
+    /** The Studio screen of the welcome flow: none, so the flow has five screens. */
+    @Composable
+    fun onboardingText(): StudioText? = null
 }

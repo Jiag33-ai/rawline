@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- BK-392, shown only in a build with Studio. Checked by CopyRulesTest like every strings file. -->
+    <string name="title_studio">Meet Studio</string>
+    <string name="body_studio">Studio is a separate editor that works in layers. It sits next to the RAW editor and never changes your RAW edits.</string>
+    <string name="note_studio">Switch between Develop and Studio at the top of Photos.</string>
+</resources>

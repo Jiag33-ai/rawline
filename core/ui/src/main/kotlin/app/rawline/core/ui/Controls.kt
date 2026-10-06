@@ -21,6 +21,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
@@ -196,7 +197,11 @@ fun RawSlider(
             },
     ) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp).padding(top = 2.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text(label, style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 18.sp), color = Lr.TextPrimary)
+            // Long press on the name shows its glossary line when "Show explanations" is on (LocalGlossary is null otherwise). The label only, never the track, so a drag is untouched.
+            val glossary = LocalGlossary.current
+            val glossLine = if (glossary != null) Glossary.idFor(label)?.let { stringResource(it) } else null
+            val labelText = @Composable { Text(label, style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 18.sp), color = Lr.TextPrimary) }
+            if (glossary != null && glossLine != null) Box(Modifier.defaultMinSize(minHeight = 30.dp).longPressOnly { glossary.show(glossLine) }, contentAlignment = Alignment.CenterStart) { labelText() } else labelText()
             // A tap types a number, a double tap resets. This is its own detector (not clickable) so the double tap is not swallowed.
             Text(
                 shownValue, style = ValueStyle, color = Lr.TextSecondary,

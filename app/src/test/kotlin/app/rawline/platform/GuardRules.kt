@@ -45,6 +45,7 @@ object BackInventory {
         "MaskTray.kt" to 1,        // step back inside the masking tray (busy, picking, renaming, edit page, pick page)
         "LoupeScreen.kt" to 1,     // close the info panel or the star picker
         "LibraryScreen.kt" to 1,   // clear the selection
+        "OnboardingScreen.kt" to 1, // welcome screens (W27): one screen back; on the first screen it closes them like Skip. Always enabled while they show, so Back never reaches the screens under them.
         "CanvasScreen.kt" to 1,    // Studio: close export, then the layers panel, then save and leave
         "StudioRoot.kt" to 1,      // Studio home (S1c): Back on the Studio home goes back to Develop; the canvas has its own handler above
     )

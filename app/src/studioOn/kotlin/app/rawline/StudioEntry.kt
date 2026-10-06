@@ -12,6 +12,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import app.rawline.feature.onboarding.StudioText
 import app.rawline.core.cache.ExitReasons
 import app.rawline.core.cache.PerfLog
 import app.rawline.core.studio.model.AppMode
@@ -97,4 +99,8 @@ object StudioEntry {
 
     fun settingsNote(): String? = "Studio is new. It is a layered painting space next to Develop: switch with Develop | Studio at the top of Photos. " +
         "Make a canvas or start from a photo, paint on layers, then export a flattened JPEG or PNG. Your photos and edits in Develop are not touched."
+
+    /** The Studio screen of the welcome flow: what Studio is, in plain words (strings_studio_onboarding.xml, which only a build with Studio has). */
+    @Composable
+    fun onboardingText(): StudioText? = StudioText(stringResource(R.string.title_studio), stringResource(R.string.body_studio), stringResource(R.string.note_studio))
 }

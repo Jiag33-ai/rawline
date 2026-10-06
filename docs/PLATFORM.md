@@ -20,6 +20,7 @@ BackHandler stays; predictive back is on for the application, so the system show
 |---|---|
 | Editor with the masking tray | 1 a busy, picking, renaming or edit page of the tray steps back one page (MaskTray); 2 the open panel: a crop is cancelled to its start, the curve page returns to Basic, otherwise the panel closes (EditorScreen); 3 leave: save the edit, then back to the viewer (EditorHost) |
 | Loupe (viewer) | 1 close the info panel or the star picker; 2 back to the library |
+| Welcome screens (first run, or from Settings > Help) | one screen back; on the first screen they close, the same as Skip. They sit above every other screen, so nothing below sees Back while they show |
 | Library | 1 clear the selection; 2 back to Android home (the system back-to-home animation shows) |
 | Studio canvas | 1 close export; 2 close the layers panel; 3 save and leave to the Studio home; Studio home goes back to Develop |
 
@@ -33,6 +34,7 @@ The editor leaves with a visible spinner only if the write takes longer than 150
 | `feature/masking/MaskTray.kt` | one page back inside the masking tray |
 | `feature/loupe/LoupeScreen.kt` | the info panel or the star picker |
 | `feature/library/LibraryScreen.kt` | the selection |
+| `feature/onboarding/OnboardingScreen.kt` | the welcome screens: back one screen, or close from the first |
 | `feature/studio/CanvasScreen.kt` | export, then the layers panel, then save and leave |
 | `feature/studio/StudioRoot.kt` | Studio home back to Develop |
 
