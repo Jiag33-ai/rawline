@@ -49,4 +49,12 @@ class GridRowsTest {
         assertEquals(5L, GridRows.topPhotoId(rows, 0)); assertEquals(5L, GridRows.topPhotoId(rows, 1)); assertEquals(6L, GridRows.topPhotoId(rows, 2))
         assertNull(GridRows.topPhotoId(rows, 4)); assertNull(GridRows.topPhotoId(emptyList(), 0)); assertEquals(5L, GridRows.topPhotoId(rows, -3))
     }
+
+    @Test fun aHeldOrderThatRepeatsADayStillGivesUniqueHeadingKeys() {
+        // the same day in two separate runs (the order is held while capture times arrive): the grid keys its items, so a repeated key would crash it
+        val rows = GridRows.build(listOf(photo(1, at(2026, 1, 2, 1)), photo(2, at(2026, 1, 1, 1)), photo(3, at(2026, 1, 2, 2))), SortOrder.NEWEST, zone)
+        val keys = rows.filterIsInstance<GridRow.Head>().map { it.key }
+        assertEquals(3, keys.size); assertEquals(keys.size, keys.toSet().size)
+        assertEquals(keys[0], rows.filterIsInstance<GridRow.Head>()[0].label)
+    }
 }

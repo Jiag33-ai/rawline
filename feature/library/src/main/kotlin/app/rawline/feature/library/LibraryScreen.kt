@@ -82,6 +82,7 @@ import app.rawline.core.model.PasteScope
 import app.rawline.core.model.Photo
 import app.rawline.core.model.SortOrder
 import app.rawline.core.ui.ChipButton
+import app.rawline.core.ui.TouchChip
 import app.rawline.core.ui.Lr
 import app.rawline.core.ui.LrIcon
 import app.rawline.core.ui.LrIconView
@@ -107,6 +108,11 @@ class LibraryActions(
     val onOpenSettings: () -> Unit,
     val onRequestAllFiles: () -> Unit,
     val hasCopied: Boolean,
+    /** BK-498: the RAW photos / All photos chips. true = RAW photos. An explicit choice, stored and never overridden. */
+    val onViewChoice: (raw: Boolean) -> Unit = {},
+    val onDismissWhatsNew: () -> Unit = {},
+    /** BK-497: true while a finger is down on the grid, it is scrolling or photos are selected (the order is held while it is). */
+    val onGridBusy: (Boolean) -> Unit = {},
 )
 
 /** Saves a selection across recreation. Beyond 5000 ids it saves nothing (a huge Bundle can crash the save), so the selection resets. */
@@ -137,6 +143,10 @@ fun LibraryScreen(
     actions: LibraryActions,
     /** The Develop | Studio switch, drawn at the start of the top bar. Null (Studio not in this build) leaves the bar exactly as it was. */
     modeSwitch: (@Composable () -> Unit)? = null,
+    /** BK-498: the shown source holds at least one RAW photo (the chips are drawn only then, or while the RAW view is on). */
+    rawInSource: Boolean = false,
+    /** BK-498: show the one time "What's new" note. */
+    whatsNew: Boolean = false,
     /** BK-120: the column count stored in the preferences (the saveable state below does not survive the user swiping the app away). */
     startColumns: Int = 5,
     onColumnsChanged: (Int) -> Unit = {},
@@ -164,6 +174,12 @@ fun LibraryScreen(
     // removed by a scan cannot leave a ghost "0 selected" bar behind.
     val sel = remember(photos, selected.value) { if (selected.value.isEmpty()) emptyList() else photos.filter { it.id in selected.value } }
     val selecting = sel.isNotEmpty()
+    // BK-497: the app holds the grid's order while this is true and for a moment after
+    var touching by remember { mutableStateOf(false) }
+    val busy = touching || gridState.isScrollInProgress || selecting
+    val busyNow = androidx.compose.runtime.rememberUpdatedState(actions.onGridBusy)
+    LaunchedEffect(busy) { busyNow.value(busy) }
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { busyNow.value(false) } }
     LaunchedEffect(sel) { if (selected.value.size != sel.size) selected.value = sel.mapTo(HashSet()) { it.id } }
     androidx.activity.compose.BackHandler(enabled = selecting) { selected.value = emptySet() }
     app.rawline.core.ui.KeepScreenOn(progress.running)   // a first index of a big library takes minutes: do not let the screen sleep on it
@@ -245,6 +261,8 @@ fun LibraryScreen(
             }
         }
         if (showFilters && !selecting) FilterBar(filter, cameras, actions.onFilter)
+        if (whatsNew && !selecting) WhatsNewBanner(actions.onDismissWhatsNew)
+        if ((rawInSource || filter.rawOnly) && !selecting) ViewChips(filter.rawOnly, actions.onViewChoice)
 
         if (!allFilesGranted && permissionGranted && !selecting) {
             Row(Modifier.fillMaxWidth().background(Lr.AccentSoft).clickable { actions.onRequestAllFiles() }.padding(start = 0.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -262,17 +280,28 @@ fun LibraryScreen(
                         Text("Reading your photos", style = MaterialTheme.typography.bodyMedium, color = Lr.TextSecondary, modifier = Modifier.padding(top = 12.dp))
                     }
                 }
+                photos.isEmpty() && filter.rawOnly && !filter.isActive && allCount > 0 -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    EmptyState(LrIcon.PHOTOS, "No RAW photos here", "Tap All photos to see everything in this place.")
+                }
                 photos.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     EmptyState(LrIcon.PHOTOS, if (filter.isActive) "No photos match" else "Nothing here yet", if (filter.isActive) "Change or clear the filter to see more." else "Tap + to import photos or a folder.",
-                        action = if (filter.isActive) ({ SecondaryButton("Clear filters", { actions.onFilter(LibraryFilter(sort = filter.sort)) }) }) else null)
+                        action = if (filter.isActive) ({ SecondaryButton("Clear filters", { actions.onFilter(LibraryFilter(sort = filter.sort, rawOnly = filter.rawOnly)) }) }) else null)
                 }
                 else -> {
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(columns), state = gridState,
                     horizontalArrangement = Arrangement.spacedBy(2.dp), verticalArrangement = Arrangement.spacedBy(2.dp),
-                    modifier = Modifier.fillMaxSize().pinchColumns(columns) { columns = it; onColumnsChanged(it) },
+                    modifier = Modifier.fillMaxSize().pointerInput(Unit) {
+                        // watches without consuming: a finger on the grid (before it scrolls) already counts as busy
+                        awaitEachGesture {
+                            awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                            touching = true
+                            do { val ev = awaitPointerEvent(PointerEventPass.Final) } while (ev.changes.any { it.pressed })
+                            touching = false
+                        }
+                    }.pinchColumns(columns) { columns = it; onColumnsChanged(it) },
                 ) {
-                    items(rows, key = { r -> if (r is GridRow.Head) "h${r.label}" else (r as GridRow.Pic).p.id }, span = { r -> if (r is GridRow.Head) GridItemSpan(maxLineSpan) else GridItemSpan(1) },
+                    items(rows, key = { r -> if (r is GridRow.Head) "h${r.key}" else (r as GridRow.Pic).p.id }, span = { r -> if (r is GridRow.Head) GridItemSpan(maxLineSpan) else GridItemSpan(1) },
                         contentType = { r -> if (r is GridRow.Head) "head" else "photo" }) { r ->
                         if (r is GridRow.Head) {
                             Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 14.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -330,12 +359,34 @@ private fun FilterBar(f: LibraryFilter, cameras: List<String>, onChange: (Librar
         Row(Modifier.horizontalScroll(rememberScrollState()).padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Edited", style = MaterialTheme.typography.labelMedium, color = Lr.TextDim)
             EditedFilter.entries.forEach { ChipButton(it.label, f.edited == it, { onChange(f.copy(edited = it)) }) }
-            if (f.isActive) ChipButton("Clear filters", false, { onChange(LibraryFilter(sort = f.sort)) })
+            if (f.isActive) ChipButton("Clear filters", false, { onChange(LibraryFilter(sort = f.sort, rawOnly = f.rawOnly)) })
         }
         if (cameras.size > 1) Row(Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             ChipButton("All cameras", f.camera == null, { onChange(f.copy(camera = null)) })
             cameras.forEach { c -> ChipButton(c, f.camera == c, { onChange(f.copy(camera = c)) }) }
         }
+    }
+}
+
+/** BK-498: "RAW photos" and "All photos". Two options of one choice; 48 dp targets through [TouchChip]. */
+@Composable
+private fun ViewChips(rawOnly: Boolean, onChoice: (raw: Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth().background(Lr.Surface1).padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        TouchChip("RAW photos", rawOnly, { onChoice(true) })
+        TouchChip("All photos", !rawOnly, { onChoice(false) })
+    }
+}
+
+/** BK-498: said once, after the update that makes the library open on RAW photos. */
+@Composable
+private fun WhatsNewBanner(onClose: () -> Unit) {
+    Row(Modifier.fillMaxWidth().background(Lr.AccentSoft).padding(start = 0.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.width(2.dp).height(60.dp).background(Lr.Accent))
+        Column(Modifier.weight(1f).padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Text("What's new", style = MaterialTheme.typography.labelLarge)
+            Text("Rawline now opens on your RAW photos. Tap All photos to see everything on your phone.", style = MaterialTheme.typography.bodySmall, color = Lr.TextSecondary)
+        }
+        TextButton(onClose, Modifier.height(LrDim.touch)) { Text("Close") }
     }
 }
 

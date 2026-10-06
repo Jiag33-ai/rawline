@@ -12,7 +12,7 @@ object ReportBuilder {
     private val statusNames = mapOf(0 to "waiting", 1 to "running", 2 to "done", 3 to "failed", 4 to "cancelled")
 
     /** Call off the main thread: it reads the database and queries the GPU driver. */
-    suspend fun build(context: Context, graph: Graph, shownPhotos: Int, shownLabel: String): String {
+    suspend fun build(context: Context, graph: Graph, shownPhotos: Int, shownLabel: String, gridResorts: Int = 0): String {
         val now = System.currentTimeMillis()
         val version = "Build: Rawline $buildLabel (built ${BuildConfig.BUILD_DATE})"
         val sections = ArrayList<Pair<String, String>>()
@@ -20,7 +20,8 @@ object ReportBuilder {
             val c = graph.db.photos().counts()
             "${c.total} photos in the library (${c.raw} RAW), ${c.edited} edited\n" +
                 "Indexing: ${c.total - c.pending - c.noPreview} done, ${c.pending} waiting, ${c.noPreview} unreadable\n" +
-                "The photo grid is showing $shownPhotos ($shownLabel)"
+                "The photo grid is showing $shownPhotos ($shownLabel)\n" +
+                "grid_resort_count: $gridResorts (times the order of photos already on screen changed this session)"
         }.getOrElse { "unavailable (${it.javaClass.simpleName})" }
         sections += "Export queue" to runCatching {
             val counts = graph.db.exports().statusCounts().associate { it.status to it.n }

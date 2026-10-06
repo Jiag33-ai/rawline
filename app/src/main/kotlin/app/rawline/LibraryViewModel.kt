@@ -19,7 +19,13 @@ import app.rawline.core.data.SidecarResult
 import app.rawline.core.data.RecipeRead
 import app.rawline.core.model.EditRecipe
 import app.rawline.platform.LibraryFilterJson
+import app.rawline.core.model.DefaultView
+import app.rawline.core.model.HeldOrder
+import app.rawline.core.model.Kind
 import app.rawline.core.model.LibraryFilter
+import app.rawline.core.model.OrderGate
+import app.rawline.core.model.ViewChoice
+import app.rawline.core.model.WhatsNew
 import app.rawline.core.model.PasteScope
 import app.rawline.core.model.Photo
 import app.rawline.core.render.ExportSettings
@@ -39,11 +45,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.transform
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -59,7 +67,14 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
     val overlay = MutableStateFlow(graph.prefs.getBoolean("overlay", false))
     val xmp = MutableStateFlow(graph.prefs.getBoolean("xmp", false))
     /** BK-120: the filter and sort come back after a cold start (JSON in the preferences, damaged or unknown values fall back to the defaults). */
-    val filter = MutableStateFlow(LibraryFilterJson.read(graph.prefs.getString("libraryFilter", null)))
+    /** BK-498: "raw" or "all" once the user has tapped a chip; null until then (the default view applies). Never overridden after a choice. */
+    private val viewChoice = MutableStateFlow(ViewChoice.parse(graph.prefs.getString("viewChoice", null)))
+    private val whatsNewSeen = MutableStateFlow(graph.prefs.getInt("whatsNewSeen", 0))
+    /** True once the default view has been decided from the content, so the grid never shows everything for a moment and then flips to RAW photos. */
+    private val viewReady = MutableStateFlow(false)
+    /** The saved filter does not hold the RAW view (D8 of W29): it comes from [viewChoice] and the content, so a stored filter cannot contradict the chip. */
+    val filter = MutableStateFlow(LibraryFilterJson.read(graph.prefs.getString("libraryFilter", null)).copy(rawOnly = viewChoice.value == ViewChoice.RAW))
+    val rawCount: StateFlow<Int> = graph.db.photos().rawCount().stateIn(viewModelScope, SharingStarted.Eagerly, 0)
     val progress: StateFlow<IndexProgress> = graph.indexer.progress
     val copied = MutableStateFlow<EditRecipe?>(null)
     /** The look of the photo most recently edited and left, for "Paste from last". */
@@ -92,7 +107,7 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
 
     private val _loaded = MutableStateFlow(false)
     /** True once the list has emitted at least once, so an empty list means "nothing here" and not "not read yet". */
-    val loaded: StateFlow<Boolean> = _loaded
+    val loaded: StateFlow<Boolean> = combine(_loaded, viewReady) { a, b -> a && b }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     /** Every photo of the shown source, newest first. Updates are throttled, more so while the indexer is filling in rows. */
     val allPhotos: StateFlow<List<Photo>> = source.flatMapLatest { key ->
@@ -105,10 +120,49 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     /** The filtered list and its grid rows (date headings), both built off the main thread. */
-    class Listing(val photos: List<Photo>, val rows: List<GridRow>) { companion object { val EMPTY = Listing(emptyList(), emptyList()) } }
+    class Listing(val photos: List<Photo>, val rows: List<GridRow>, val rawInSource: Boolean = false) { companion object { val EMPTY = Listing(emptyList(), emptyList()) } }
 
-    val listing: StateFlow<Listing> = combine(allPhotos, filter) { all, f -> val p = f.apply(all); Listing(p, GridRows.build(p, f.sort)) }
-        .flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), Listing.EMPTY)
+    /** The list as the database and the filter give it, before the order is held (BK-497). [ids] is made once per list. */
+    private class Sorted(val photos: List<Photo>, val filter: LibraryFilter, val rawInSource: Boolean, val source: String) { val ids: List<Long> by lazy { photos.map { it.id } } }
+
+    private val sorted: kotlinx.coroutines.flow.Flow<Sorted> = combine(allPhotos, filter, viewChoice, viewReady) { all, f, choice, ready ->
+        if (!ready) return@combine null
+        val rawIn = all.any { it.kind == Kind.RAW }
+        // the default (no choice made) only applies where the shown source has RAW photos, so a folder of JPEG files is never an empty grid
+        val eff = if (f.rawOnly && choice == null && !rawIn) f.copy(rawOnly = false) else f
+        Sorted(eff.apply(all), eff, rawIn, source.value)
+    }.filterNotNull()
+
+    /** BK-497: true while the grid is on screen (false while a photo or the editor is open, when a new order can apply at once). */
+    val gridVisible = MutableStateFlow(true)
+    /** BK-497: a finger is down on the grid, it is scrolling or photos are selected. */
+    val gridBusy = MutableStateFlow(false)
+    private val orderGate = OrderGate()
+    private val tick = MutableStateFlow(0)
+    private val tickPending = java.util.concurrent.atomic.AtomicBoolean(false)
+    /** How many times the order of photos already on screen changed this session. The Copy report prints it as grid_resort_count. */
+    val gridResorts: Int get() = orderGate.resorts
+
+    /**
+     * The grid's list. While the user is busy on the grid and for 1.5 s after, photos keep their places: deleted ones leave at once, new ones wait, and
+     * the sorted order is applied once afterwards. A change of source or filter, and a grid that is not on screen, apply at once. The data of each tile
+     * (rating, flag, edited badge) is always the latest; only the order is held.
+     */
+    val listing: StateFlow<Listing> = flow {
+        val held = HeldOrder(orderGate)
+        combine(sorted, gridBusy, gridVisible, tick) { s, busy, visible, _ -> Triple(s, busy, visible) }.collect { (s, busy, visible) ->
+            val step = held.step(s, s.source to s.filter, s.ids, busy, visible, android.os.SystemClock.elapsedRealtime())
+            if (step.waiting && tickPending.compareAndSet(false, true)) viewModelScope.launch { delay(300); tickPending.set(false); tick.value++ }
+            if (!step.changed) return@collect
+            val byId = HashMap<Long, Photo>(s.photos.size * 2); s.photos.forEach { byId[it.id] = it }
+            val shown = step.ids.mapNotNull { byId[it] }
+            emit(Listing(shown, GridRows.build(shown, s.filter.sort), s.rawInSource))
+        }
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), Listing.EMPTY)
+
+    /** BK-498: the one time note. Only where the new default is really in effect and the user has made no choice. */
+    val whatsNew: StateFlow<Boolean> = combine(listing, filter, viewChoice, whatsNewSeen) { l, f, c, seen -> WhatsNew.shouldShow(seen, f.rawOnly && l.rawInSource, c) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
     val cameras: StateFlow<List<String>> = allPhotos.map { l -> l.mapNotNull { it.camera }.distinct().sorted() }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -135,6 +189,8 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
     fun topRestored() { restoreTopId.value = null }
 
     init {
+        // decide the default view before the first list is shown (one COUNT query), so the grid does not open on everything and then flip
+        viewModelScope.launch(Dispatchers.IO) { evaluateView(runCatching { graph.db.photos().rawCountNow() }.getOrDefault(0)); viewReady.value = true }
         viewModelScope.launch { filter.collect { graph.prefs.edit().putString("libraryFilter", LibraryFilterJson.write(it)).apply() } }
         // First run: no saved choice. Show the camera roll (falls back to everything on the phone if there is no "Camera" album).
         viewModelScope.launch {
@@ -218,6 +274,8 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
                         while (ExportService.isRunning && waited < 300) { delay(2000); waited++ }
                     }
                     scanTracked { runCatching { graph.deviceScanner.scanDevice() }.onFailure { PerfLog.error("device scan: ${it.message}") } }
+                    // BK-498: a scan may have found the first RAW files; decide again unless the user is busy on the grid (the view never flips under a thumb)
+                    if (viewChoice.value == null && !gridBusy.value) runCatching { evaluateView(graph.db.photos().rawCountNow()) }
                     runCatching { graph.indexer.indexPendingLike("device:%") }
                 }
             } finally { gate.release() }
@@ -226,7 +284,27 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
 
     override fun onCleared() { observer?.let { app.contentResolver.unregisterContentObserver(it) } }
 
-    fun selectSource(key: String) { graph.prefs.edit().putString("source", key).apply(); source.value = key; filter.value = LibraryFilter(sort = filter.value.sort) }
+    fun selectSource(key: String) {
+        graph.prefs.edit().putString("source", key).apply(); source.value = key
+        // a new source starts without filters; the RAW view follows the user's choice, or the default for what the phone holds
+        filter.value = LibraryFilter(sort = filter.value.sort, rawOnly = DefaultView.rawOnly(viewChoice.value, rawCount.value))
+    }
+
+    /** BK-498: decide the RAW view from the choice, or from the content when there is none. Called after a scan and when the source changes, not while the user scrolls. */
+    fun evaluateView(rawCount: Int) {
+        val raw = DefaultView.rawOnly(viewChoice.value, rawCount)
+        if (filter.value.rawOnly != raw) filter.value = filter.value.copy(rawOnly = raw)
+    }
+
+    /** The user tapped "RAW photos" or "All photos": stored, never overridden again, and the What's New note is done with. */
+    fun setViewChoice(raw: Boolean) {
+        val c = if (raw) ViewChoice.RAW else ViewChoice.ALL
+        graph.prefs.edit().putString("viewChoice", c.key).putInt("whatsNewSeen", WhatsNew.NOTE_VERSION).apply()
+        viewChoice.value = c; whatsNewSeen.value = WhatsNew.NOTE_VERSION
+        filter.value = filter.value.copy(rawOnly = raw)
+    }
+
+    fun dismissWhatsNew() { graph.prefs.edit().putInt("whatsNewSeen", WhatsNew.NOTE_VERSION).apply(); whatsNewSeen.value = WhatsNew.NOTE_VERSION }
 
     fun importFiles(uris: List<Uri>) {
         viewModelScope.launch(Dispatchers.IO) {

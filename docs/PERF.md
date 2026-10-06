@@ -12,6 +12,8 @@ Targets (S24 Ultra, S5IIX RW2). **Nothing here is measured on the phone yet.** T
 | Press Edit to first editable preview | < 1.2 s | not measured |
 | Slider move to updated preview | < 16 ms | not measured |
 | Export full-res 24 MP JPEG | < 3 s | not measured |
+| Library: grid does not move while indexing (`grid_resort_count`, in the Library block of the report) | 0 until the finger has been up for 1.5 s, then at most 1 | not measured |
+| Library: capture times read for the newest 300 new RAW files at a scan (`scan_exif_ms`) | not set | not measured |
 | Studio: open project (24 MP JPEG import) | < 1.5 s | not measured |
 | Studio: stroke frame time | < 16.6 ms (8.3 ms at 120 Hz) | not measured |
 | Studio: input to pixel | not set | not measured |

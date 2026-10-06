@@ -19,6 +19,11 @@ class PlatformRulesTest {
         assertEquals(f, LibraryFilterJson.read(LibraryFilterJson.write(f)))
         assertEquals(LibraryFilter(), LibraryFilterJson.read(LibraryFilterJson.write(LibraryFilter())))
     }
+    @Test fun theRawViewIsNotStoredInTheFilter() {
+        // W29 D8: the RAW view comes from the user's chip choice and the content, so a stored filter cannot contradict it
+        assertFalse(LibraryFilterJson.read(LibraryFilterJson.write(LibraryFilter(rawOnly = true, minRating = 2))).rawOnly)
+        assertEquals(2, LibraryFilterJson.read(LibraryFilterJson.write(LibraryFilter(rawOnly = true, minRating = 2))).minRating)
+    }
     @Test fun damagedOrUnknownValuesFallBackToDefaults() {
         assertEquals(LibraryFilter(), LibraryFilterJson.read(null)); assertEquals(LibraryFilter(), LibraryFilterJson.read("")); assertEquals(LibraryFilter(), LibraryFilterJson.read("{nope"))
         val g = LibraryFilterJson.read("""{"minRating":99,"flag":"SPARKLE","sort":"RATING","future":{"x":1}}""")

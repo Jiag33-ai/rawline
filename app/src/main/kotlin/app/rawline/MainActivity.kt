@@ -139,6 +139,7 @@ private fun RawlineRoot(openRoute: String?, modeSwitch: (@Composable () -> Unit)
     val photos = listing.photos
     val allPhotos by vm.allPhotos.collectAsStateWithLifecycle()
     val loaded by vm.loaded.collectAsStateWithLifecycle()
+    val whatsNew by vm.whatsNew.collectAsStateWithLifecycle()
 
     val cameras by vm.cameras.collectAsStateWithLifecycle()
     val filter by vm.filter.collectAsStateWithLifecycle()
@@ -229,6 +230,8 @@ private fun RawlineRoot(openRoute: String?, modeSwitch: (@Composable () -> Unit)
     }
 
     val currentRoute = route?.destination?.route
+    // BK-497: the grid's order is held only while the grid is on screen
+    LaunchedEffect(currentRoute) { vm.gridVisible.value = currentRoute == "photos" }
     Column(Modifier.fillMaxSize()) {
         Box(Modifier.weight(1f)) {
             // Library to editor and back is a horizontal move (320 ms, no bounce); the tabs and photo to photo swipes do not slide.
@@ -288,8 +291,10 @@ private fun RawlineRoot(openRoute: String?, modeSwitch: (@Composable () -> Unit)
                                 onOpenSettings = { openSettings(context, vm.appSettingsIntent(), "Open Settings, Apps, Rawline, Permissions and allow Photos") { showToast(it) } },
                                 onRequestAllFiles = { openSettings(context, vm.allFilesIntent(), "Open Settings, Apps, Special app access, All files access", fallback = android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)) { showToast(it) } },
                                 hasCopied = copied != null,
+                                onViewChoice = { vm.setViewChoice(it) }, onDismissWhatsNew = { vm.dismissWhatsNew() }, onGridBusy = { vm.gridBusy.value = it },
                             ),
                             modeSwitch = modeSwitch,
+                            rawInSource = listing.rawInSource, whatsNew = whatsNew,
                             startColumns = vm.columns, onColumnsChanged = { vm.setColumns(it) },
                             restoreTopId = restoreTopId, onTopRestored = { vm.topRestored() }, onTopPhoto = { vm.saveTopPhoto(it) },
                         )
@@ -368,7 +373,7 @@ private fun RawlineRoot(openRoute: String?, modeSwitch: (@Composable () -> Unit)
                             onCopyReport = {
                                 scope.launch {
                                     val label = when { source == "device:*" -> "all device photos"; source.startsWith("device:") -> "album ${source.removePrefix("device:")}"; else -> "a picked folder or imports" }
-                                    val text = withContext(Dispatchers.IO) { ReportBuilder.build(context, graph, allPhotos.size, label) }
+                                    val text = withContext(Dispatchers.IO) { ReportBuilder.build(context, graph, allPhotos.size, label, vm.gridResorts) }
                                     (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Rawline report", text))
                                     showToast("Report copied")
                                 }

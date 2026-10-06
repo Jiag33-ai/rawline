@@ -7,6 +7,11 @@ import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import app.rawline.core.cache.PerfLog
+import app.rawline.core.cache.PreviewDecoder
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import app.rawline.core.model.FileTypes
 import app.rawline.core.model.Kind
 
@@ -17,6 +22,7 @@ import app.rawline.core.model.Kind
  */
 class DeviceScanner(private val context: Context, private val dao: PhotoDao, private val catalog: Catalog?) {
     @Volatile private var lastSuspicious: Int? = null
+    private companion object { const val HEAD = 300 }
 
     /** @return true when the MediaStore listing completed. */
     suspend fun scanDevice(): Boolean {
@@ -58,10 +64,29 @@ class DeviceScanner(private val context: Context, private val dao: PhotoDao, pri
         if (prune.suspicious != null) PerfLog.event("device scan listed ${rows.size} of ${known.size} known photos; not pruning until a second scan agrees")
         lastSuspicious = prune.suspicious
         prune.gone.map { it.id }.chunked(500).forEach { dao.delete(it) }
-        fresh.chunked(300).forEach { dao.insertAll(it) }
+        // BK-497: the capture time of the newest new RAW files is read before they are inserted, so the first screenful already sits in shooting order
+        // (MediaStore has no DATE_TAKEN for most RAW files, and file times are copy order). A failure keeps the file time; the indexer fixes the rest later.
+        val withTimes = withCaptureTimes(fresh)
+        withTimes.chunked(300).forEach { dao.insertAll(it) }
         catalog?.reapply("device:%")
         PerfLog.record("device_scan_ms (n=${rows.size})", (System.nanoTime() - t0) / 1_000_000)
         return true
+    }
+
+    /** [rows] with the EXIF capture time filled in for the newest [HEAD] RAW rows, four files at a time. Rows keep their order. */
+    private suspend fun withCaptureTimes(rows: List<PhotoEntity>): List<PhotoEntity> {
+        val head = rows.filter { it.isRaw }.sortedByDescending { it.modified }.take(HEAD)
+        if (head.isEmpty()) return rows
+        val t1 = System.nanoTime()
+        val times = HashMap<String, Long>()
+        for (part in head.chunked(4)) {
+            coroutineScope {
+                part.map { r -> async(Dispatchers.IO) { r.uri to runCatching { PreviewDecoder.readExifOnly(context, Uri.parse(r.uri))?.takenAt }.getOrNull() } }.awaitAll()
+            }.forEach { (uri, t) -> if (t != null && t > 0) times[uri] = t }
+        }
+        PerfLog.record("scan_exif_ms (n=${head.size})", (System.nanoTime() - t1) / 1_000_000)
+        if (times.isEmpty()) return rows
+        return rows.map { r -> times[r.uri]?.let { r.copy(takenAt = it) } ?: r }
     }
 
     /** Adds files picked from the document picker to the "imported" source. The picker's read permission is kept. */
@@ -82,7 +107,7 @@ class DeviceScanner(private val context: Context, private val dao: PhotoDao, pri
             val kind = FileTypes.kindOf(name) ?: continue
             fresh.add(PhotoEntity(folderUri = "imported", uri = u.toString(), name = name, size = size, modified = modified, isRaw = kind == Kind.RAW, takenAt = modified))
         }
-        fresh.chunked(300).forEach { dao.insertAll(it) }
+        withCaptureTimes(fresh).chunked(300).forEach { dao.insertAll(it) }
         catalog?.reapply("imported")
         return fresh.size
     }

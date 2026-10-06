@@ -7,7 +7,8 @@ import java.time.ZoneId
 
 /** One row of the library grid: a date heading or a photo. */
 sealed interface GridRow {
-    class Head(val label: String, val count: Int) : GridRow
+    /** [key] is unique within one list (the grid keys its items by it): the same day can head two runs when the order is held while capture times arrive. */
+    class Head(val label: String, val count: Int, val key: String = label) : GridRow
     class Pic(val p: Photo) : GridRow
 }
 
@@ -20,11 +21,13 @@ object GridRows {
         if (sort != SortOrder.NEWEST && sort != SortOrder.OLDEST) return photos.map { GridRow.Pic(it) }
         fun day(p: Photo) = java.time.Instant.ofEpochMilli(if (p.takenAt > 0) p.takenAt else p.modified).atZone(zone).toLocalDate()
         val out = ArrayList<GridRow>(photos.size + 32)
+        val seen = HashMap<String, Int>()
         var i = 0
         while (i < photos.size) {
             val d = day(photos[i]); var j = i
             while (j < photos.size && day(photos[j]) == d) j++
-            out.add(GridRow.Head(DateText.day(d), j - i))
+            val label = DateText.day(d); val n = seen.merge(label, 1, Int::plus)!!
+            out.add(GridRow.Head(label, j - i, if (n == 1) label else "$label #$n"))
             for (k in i until j) out.add(GridRow.Pic(photos[k]))
             i = j
         }
