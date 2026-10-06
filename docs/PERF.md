@@ -12,6 +12,13 @@ Targets (S24 Ultra, S5IIX RW2). **Nothing here is measured on the phone yet.** T
 | Press Edit to first editable preview | < 1.2 s | not measured |
 | Slider move to updated preview | < 16 ms | not measured |
 | Export full-res 24 MP JPEG | < 3 s | not measured |
+| Studio: open project (24 MP JPEG import) | < 1.5 s | not measured |
+| Studio: stroke frame time | < 16.6 ms (8.3 ms at 120 Hz) | not measured |
+| Studio: input to pixel | not set | not measured |
+| Studio: 20 layer 24 MP pan/zoom frame | < 16.6 ms | not measured |
+| Studio: export flatten 24 MP | < 6 s | not measured |
+| Studio: autosave after a stroke | not set | not measured |
+| Studio: memory high-water mark | under 2.2 GB | not measured |
 
 Timers recorded by the app (names in the report): `tier2_total_ms`, `tier2_parse_ms`, `tier2_read_ms`, `tier2_decode_ms`, `swipe_cold_ms`, `grid frames`, `grid jank_frames(>25ms)`, `index_total_ms`, `edit_decode_ms`, `edit_upload_ms`, `edit_first_frame_ms`, `frame_render_ms`, `full_decode_ms`, `export_render_ms`, `ai_*_run_ms`, `heal_*_ms`, `denoise_total_ms`.
 
@@ -23,6 +30,7 @@ Measured on the build machine, only to show where work goes; the phone is a diff
 - LibRaw half-size decode of a 24 MP RW2 on the x86 build machine: about 0.9 s single thread. The phone budget for Edit to first frame is 1.2 s, so this is the number to watch.
 - GL pipeline on Mesa llvmpipe (CPU rasteriser) at 960 x 640: about 35 ms per frame. A real GPU is far faster, but this is unmeasured.
 - Models on the same x86 machine (CPU): MobileSAM encoder 1.3 s, decoder 0.1 s, SegFormer sky 0.25 s, LaMa 512 px tile 5.8 s, NAFNet 256 px tile 1.8 s. The app tries the GPU delegate first.
+- Studio compositor (S1a, Mesa llvmpipe, golden scene studio_blend3, 4 layers, 256 x 192 output): holds 1.25 MB of textures; no speed number was taken. The Studio rows above stay unmeasured until S1b adds the timers to the Copy report (budgets are in docs/STUDIO_SPEC.md 2.17).
 
 ## Checks that need the phone
 Sliders under 16 ms; grid 120 fps; swipe timings; Edit to first frame; export time; AI mask readiness (< 2 s after editing starts, tap-to-select < 300 ms); remove a person-sized object from 24 MP in under 10 s; 30 minute soak test.
