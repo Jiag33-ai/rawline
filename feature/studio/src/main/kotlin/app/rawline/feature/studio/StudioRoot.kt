@@ -24,7 +24,12 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import app.rawline.core.studio.model.OpenMark
+import app.rawline.core.studio.model.RawPick
 import app.rawline.core.studio.model.SpaceCheck
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
+import android.widget.Toast
 import app.rawline.core.studio.model.Document
 import app.rawline.core.studio.model.Layer
 import app.rawline.core.studio.model.LayerCommon
@@ -54,7 +59,13 @@ private class Open(val session: StudioSession, val gl: StudioGl)
  * Every file, database and codec step runs on Dispatchers.IO; the main thread only builds the session objects.
  */
 @Composable
-fun StudioRoot(modeSwitch: @Composable () -> Unit, perf: StudioPerf, appVersion: String, onReady: () -> Unit, onBackToDevelop: () -> Unit, modifier: Modifier = Modifier) {
+fun StudioRoot(
+    modeSwitch: @Composable () -> Unit, perf: StudioPerf, appVersion: String, onReady: () -> Unit, onBackToDevelop: () -> Unit, modifier: Modifier = Modifier,
+    /** BK-504: the project that was open when the last session ended. A normal Close clears it, a kill leaves it, and the home offers it as "Continue". Null: no Continue card. */
+    openMark: OpenMark? = null,
+    /** BK-504: Studio is in use (a project opened, the app paused, Close): the host stamps the time that decides the start mode. */
+    onActive: () -> Unit = {},
+) {
     val context = LocalContext.current
     val application = context.applicationContext as Application
     val scope = rememberCoroutineScope()
@@ -63,6 +74,7 @@ fun StudioRoot(modeSwitch: @Composable () -> Unit, perf: StudioPerf, appVersion:
     var open by remember { mutableStateOf<Open?>(null) }
     var busy by remember { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
+    val closedByUser = remember { booleanArrayOf(false) }
 
     fun openSession(doc: Document, pixels: Map<String, RawPixels>, onDisk: Boolean, recovered: Boolean) {
         val gl = StudioGl(perf)
@@ -70,6 +82,8 @@ fun StudioRoot(modeSwitch: @Composable () -> Unit, perf: StudioPerf, appVersion:
         val s = StudioSession(projects.fs(), projects.rootOf(doc.id), gl, env, doc, pixels, onDisk, recovered, appVersion)
         gl.inputStamp = s::takeInputStamp
         s.start()
+        openMark?.open(doc.id)
+        onActive()
         open = Open(s, gl)
     }
 
@@ -101,11 +115,14 @@ fun StudioRoot(modeSwitch: @Composable () -> Unit, perf: StudioPerf, appVersion:
     val photo = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null && busy == null && open == null) scope.launch {
             busy = "Reading the picture"; message = null
-            val px = withContext(Dispatchers.IO) { PhotoImport.decode(context, uri) }
+            // BK-505: the file's name and type say whether this is a RAW file, so the message can say where RAW photos open
+            val (name, mime, result) = withContext(Dispatchers.IO) { val (n, m) = PhotoImport.describe(context, uri); Triple(n, m, PhotoImport.decodeResult(context, uri)) }
+            val px = result.pixels
             val space = px?.let { SpaceCheck.problem(context.filesDir.usableSpace, it.w.toLong() * it.h * 4 / 2) }
-            if (px == null) { busy = null; message = "Could not read that picture." }
+            if (px == null) { busy = null; message = RawPick.failure(name, mime, result.errorCode, result.tooLarge) }
             else if (space != null) { busy = null; message = space }
             else {
+                RawPick.outcome(name, mime, decoded = true).message?.let { Toast.makeText(context, it, Toast.LENGTH_LONG).show() }   // a DNG: Android's colours, not Develop's
                 val now = System.currentTimeMillis()
                 val layer = Layer.Pixel(LayerCommon("l1", "Photo"), px.w, px.h)
                 val doc = Document(ProjectCatalog.newId(now), "Photo", px.w, px.h, layers = listOf(layer), created = now, modified = now)
@@ -120,16 +137,28 @@ fun StudioRoot(modeSwitch: @Composable () -> Unit, perf: StudioPerf, appVersion:
     // the screen is left (to Develop, or the canvas closed): the session writes what is unsaved and lets go of the GL queue; the GPU gauges read zero again
     DisposableEffect(open) {
         val o = open
-        onDispose { if (o != null) { o.session.release(); o.gl.release(); StudioStats.clear(); perf.record("studio_texture_mb", 0) } }
+        onDispose {
+            if (o != null) {
+                o.session.release(); o.gl.release(); StudioStats.clear(); perf.record("studio_texture_mb", 0)
+                if (closedByUser[0]) onActive()
+                closedByUser[0] = false
+            }
+        }
     }
+    LifecycleEventEffect(Lifecycle.Event.ON_PAUSE) { onActive() }
 
     val o = open
+    // read when the home appears (and again after a Close), not on every recomposition
+    val continueId = remember(o == null) { if (o == null) openMark?.id() else null }
     if (o != null) {
-        StudioCanvasScreen(o.session, o.gl, projects, perf, onExit = { open = null }, modifier = modifier)
+        StudioCanvasScreen(o.session, o.gl, projects, perf, onExit = {
+            // a normal Close clears the mark (the project itself is saved by the session's flush and release); leaving to Develop through the switch, or a kill, leaves it so Studio can offer "Continue"
+            closedByUser[0] = true; openMark?.close(); open = null
+        }, modifier = modifier)
     } else {
         BackHandler { onBackToDevelop() }
         Box(modifier.fillMaxSize()) {
-            StudioHome(vm, modeSwitch, busy, HomeActions(onOpen = ::openExisting, onNewBlank = ::newBlank, onNewFromPhoto = { photo.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }))
+            StudioHome(vm, modeSwitch, busy, continueId, HomeActions(onOpen = ::openExisting, onNewBlank = ::newBlank, onNewFromPhoto = { photo.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }))
         }
         message?.let { m -> AlertDialog(onDismissRequest = { message = null }, text = { Text(m) }, confirmButton = { LrTextButton(onClick = { message = null }) { Text("OK") } }) }
         // the first frame of the home is on screen: the start guard resets (a crash before this point counts as a failed Studio start)

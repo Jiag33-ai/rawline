@@ -83,3 +83,26 @@ Not verified (compiled and reviewed only; nothing here ran on a device)
 ## Handoff to S2
 - `StudioSession.exportSnapshot` plus `renderStrip` is the way to render the whole canvas at any size; layered export reuses it.
 - Open in Studio from Develop and the export service are S2 and S9. `project.json` stays version 1; never edit `sample_v1.json`.
+
+## S1d: reopen, RAW honesty, honest start failures, thumbnail off the Close path (delivered, phone checks pending)
+Entries BK-504 to BK-507, from the first release holes of the phone test.
+
+Delivered
+- Start mode (BK-504): Studio is the start mode only when it was used less than 30 minutes ago (`ModeState.RESUME_WINDOW_MS`). "Used" is stamped when the user switches to Studio, when a project opens, on pause and when a project is closed. A stored Studio mode with no time stamp (an older install) starts in Develop; a stale choice is rewritten to Develop.
+- Continue (BK-504): `OpenMark` stores the open project's id. A normal Close clears it, a kill leaves it, and the Studio home shows a "Continue <name>" card first when the project still exists (`ContinueRule`). Leaving Studio through the mode switch leaves the mark, so Continue is there when the user comes back.
+- RAW and DNG (BK-505): the home says "RAW photos open from Develop." A DNG that decodes opens with a toast, "Rendered by Android, so colours can differ from Develop."; an RW2 or other RAW that does not decode says "RAW photos open from Develop. Use Open in Studio there."; any other failure names its cause (incomplete, damaged, cannot be read, too large for a 12 megapixel canvas). `PhotoImport.decodeResult` carries the cause; an out of memory is reported as too large instead of crashing. Both pickers (new from a photo, add a photo layer) use it.
+- Honest start failures (BK-506): a Studio start that never drew the home counts as failed only when the previous process crashed, failed to start, stopped responding, or was killed after more than 10 s; a swipe away or force stop never counts (`StartFailure`, `StartGuard.forgiveIfNotAFailure`, `ModeState.judgeLastStart`). The previous exit is read (`ExitReasons.last`) only when a start is pending, once, before the start mode is chosen. No record means not a failure.
+- Thumbnail (BK-507): written from the autosave path, after 2 s without an edit, at most once a minute, only if something changed, and not before the first save of a new project worked (`ThumbScheduler`, `StudioSession.thumbnailer`, its own `studio-thumb` thread). Close no longer renders anything and has no 3 second wait: it flushes the save and leaves. `studio_leave_ms` (tap to leaving) is in the Copy report.
+- Tests: `:core:studio-model` 143 (22 new: S1dTest 19, ModeJudgeTest 3), `:core:studio-render` 59 (8 new: S1dSessionTest), `:feature:studio` 5.
+
+Deviations and limits
+- A project closed within 2 s of its last edit, or within a minute of the previous thumbnail, keeps its older thumbnail: Close does not wait (decision D5). A new project closed within 2 s of being made shows the placeholder until it is opened and edited again.
+- The Continue mark is cleared when Close is tapped, before the session is released (the save is already queued), so the Continue card cannot show for a project that was just closed.
+- The exit mapping uses the platform reason numbers (user requested and user stopped are the user; signal, low memory and other count only after 10 s).
+
+Not verified (the UI cannot run here; compiled, linted and reviewed only)
+- The Continue card, the home line, the toast and dialogs of the picker, `ApplicationExitInfo` on a real kill (the record can lag a process or be missing on a first run), the thumbnail render on a real GL context during painting, `studio_leave_ms`, and the real picker offering an RW2 or DNG.
+- Verified on the host: start mode window, open mark, continue rule, start failure judgement and mode integration, RAW and DNG outcomes, decode messages, thumbnail timing, and in the session (fake GPU, fake clock): first thumbnail, minimum gap, only if changed, postponed while painting, none on Close, a failure is one try, an edit during the write keeps it due, none before the first save.
+
+Jai on the phone: paint, force stop in the canvas, reopen within 30 minutes (Studio home with Continue), reopen after 40 minutes (Develop); Close a project normally and kill (no Continue card); pick an RW2 and a DNG; swipe the app away twice in the first second of Studio, reopen (still Studio, no notice); Close a 12 MP project and paste the Copy report (`studio_leave_ms`).
+

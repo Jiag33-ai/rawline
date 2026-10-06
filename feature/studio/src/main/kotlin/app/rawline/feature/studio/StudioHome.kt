@@ -47,7 +47,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.rawline.core.studio.model.ContinueRule
 import app.rawline.core.studio.model.NewProject
+import app.rawline.core.studio.model.RawPick
 import app.rawline.core.studio.model.ProjectRow
 import app.rawline.core.ui.EmptyState
 import app.rawline.core.ui.Lr
@@ -72,7 +74,7 @@ class HomeActions(
  * no empty tabs). Long press or the overflow button opens Open, Duplicate, Rename, Delete (Delete asks first).
  */
 @Composable
-fun StudioHome(vm: StudioHomeViewModel, modeSwitch: @Composable () -> Unit, busy: String?, actions: HomeActions, modifier: Modifier = Modifier) {
+fun StudioHome(vm: StudioHomeViewModel, modeSwitch: @Composable () -> Unit, busy: String?, continueId: String?, actions: HomeActions, modifier: Modifier = Modifier) {
     val rows by vm.rows.collectAsStateWithLifecycle()
     val damaged by vm.damaged.collectAsStateWithLifecycle()
     val loaded by vm.loaded.collectAsStateWithLifecycle()
@@ -86,6 +88,10 @@ fun StudioHome(vm: StudioHomeViewModel, modeSwitch: @Composable () -> Unit, busy
             Spacer(Modifier.weight(1f))
             LrOutlineButton("New", { newDialog = true }, icon = LrIcon.ADD, small = true)
         }
+        // BK-504: after a kill the project that was open comes first, one tap away
+        ContinueRule.card(continueId, rows)?.let { r -> ContinueCard(vm, r) { actions.onOpen(r.id) } }
+        // BK-505: until Studio can take a RAW file from Develop, say where RAW photos open
+        Text(RawPick.HOME_NOTE, style = MaterialTheme.typography.labelSmall, color = Lr.TextMuted, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp))
         Box(Modifier.weight(1f).fillMaxWidth()) {
             if (loaded && rows.isEmpty() && damaged.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -128,6 +134,27 @@ fun StudioHome(vm: StudioHomeViewModel, modeSwitch: @Composable () -> Unit, busy
     val message by vm.message.collectAsStateWithLifecycle()
     message?.let { m ->
         AlertDialog(onDismissRequest = { vm.consumeMessage() }, text = { Text(m) }, confirmButton = { LrTextButton(onClick = { vm.consumeMessage() }) { Text("OK") } })
+    }
+}
+
+/** The "Continue <name>" card: a 64 dp row with the project's thumbnail, the name and the size. A tap opens the project like any other. */
+@Composable
+private fun ContinueCard(vm: StudioHomeViewModel, r: ProjectRow, onOpen: () -> Unit) {
+    val thumb by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, r.id, r.modified, r.sizeBytes, r.hasThumb) { value = vm.thumbnail(r) }
+    val label = ContinueRule.label(r)
+    Row(
+        Modifier.fillMaxWidth().padding(8.dp).clip(RoundedCornerShape(6.dp)).background(Lr.Surface2).border(1.dp, Lr.BorderDefault, RoundedCornerShape(6.dp))
+            .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onOpen).semantics { contentDescription = label }.padding(8.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(Modifier.size(48.dp).clip(RoundedCornerShape(4.dp)).background(Lr.Black), contentAlignment = Alignment.Center) {
+            val t = thumb
+            if (t != null) Image(t, null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit) else LrIconView(LrIcon.PHOTOS, Lr.TextDisabled, size = 22.dp)
+        }
+        Column(Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.bodyMedium, color = Lr.TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(StudioText.meta(r.width, r.height, r.sizeBytes), style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp, lineHeight = 14.sp), color = Lr.TextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
     }
 }
 

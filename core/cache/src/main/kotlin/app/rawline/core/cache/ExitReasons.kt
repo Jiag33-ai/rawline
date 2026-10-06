@@ -96,6 +96,12 @@ object ExitReasons {
         else list.joinToString("\n") { format(toRecord(it), now) }
     }.getOrElse { "unavailable (${it.javaClass.simpleName})" }
 
+    /** The newest earlier exit Android recorded (the process before this one), or null when there is none or it cannot be read. No trace is read. */
+    fun last(context: Context): Record? = runCatching {
+        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        am.getHistoricalProcessExitReasons(null, 0, 1).firstOrNull()?.let { Record(it.timestamp, it.reason, it.importance, it.description, it.pss, it.rss, it.status) }
+    }.getOrNull()
+
     private fun toRecord(i: ApplicationExitInfo): Record {
         val detail = runCatching {
             when (i.reason) {

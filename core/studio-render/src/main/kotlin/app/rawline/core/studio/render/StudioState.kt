@@ -58,13 +58,15 @@ class StudioEnv(
     val nanos: () -> Long = System::nanoTime,
     val report: (String, Long) -> Unit = { _, _ -> },
     val error: (String) -> Unit = {},
+    /** The project thumbnail is rendered and written here (it waits for the GPU, so it must not share the save thread or the timer). */
+    val thumb: Executor = saver,
 ) {
     companion object {
         private fun pool(name: String) = ThreadPoolExecutor(1, 1, 10, TimeUnit.SECONDS, LinkedBlockingQueue()) { r -> Thread(r, name) }.apply { allowCoreThreadTimeOut(true) }
 
         fun production(report: (String, Long) -> Unit, error: (String) -> Unit): StudioEnv {
             val timer = ScheduledThreadPoolExecutor(1) { r -> Thread(r, "studio-timer").apply { isDaemon = true } }.apply { setKeepAliveTime(10, TimeUnit.SECONDS); allowCoreThreadTimeOut(true) }
-            return StudioEnv(pool("studio-model"), pool("studio-save"), { ms, r -> timer.schedule(r, ms, TimeUnit.MILLISECONDS) }, report = report, error = error)
+            return StudioEnv(pool("studio-model"), pool("studio-save"), { ms, r -> timer.schedule(r, ms, TimeUnit.MILLISECONDS) }, report = report, error = error, thumb = pool("studio-thumb"))
         }
     }
 }

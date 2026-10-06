@@ -87,3 +87,10 @@
 - The grid's order is held while a finger is down, it scrolls or photos are selected, and for 1.5 s after the touch ends (`OrderGate`, `HeldOrder`): deleted photos leave at once, new ones wait, the sorted order is applied once. A new source, a new filter or a grid that is not on screen applies at once. Tile data (rating, flag, edited badge) is always the latest. Heading keys are made unique (`GridRow.Head.key`) because a held order can repeat a day. `grid_resort_count` is in the Library block of the Copy report. (BK-497)
 - A scan reads the EXIF capture time of the newest 300 new RAW files, four at a time, before inserting them, so the first screenful is already in shooting order; a failure keeps the file time. `scan_exif_ms` records the cost. Not measured on the phone.
 
+## Studio S1d decisions (docs/STUDIO_STATUS.md)
+- Studio is the start mode only if used in the last 30 minutes (one constant, `RESUME_WINDOW_MS`); activity is stamped on switching to Studio, opening a project, pause and Close. No time stamp counts as not recent. (BK-504)
+- The open project is remembered in `studio_open_project`; Close clears it, a kill or the mode switch leaves it; the home offers "Continue <name>" when the project still exists. (BK-504)
+- RAW in Studio until the Develop hand-off exists (W26): say where RAW photos open, tell the user a DNG is rendered by Android, name the cause of any other failure. (BK-505)
+- A Studio start is a failed start only after a crash, a failed start, a not responding stop, or a kill after 10 s; a swipe away or force stop never counts. The previous exit comes from `ApplicationExitInfo`; no record is not a failure. (BK-506)
+- The project thumbnail is written by the autosave path (2 s quiet, at most once a minute, only if changed, not before the first save worked); Close never waits for it. (BK-507)
+

@@ -18,7 +18,14 @@ object PhotoImport {
         minOf(1.0, maxW.toDouble() / w, maxH.toDouble() / h, sqrt(maxPixels.toDouble() / (w.toDouble() * h)))
 
     /** Null when the file cannot be read as a picture. */
-    fun decode(context: Context, uri: Uri, maxW: Int = Document.MAX_EDGE, maxH: Int = Document.MAX_EDGE, maxPixels: Long = Document.MAX_PIXELS_S1): RawPixels? = try {
+    fun decode(context: Context, uri: Uri, maxW: Int = Document.MAX_EDGE, maxH: Int = Document.MAX_EDGE, maxPixels: Long = Document.MAX_PIXELS_S1): RawPixels? =
+        decodeResult(context, uri, maxW, maxH, maxPixels).pixels
+
+    /** The outcome of [decodeResult]: the pixels, or why there are none ([errorCode] is ImageDecoder.DecodeException.getError(): 1 source exception, 2 incomplete, 3 source error; null for other causes). */
+    class Result(val pixels: RawPixels?, val errorCode: Int? = null, val tooLarge: Boolean = false)
+
+    /** As [decode], but says why a file could not be read (BK-505). A picture too big for memory is reported as such instead of crashing. */
+    fun decodeResult(context: Context, uri: Uri, maxW: Int = Document.MAX_EDGE, maxH: Int = Document.MAX_EDGE, maxPixels: Long = Document.MAX_PIXELS_S1): Result = try {
         val src = ImageDecoder.createSource(context.contentResolver, uri)
         val bmp = ImageDecoder.decodeBitmap(src) { decoder, info, _ ->
             decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
@@ -27,8 +34,21 @@ object PhotoImport {
             val s = fitScale(info.size.width, info.size.height, maxW, maxH, maxPixels)
             if (s < 1.0) decoder.setTargetSize(maxOf(1, (info.size.width * s).toInt()), maxOf(1, (info.size.height * s).toInt()))
         }
-        toPixels(bmp, maxW, maxH, maxPixels)
-    } catch (e: Exception) { null }
+        Result(toPixels(bmp, maxW, maxH, maxPixels))
+    } catch (e: ImageDecoder.DecodeException) { Result(null, errorCode = e.error)
+    } catch (e: OutOfMemoryError) { Result(null, tooLarge = true)
+    } catch (e: Exception) { Result(null) }
+
+    /** The display name and MIME type the picker gave for [uri] (name is "" when unknown): what [app.rawline.core.studio.model.RawPick] needs. Reads the provider: call off the main thread. */
+    fun describe(context: Context, uri: Uri): Pair<String, String?> {
+        var name = ""
+        runCatching {
+            context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                if (c.moveToFirst() && !c.isNull(0)) name = c.getString(0) ?: ""
+            }
+        }
+        return name to runCatching { context.contentResolver.getType(uri) }.getOrNull()
+    }
 
     private fun toPixels(bmp0: Bitmap, maxW: Int, maxH: Int, maxPixels: Long): RawPixels {
         var bmp = bmp0

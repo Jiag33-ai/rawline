@@ -25,6 +25,7 @@ import app.rawline.core.studio.model.StrokeReference
 import app.rawline.core.studio.model.StrokeTiles
 import app.rawline.core.studio.model.StrokeWalker
 import app.rawline.core.studio.model.StudioHistory
+import app.rawline.core.studio.model.ThumbScheduler
 import app.rawline.core.studio.model.Stamp
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -77,6 +78,12 @@ class StudioSession(
     private val lost = HashSet<String>()
     private val blank = HashSet<String>()                        // layers known to be fully transparent
     private val thumbs = HashMap<String, Thumb>()
+    private val thumbSched = ThumbScheduler()                   // BK-507: when the home's thumbnail is written (model thread)
+    private var thumbTimerArmed = false
+    private var thumbBusy = false
+    /** BK-507: renders and writes the project thumbnail for [snap] (worker thread, returns false on failure). Set by the canvas screen; with none set no thumbnail is made and no timer runs. */
+    @Volatile var thumbnailer: Thumbnailer? = null
+    fun interface Thumbnailer { fun write(snap: ExportSnapshot): Boolean }
     private var needsSave = false
     private var saving = false
     private var saveAgain = false
@@ -125,6 +132,7 @@ class StudioSession(
             publish()
             updateFrame()
             if (!onDisk || needsSaveAtStart()) markDirty(now = true)
+            if (!onDisk) noteEdit()    // a new project gets its first thumbnail after the first quiet moment
         } catch (t: Throwable) {
             env.error("studio open: ${t.javaClass.simpleName}: ${t.message}")
             _state.update { it.copy(phase = Phase.ERROR, error = t.message ?: "Could not open the project") }
@@ -685,8 +693,45 @@ class StudioSession(
     /** A change to save (an edit, a pause, leaving). After a run of failures an edit allows a few more slow tries and a pause or leaving allows one. */
     private fun markDirty(now: Boolean = false) {
         needsSave = true
+        if (!now) noteEdit()
         if (retryHalted) { retryHalted = false; failStreak = if (now) SpaceCheck.MAX_TRIES - 1 else SpaceCheck.MAX_TRIES - 3 }
         scheduleSave(now)
+    }
+
+    // ---- thumbnail on the autosave path (BK-507) ----------------------------------------------------------------------------------
+    // Written after 2 s without an edit, at most once a minute, and only if something changed; never on the Close path (Close does not wait for it).
+
+    private fun noteEdit() { thumbSched.onEdit(env.clock()); armThumbTimer() }
+
+    private fun armThumbTimer() {
+        if (thumbTimerArmed || released || thumbnailer == null) return
+        val wait = thumbSched.waitMs(env.clock()) ?: return
+        thumbTimerArmed = true
+        env.later(maxOf(wait, 250L)) { env.model.execute { thumbTimerArmed = false; checkThumb() } }
+    }
+
+    private fun checkThumb() {
+        val t = thumbnailer
+        if (released || t == null || thumbBusy || !thumbSched.needsWrite()) return
+        // a project whose first save has not worked has no folder to put a thumbnail in: wait for the save (onSaved asks again)
+        if (!everSaved || _state.value.phase != Phase.READY) return
+        val now = env.clock()
+        if (!thumbSched.due(now)) { armThumbTimer(); return }
+        thumbBusy = true
+        env.thumb.execute {
+            var ok = false
+            try {
+                val snap = exportSnapshot(2_000)
+                ok = snap != null && t.write(snap)
+            } catch (e: Throwable) { env.error("studio thumbnail: ${e.javaClass.simpleName}: ${e.message}") }
+            env.model.execute {
+                thumbBusy = false
+                // a failure counts as a try: no hot loop, the next edit asks again. An edit made during the write keeps the thumbnail due.
+                thumbSched.onWritten(now)
+                if (!ok) env.error("studio thumbnail: not written")
+                if (thumbSched.needsWrite()) armThumbTimer()
+            }
+        }
     }
 
     private fun scheduleSave(now: Boolean) {
@@ -742,6 +787,7 @@ class StudioSession(
         saving = false; saveFailed = false; noSpace = false; failStreak = 0; failureNotified = false; retryHalted = false; everSaved = true
         if (saveAgain || needsSave || dirty.isNotEmpty()) { val urgent = saveAgainNow; saveAgain = false; saveAgainNow = false; markDirty(now = urgent) } else publishSave()
         gauges()
+        if (thumbSched.needsWrite()) armThumbTimer()
     }
 
     /**

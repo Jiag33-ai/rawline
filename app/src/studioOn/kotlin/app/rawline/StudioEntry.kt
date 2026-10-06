@@ -12,8 +12,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import app.rawline.core.cache.ExitReasons
 import app.rawline.core.cache.PerfLog
 import app.rawline.core.studio.model.AppMode
+import app.rawline.core.studio.model.ExitInfo
+import app.rawline.core.studio.model.ExitKind
+import app.rawline.core.studio.model.OpenMark
 import app.rawline.core.studio.model.KeyValue
 import app.rawline.core.studio.model.ModeState
 import app.rawline.core.studio.model.StartGuard
@@ -50,7 +54,12 @@ object StudioEntry {
         val context = LocalContext.current
         val prefs = remember { (context.applicationContext as RawlineApplication).graph.prefs }
         val modeState = remember { ModeState(BuildConfig.STUDIO_ENABLED, PrefsKeyValue(prefs)) }
-        var mode by remember { mutableStateOf(modeState.startMode()) }
+        var mode by remember {
+            // BK-506: a swipe away during the first frame of Studio is not a failed start. Only when a start is pending is the previous exit read (one cheap call); null when Android has no record.
+            if (modeState.startPending()) modeState.judgeLastStart(ExitReasons.last(context)?.let { ExitInfo(ExitKind.fromReason(it.reason), it.time) })
+            mutableStateOf(modeState.startMode())
+        }
+        val openMark = remember { OpenMark(PrefsKeyValue(prefs)) }
         val holder = rememberSaveableStateHolder()
         LaunchedEffect(Unit) { modeState.notice?.let { Toast.makeText(context, it, Toast.LENGTH_LONG).show(); modeState.clearNotice() } }
         LaunchedEffect(openRoute) { if (openRoute != null && mode == AppMode.STUDIO) mode = modeState.switchTo(AppMode.DEVELOP) }
@@ -60,7 +69,8 @@ object StudioEntry {
         when (mode) {
             AppMode.DEVELOP -> holder.SaveableStateProvider("develop") { develop(if (modeState.switchVisible(true)) toggle else null) }
             AppMode.STUDIO -> holder.SaveableStateProvider("studio") {
-                StudioRoot(toggle, studioPerf, BuildConfig.VERSION_NAME, onReady = { modeState.studioReady() }, onBackToDevelop = { mode = modeState.switchTo(AppMode.DEVELOP) })
+                StudioRoot(toggle, studioPerf, BuildConfig.VERSION_NAME, onReady = { modeState.studioReady() }, onBackToDevelop = { mode = modeState.switchTo(AppMode.DEVELOP) },
+                    openMark = openMark, onActive = { modeState.studioActive() })
             }
         }
     }

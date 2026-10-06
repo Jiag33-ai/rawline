@@ -58,6 +58,7 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.rawline.core.studio.model.Document
 import app.rawline.core.studio.render.PhotoImport
+import app.rawline.core.studio.model.RawPick
 import app.rawline.core.studio.render.Phase
 import app.rawline.core.studio.render.Rgb
 import app.rawline.core.studio.render.StudioExporter
@@ -81,10 +82,8 @@ import app.rawline.core.ui.ValueFeedback
 import app.rawline.core.ui.ValueFeedbackPill
 import app.rawline.core.ui.blockPointerInput
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 
 private enum class PickerTarget { FOREGROUND, BACKGROUND }
@@ -122,28 +121,25 @@ fun StudioCanvasScreen(session: StudioSession, gl: StudioGl, projects: StudioPro
     }
     var exportOpen by rememberSaveable { mutableStateOf(false) }
     var leaving by remember { mutableStateOf(false) }
-    // Leaving: save what is unsaved, then write the project's thumbnail for the home (a worker renders it through the compositor while the surface still exists), then go.
-    // The thumbnail is best effort: it gets 3 seconds, and a failure only means the home shows the old one.
+    // BK-507: the home's thumbnail is written from the autosave path (StudioSession, after 2 s without an edit, at most once a minute), so Close never waits for it. The renderer is
+    // handed to the session here because it needs the project folder; with the screen gone it is taken away again.
+    val projectId = state.document.id
+    androidx.compose.runtime.DisposableEffect(session, projectId) {
+        session.thumbnailer = StudioSession.Thumbnailer { snap ->
+            val jpeg = StudioExporter(session, perf).thumbnailJpeg(snap)
+            if (jpeg != null) projects.writeThumbnail(projectId, jpeg)
+            jpeg != null
+        }
+        onDispose { session.thumbnailer = null }
+    }
+    // Leaving: save what is unsaved (a flush that returns at once; the session writes it and release() finishes it) and go. No thumbnail work, no waiting.
     val leave: () -> Unit = {
         if (!leaving) {
             leaving = true
+            val t0 = android.os.SystemClock.elapsedRealtime()
             session.flush()
-            val projectId = state.document.id
-            val ready = state.phase == Phase.READY
-            scope.launch {
-                if (ready) {
-                    // async + await, so the 3 second limit works even though the render itself blocks a worker; a late result is dropped (the session is released by then)
-                    val work = async(Dispatchers.IO) {
-                        runCatching {
-                            val snap = session.exportSnapshot(2_000)
-                            val jpeg = snap?.let { StudioExporter(session, perf).thumbnailJpeg(it) }
-                            if (jpeg != null) projects.writeThumbnail(projectId, jpeg)
-                        }.onFailure { perf.error("studio thumbnail: ${it.javaClass.simpleName}: ${it.message}") }
-                    }
-                    withTimeoutOrNull(3_000) { work.await() }
-                }
-                onExit()
-            }
+            onExit()
+            perf.record("studio_leave_ms", android.os.SystemClock.elapsedRealtime() - t0)
         }
     }
     // BK-503: leaving while the last save failed would lose the changes (the project stays in memory only while this screen is open): ask first, and offer Export.
@@ -156,8 +152,14 @@ fun StudioCanvasScreen(session: StudioSession, gl: StudioGl, projects: StudioPro
         if (uri != null) scope.launch {
             val d = state.document
             // decoding and scaling are file and codec work: off the main thread
-            val px = withContext(Dispatchers.IO) { PhotoImport.decode(context, uri, d.width, d.height) }
-            if (px == null) session.reportProblem("Could not read that picture.") else session.addPhotoLayer(px, "Photo")
+            // BK-505: say which kind of failure it was, and where RAW photos open
+            val (name, mime, result) = withContext(Dispatchers.IO) { val (n, m) = PhotoImport.describe(context, uri); Triple(n, m, PhotoImport.decodeResult(context, uri, d.width, d.height)) }
+            val px = result.pixels
+            if (px == null) session.reportProblem(RawPick.failure(name, mime, result.errorCode, result.tooLarge))
+            else {
+                session.addPhotoLayer(px, "Photo")
+                RawPick.outcome(name, mime, decoded = true).message?.let { session.reportProblem(it) }   // a DNG: Android's colours, not Develop's
+            }
         }
     }
     val addPhoto = { photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
