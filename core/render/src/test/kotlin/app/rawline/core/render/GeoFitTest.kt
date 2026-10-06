@@ -154,4 +154,32 @@ class GeoFitTest {
         }
         assertTrue(rows >= 5)
     }
+
+    @Test fun fitCacheNeverMixesResultsAcrossThreads() {
+        Geo.clearFitCache()
+        val ga = Geometry(angle = 3f); val gb = Geometry(angle = -9f, keystoneV = 20f)
+        val expectA = Geo.fitCrop(ga, Optics(), 1, W, H, null).toList()
+        val expectB = Geo.fitCrop(gb, Optics(), 1, W, H, null).toList()
+        assertTrue(expectA != expectB)
+        val bad = java.util.concurrent.atomic.AtomicInteger()
+        val threads = (0 until 6).map { n ->
+            Thread { repeat(400) { i ->
+                val useA = (i + n) % 2 == 0
+                val got = Geo.fitCrop(if (useA) ga else gb, Optics(), 1, W, H, null).toList()
+                if (got != (if (useA) expectA else expectB)) bad.incrementAndGet()
+            } }
+        }
+        threads.forEach { it.start() }; threads.forEach { it.join() }
+        assertEquals(0, bad.get())
+    }
+
+    @Test fun fitCacheReturnsACopyAndKeepsItsKey() {
+        Geo.clearFitCache()
+        val g = Geometry(angle = 5f)
+        val first = fit(g)
+        first[2] = 0f   // the caller scribbles on its copy
+        val again = fit(g)
+        assertTrue(again[2] > 0.5f)
+        assertEquals(again.toList(), fit(g).toList())
+    }
 }

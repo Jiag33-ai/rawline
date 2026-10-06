@@ -339,6 +339,57 @@ class CropMathTest {
         assertTrue("angle $shown", shown > 5f)
     }
 
+    // ---------- the crop tool and the renderer agree ----------
+
+    private val synthLens = floatArrayOf(1f - 0.02161f + 0.03781f + 0.08584f, -0.08584f, -0.03781f, 0.02161f, 0f)
+    private val W = 3000; private val H = 2000
+
+    private fun rendered(g: Geometry, lens: FloatArray?, o: app.rawline.core.model.Optics = app.rawline.core.model.Optics()) =
+        app.rawline.core.render.Geo.fitCrop(g, o, 1, W, H, lens)
+
+    @Test fun largestBoxIsWhatTheRendererShows() {
+        for (lens in listOf<FloatArray?>(null, synthLens)) for (angle in listOf(3f, -7.5f, 20f)) {
+            val g0 = Geometry(angle = angle)
+            val r = CropMath.largest(null, fa, CropMath.validArea(g0, 0f, fa, lens))
+            val g = r.applyTo(g0)
+            val shown = rendered(g, lens)
+            assertEquals("x angle=$angle lens=${lens != null}", r.x0, shown[0], 3e-3f)
+            assertEquals("y", r.y0, shown[1], 3e-3f)
+            assertEquals("w", r.w, shown[2], 3e-3f)
+            assertEquals("h", r.h, shown[3], 3e-3f)
+        }
+    }
+
+    @Test fun lensProfileShrinksTheValidAreaOnlyWhenPassed() {
+        val g = Geometry(angle = 2f)
+        val without = CropMath.largest(null, fa, CropMath.validArea(g, 0f, fa, null))
+        val with = CropMath.largest(null, fa, CropMath.validArea(g, 0f, fa, synthLens))
+        assertNotEquals("the lens polynomial must change the box", without.w, with.w, 1e-4f)
+    }
+
+    @Test fun validAreaKeepsTheRendererEdgeMargin() {
+        // a frame point mapping 0.1% inside the source edge is on picture for the old test but not for the renderer
+        val g = Geometry(angle = 0.5f)
+        val a = CropMath.validArea(g, 0f, fa, null)
+        val r = CropMath.largest(null, fa, a)
+        val c = app.rawline.core.render.Geo.frameToSource(r.x0, r.y0, g, app.rawline.core.model.Optics(), 1, W, H)
+        assertTrue("corner at ${c[0]},${c[1]} must keep the margin", c[0] >= app.rawline.core.render.Geo.EDGE_MARGIN - 1e-4f || c[1] >= app.rawline.core.render.Geo.EDGE_MARGIN - 1e-4f)
+    }
+
+    @Test fun fitStoredCropWritesTheRenderedCropBackOnlyWhenItDiffers() {
+        val o = app.rawline.core.model.Optics()
+        val consistent = CropMath.largest(null, fa, CropMath.validArea(Geometry(angle = 4f), 0f, fa, null)).applyTo(Geometry(angle = 4f))
+        val same = fitStoredCrop(consistent, o, 1, W, H, null, tolerance = 3e-3f)
+        assertTrue("already what is rendered: unchanged instance", same === consistent)
+        val tooBig = Geometry(angle = 8f)   // full frame crop at 8 degrees would show empty wedges
+        val fixed = fitStoredCrop(tooBig, o, 1, W, H, null)
+        assertTrue(fixed !== tooBig)
+        assertTrue(fixed.cropW < 1f && fixed.cropH < 1f)
+        val shown = rendered(tooBig, null)
+        assertEquals(shown[2], fixed.cropW, 1e-6f)
+        assertEquals(8f, fixed.angle, 0f)
+    }
+
     private fun assertRectEq(a: CropRect, b: CropRect) {
         assertTrue("$a vs $b", abs(a.x0 - b.x0) < 1e-5f && abs(a.y0 - b.y0) < 1e-5f && abs(a.x1 - b.x1) < 1e-5f && abs(a.y1 - b.y1) < 1e-5f)
         assertNotEquals(null, a)

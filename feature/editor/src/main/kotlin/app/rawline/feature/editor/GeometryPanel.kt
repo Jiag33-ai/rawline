@@ -74,8 +74,11 @@ fun GeometryPanel(
 ) {
     val feedback = LocalValueFeedback.current
     val g = state.recipe.geometry
-    val dist = state.recipe.optics.distortion
     fun geo(label: String, f: (Geometry) -> Geometry) = state.edit(label) { it.copy(geometry = f(it.geometry)) }
+    // Read the live recipe and session inside the edit, never values captured at composition: two quick taps (rotate, rotate) must
+    // see the first tap's result (its frame aspect, distortion, lens profile), not the stale ones from before it.
+    fun geoFit(label: String, f: (g: Geometry, dist: Float, fa: Float, lens: FloatArray?) -> Geometry) =
+        state.edit(label) { r -> r.copy(geometry = f(r.geometry, r.optics.distortion, state.session.baseAspect(), state.session.cropLens(r))) }
     if (sub == "perspective") {
         PanelColumn {
             PanelHeader("Perspective", Resets.perspectiveModified(g), { geo("Reset perspective") { Resets.perspective(it) } }, trailing = {
@@ -95,7 +98,7 @@ fun GeometryPanel(
         Row(Modifier.fillMaxWidth().height(LrDim.touch), verticalAlignment = Alignment.CenterVertically) {
             Box(
                 Modifier.size(LrDim.touch).clickable {
-                    geo("Swap landscape and portrait") { CropMath.swapLandscapePortrait(it, dist, frameAspect) }
+                    geoFit("Swap landscape and portrait") { g0, d, fa, l -> CropMath.swapLandscapePortrait(g0, d, fa, l) }
                     feedback.flash("Crop", "orientation swapped")
                 }.semantics { contentDescription = "Swap landscape and portrait" },
                 contentAlignment = Alignment.Center,
@@ -107,9 +110,9 @@ fun GeometryPanel(
                 AspectNames.forEach { name ->
                     TouchChip(
                         CropMath.label(name), g.aspect.equals(name, true),
-                        { geo("Crop ${CropMath.label(name)}") { CropMath.pickAspect(it, name, dist, frameAspect) } },
+                        { geoFit("Crop ${CropMath.label(name)}") { g0, d, fa, l -> CropMath.pickAspect(g0, name, d, fa, l) } },
                         // double tap: that shape at the biggest size the picture allows
-                        onDoubleTap = { geo("Crop ${CropMath.label(name)} largest") { CropMath.pickAspectLargest(it, name, dist, frameAspect) }; feedback.flash("Crop", "${CropMath.label(name)} reset") },
+                        onDoubleTap = { geoFit("Crop ${CropMath.label(name)} largest") { g0, d, fa, l -> CropMath.pickAspectLargest(g0, name, d, fa, l) }; feedback.flash("Crop", "${CropMath.label(name)} reset") },
                     )
                 }
             }
@@ -118,14 +121,14 @@ fun GeometryPanel(
         StraightenDial(
             g.angle,
             onStart = { dialBase = CropRect.of(state.recipe.geometry); onStraightening(true) },
-            onChange = { a -> state.live { it.withStraighten(a, frameAspect, dialBase ?: CropRect.of(it.geometry)) } },
+            onChange = { a -> state.live { it.withStraighten(a, state.session.baseAspect(), dialBase ?: CropRect.of(it.geometry), state.session.cropLens(it)) } },
             onCommit = { state.commit("Straighten"); dialBase = null; onStraightening(false) },
-            onReset = { state.edit("Reset straighten") { it.withStraighten(0f, frameAspect) }; feedback.flash("Straighten", "0.0° (reset)") },
+            onReset = { state.edit("Reset straighten") { it.withStraighten(0f, state.session.baseAspect(), lens = state.session.cropLens(it)) }; feedback.flash("Straighten", "0.0° (reset)") },
         )
         // ---- turn, flip, level, reset ----
         Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-            CropToolButton(LrIcon.ROTATE_LEFT, "Rotate L", { geo("Rotate left") { CropMath.rotate(it, false, dist, frameAspect) } })
-            CropToolButton(LrIcon.ROTATE, "Rotate R", { geo("Rotate right") { CropMath.rotate(it, true, dist, frameAspect) } })
+            CropToolButton(LrIcon.ROTATE_LEFT, "Rotate L", { geoFit("Rotate left") { g0, d, fa, l -> CropMath.rotate(g0, false, d, fa, l) } })
+            CropToolButton(LrIcon.ROTATE, "Rotate R", { geoFit("Rotate right") { g0, d, fa, l -> CropMath.rotate(g0, true, d, fa, l) } })
             CropToolButton(LrIcon.FLIP_H, "Flip H", { geo("Flip horizontal") { CropMath.flip(it, true) } }, active = g.flipH)
             CropToolButton(LrIcon.FLIP_V, "Flip V", { geo("Flip vertical") { CropMath.flip(it, false) } }, active = g.flipV)
             CropToolButton(LrIcon.LEVEL, "Level", { onAutoLevel?.invoke() }, enabled = onAutoLevel != null)
@@ -228,7 +231,7 @@ fun CropOverlay(state: EditorState, fit: FloatArray, frameAspect: Float, fineGri
                 val f = fitNow; val fa = faNow
                 val geo0 = state.recipe.geometry
                 val dist = state.recipe.optics.distortion
-                val area = CropMath.validArea(geo0, dist, fa)
+                val area = CropMath.validArea(geo0, dist, fa, state.session.cropLens(state.recipe))
                 val aspectPx = CropMath.aspectValue(geo0.aspect, fa)
                 var rect = CropRect.of(geo0)
                 val l = f[0] + rect.x0 * f[2]; val t = f[1] + rect.y0 * f[3]; val r = f[0] + rect.x1 * f[2]; val b = f[1] + rect.y1 * f[3]
@@ -269,7 +272,7 @@ fun CropOverlay(state: EditorState, fit: FloatArray, frameAspect: Float, fineGri
                 }
                 if (!moved && handle != CropHandle.NONE) {
                     if (upTime - lastTapUp <= viewConfiguration.doubleTapTimeoutMillis && (down.position - lastTapPos).getDistance() <= 48.dp.toPx()) {
-                        state.edit("Reset crop") { it.copy(geometry = CropMath.resetCrop(it.geometry, it.optics.distortion, fa)) }
+                        state.edit("Reset crop") { it.copy(geometry = CropMath.resetCrop(it.geometry, it.optics.distortion, fa, state.session.cropLens(it))) }
                         feedback.flash("Crop", "reset")
                         lastTapUp = 0L
                     } else { lastTapUp = upTime; lastTapPos = down.position }

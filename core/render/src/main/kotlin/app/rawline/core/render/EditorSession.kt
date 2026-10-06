@@ -430,10 +430,13 @@ class EditorSession(
         if (cropMode && !before) r = r.copy(geometry = r.geometry.copy(cropX = 0f, cropY = 0f, cropW = 1f, cropH = 1f))
         val arr = RenderParams.build(r, orientation, layerIndex, showMask = if (before) -1 else showMask, overlayOn = overlayOn && !before, lens = if (before) null else lens, useBaseline = !finishedPicture,
             srcW = if (cropMode || before) 0 else srcW, srcH = if (cropMode || before) 0 else srcH)
-        effectiveCrop = floatArrayOf(arr[P.G_CROP], arr[P.G_CROP + 1], arr[P.G_CROP + 2], arr[P.G_CROP + 3])
+        val crop = floatArrayOf(arr[P.G_CROP], arr[P.G_CROP + 1], arr[P.G_CROP + 2], arr[P.G_CROP + 3])
+        val cropChanged = !crop.contentEquals(effectiveCrop)
+        effectiveCrop = crop
         params = arr
         val size = Native.engineOutputSize(engine, arr)
-        if (!size.contentEquals(geometryOutSize)) { geometryOutSize = size; _outputRevision.value++ }
+        // the revision also covers a crop that moved without changing the output size (undo of a crop, angle or keystone), so overlays remap
+        if (!size.contentEquals(geometryOutSize) || cropChanged) { geometryOutSize = size; _outputRevision.value++ }
     }
 
     private fun onSurfaceCreated() {

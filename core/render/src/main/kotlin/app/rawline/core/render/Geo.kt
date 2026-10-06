@@ -92,8 +92,12 @@ object Geo {
     }
 
     private data class FitKey(val g: Geometry, val o: Optics, val orientation: Int, val srcW: Int, val srcH: Int, val lensDist: List<Float>?)
-    @Volatile private var lastKey: FitKey? = null
-    @Volatile private var lastFit: FloatArray? = null
+    /** Key and result published together as one immutable pair, so threads never see a key with another key's result. */
+    private class Cached(val key: FitKey, val fit: FloatArray)
+    @Volatile private var cached: Cached? = null
+
+    /** Test hook: forget the cached fit. */
+    internal fun clearFitCache() { cached = null }
 
     /**
      * The crop rectangle (x, y, w, h in the oriented base frame, the same units as [Geometry.cropX]) actually shown and exported.
@@ -104,10 +108,10 @@ object Geo {
      */
     fun fitCrop(g: Geometry, o: Optics, orientation: Int, srcW: Int, srcH: Int, lensDist: FloatArray? = null): FloatArray {
         val key = FitKey(g, o, orientation, srcW, srcH, lensDist?.toList())
-        if (key == lastKey) lastFit?.let { return it.copyOf() }
+        cached?.let { if (it.key == key) return it.fit.copyOf() }
         val r = solveCrop(g, o, orientation, srcW, srcH, lensDist)
-        lastFit = r; lastKey = key
-        return r.copyOf()
+        cached = Cached(key, r.copyOf())
+        return r
     }
 
     /** [g] with its crop replaced by [fitCrop]. Additive helper for code that maps between the view and the frame. */

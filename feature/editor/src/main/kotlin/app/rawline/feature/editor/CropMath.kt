@@ -51,24 +51,21 @@ class ValidArea(private val inside: (Float, Float) -> Boolean) {
 
     companion object {
         val Everything = ValidArea { _, _ -> true }
-        private const val EDGE = 1e-4f
 
         /**
-         * Built from the same CPU copy of the shader's geometry the engine is checked against ([Geo.frameToSource]). The frame is already
-         * oriented, so the geometry is evaluated with no extra orientation and a fake source whose shape is the frame's.
-         * Flips are irrelevant to whether a point lands on picture and are left in unchanged.
+         * Built from the same CPU copy of the shader's geometry the renderer constrains with ([Geo.frameValid], so it includes
+         * [Geo.EDGE_MARGIN] and the lens profile polynomial [lensDist]). The frame is already oriented, so the geometry is
+         * evaluated with no extra orientation and a fake source whose shape is the frame's. Flips are irrelevant to whether a
+         * point lands on picture and are left in unchanged. A box valid here is (up to sampling) the box [Geo.fitCrop] renders.
          */
-        fun forGeometry(g: Geometry, distortion: Float, frameAspect: Float): ValidArea {
-            // a level, undistorted picture fills its frame exactly: the whole frame is a valid crop (no hairline shaved off by rounding)
-            if (g.angle == 0f && g.keystoneV == 0f && g.keystoneH == 0f && distortion == 0f) return Everything
+        fun forGeometry(g: Geometry, distortion: Float, frameAspect: Float, lensDist: FloatArray? = null): ValidArea {
+            // a level, undistorted, uncorrected picture fills its frame exactly (as in Geo.fitCrop): the whole frame is a valid crop
+            if (g.angle == 0f && g.keystoneV == 0f && g.keystoneH == 0f && distortion == 0f && lensDist == null) return Everything
             val geo = g.copy(cropX = 0f, cropY = 0f, cropW = 1f, cropH = 1f, rotate90 = 0)
             val optics = Optics(lensCorrection = false, removeCa = false, distortion = distortion)
             val srcH = 1000
             val srcW = (frameAspect.coerceIn(0.05f, 20f) * srcH).roundToInt().coerceAtLeast(1)
-            return ValidArea { x, y ->
-                val r = Geo.frameToSource(x, y, geo, optics, 1, srcW, srcH)
-                r[0] in EDGE..(1f - EDGE) && r[1] in EDGE..(1f - EDGE)
-            }
+            return ValidArea { x, y -> Geo.frameValid(x, y, geo, optics, 1, srcW, srcH, lensDist) }
         }
     }
 }
@@ -312,28 +309,28 @@ object CropMath {
     }
 
     /**
-     * THE single place the crop tool asks "where may the crop be?". Today it is answered from [Geo.frameToSource]. When the engine's
-     * Geo.constrainGeometry / fitCrop is on this branch, switch this one function to it so the box shown equals what is rendered.
+     * THE single place the crop tool asks "where may the crop be?". It uses the renderer's own test ([Geo.frameValid]: edge margin,
+     * straighten, keystone, distortion and the session's lens profile [lens]) so the box shown is the box rendered.
      */
-    fun validArea(g: Geometry, distortion: Float, fa: Float): ValidArea = ValidArea.forGeometry(g, distortion, fa)
-    private fun valid(g: Geometry, distortion: Float, fa: Float) = validArea(g, distortion, fa)
+    fun validArea(g: Geometry, distortion: Float, fa: Float, lens: FloatArray? = null): ValidArea = ValidArea.forGeometry(g, distortion, fa, lens)
+    private fun valid(g: Geometry, distortion: Float, fa: Float, lens: FloatArray?) = validArea(g, distortion, fa, lens)
 
     /**
      * [base] (the crop as it was when straightening began) refitted for [angle]: it shrinks only as much as the picture needs, and grows back
      * towards [base] if the angle comes back.
      */
-    fun withAngle(g: Geometry, angle: Float, base: CropRect, distortion: Float, frameAspect: Float): Geometry {
+    fun withAngle(g: Geometry, angle: Float, base: CropRect, distortion: Float, frameAspect: Float, lens: FloatArray? = null): Geometry {
         val ng = g.copy(angle = angle)
-        val r = shrinkInto(base, valid(ng, distortion, frameAspect))
+        val r = shrinkInto(base, valid(ng, distortion, frameAspect, lens))
         return r.applyTo(ng)
     }
 
     /** Turns the picture a quarter turn; the crop turns with it and its aspect name swaps. [fa] is the frame aspect before the turn. */
-    fun rotate(g: Geometry, clockwise: Boolean, distortion: Float, fa: Float): Geometry {
+    fun rotate(g: Geometry, clockwise: Boolean, distortion: Float, fa: Float, lens: FloatArray? = null): Geometry {
         val r = if (clockwise) rotateCw(CropRect.of(g)) else rotateCcw(CropRect.of(g))
         val name = if (g.aspect.trim().equals("original", true)) g.aspect else swapName(g.aspect, 1f / fa)
         val ng = r.applyTo(g.copy(rotate90 = (g.rotate90 + (if (clockwise) 1 else 3)) % 4, aspect = name))
-        return CropRect.of(ng).let { shrinkInto(it, valid(ng, distortion, 1f / fa)).applyTo(ng) }
+        return CropRect.of(ng).let { shrinkInto(it, valid(ng, distortion, 1f / fa, lens)).applyTo(ng) }
     }
 
     /**
@@ -347,33 +344,46 @@ object CropMath {
     }
 
     /** Swap landscape and portrait: the crop's width and height trade places about its centre and the aspect name follows. */
-    fun swapLandscapePortrait(g: Geometry, distortion: Float, fa: Float): Geometry {
+    fun swapLandscapePortrait(g: Geometry, distortion: Float, fa: Float, lens: FloatArray? = null): Geometry {
         val r = swapOrientation(CropRect.of(g), fa)
         val ng = r.applyTo(g.copy(aspect = orientationName(g.aspect, fa)))
-        return shrinkInto(CropRect.of(ng), valid(ng, distortion, fa)).applyTo(ng)
+        return shrinkInto(CropRect.of(ng), valid(ng, distortion, fa, lens)).applyTo(ng)
     }
 
     /** Picks an aspect: the current crop is trimmed about its centre to the new shape and kept on picture. */
-    fun pickAspect(g: Geometry, name: String, distortion: Float, fa: Float): Geometry {
+    fun pickAspect(g: Geometry, name: String, distortion: Float, fa: Float, lens: FloatArray? = null): Geometry {
         val t = aspectValue(name, fa)
         val ng0 = g.copy(aspect = name)
         if (t == null) return ng0
         val r = fitToAspect(CropRect.of(g), t, fa)
         val ng = r.applyTo(ng0)
-        return shrinkInto(CropRect.of(ng), valid(ng, distortion, fa)).applyTo(ng)
+        return shrinkInto(CropRect.of(ng), valid(ng, distortion, fa, lens)).applyTo(ng)
     }
 
     /** Picks an aspect and takes the biggest crop of that shape the picture allows. */
-    fun pickAspectLargest(g: Geometry, name: String, distortion: Float, fa: Float): Geometry {
+    fun pickAspectLargest(g: Geometry, name: String, distortion: Float, fa: Float, lens: FloatArray? = null): Geometry {
         val ng = g.copy(aspect = name)
-        return largest(aspectValue(name, fa), fa, valid(ng, distortion, fa)).applyTo(ng)
+        return largest(aspectValue(name, fa), fa, valid(ng, distortion, fa, lens)).applyTo(ng)
     }
 
     /** Resets the crop to the biggest one of the current aspect that stays on picture. */
-    fun resetCrop(g: Geometry, distortion: Float, fa: Float): Geometry =
-        largest(aspectValue(g.aspect, fa), fa, valid(g, distortion, fa)).applyTo(g)
+    fun resetCrop(g: Geometry, distortion: Float, fa: Float, lens: FloatArray? = null): Geometry =
+        largest(aspectValue(g.aspect, fa), fa, valid(g, distortion, fa, lens)).applyTo(g)
 }
 
 /** The recipe with its straighten angle set and the crop refitted so it never shows empty frame. Used by Auto level and the dial alike. */
-fun EditRecipe.withStraighten(angle: Float, frameAspect: Float, base: CropRect = CropRect.of(geometry)): EditRecipe =
-    copy(geometry = CropMath.withAngle(geometry, angle, base, optics.distortion, frameAspect))
+fun EditRecipe.withStraighten(angle: Float, frameAspect: Float, base: CropRect = CropRect.of(geometry), lens: FloatArray? = null): EditRecipe =
+    copy(geometry = CropMath.withAngle(geometry, angle, base, optics.distortion, frameAspect, lens))
+
+/** The lens profile polynomial the renderer applies for this recipe (null when lens correction is off or no profile), as the crop tool must also use it. */
+fun app.rawline.core.render.EditorSession.cropLens(r: EditRecipe): FloatArray? = app.rawline.core.render.RenderParams.lensDistFor(r, lens)
+
+/**
+ * The geometry with its crop replaced by the crop the renderer actually shows ([Geo.constrainGeometry]), so the stored crop equals the
+ * rendered one. Returns [g] itself (same instance) when they already agree to within [tolerance], so nothing needs saving.
+ */
+fun fitStoredCrop(g: Geometry, o: Optics, orientation: Int, srcW: Int, srcH: Int, lens: FloatArray?, tolerance: Float = 1e-4f): Geometry {
+    val c = Geo.constrainGeometry(g, o, orientation, srcW, srcH, lens)
+    val same = abs(c.cropX - g.cropX) <= tolerance && abs(c.cropY - g.cropY) <= tolerance && abs(c.cropW - g.cropW) <= tolerance && abs(c.cropH - g.cropH) <= tolerance
+    return if (same) g else c
+}
