@@ -5,6 +5,8 @@
 #include <cmath>
 #include <cstring>
 #include <map>
+#include <new>
+#include <vector>
 
 #include "halfs.h"
 #include "base_curve.h"
@@ -129,7 +131,7 @@ bool Engine::init(std::string &error) {
     }
     // 1x1 array texture until a real layer arrives.
     layersTex_ = makeTex2D(GL_TEXTURE_2D_ARRAY, GL_LINEAR);
-    glTexStorage3D(GL_TEXTURE_2D_ARRAY, 1, GL_R8, 1, 1, kMaxLayers);
+    glTexStorage3D(GL_TEXTURE_2D_ARRAY, 1, GL_R8, kLayerTex, kLayerTex, kMaxLayers);
     overlayTex_ = makeTex2D(GL_TEXTURE_2D, GL_LINEAR);
     glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA16F, 1, 1);
     srcTex_ = makeTex2D(GL_TEXTURE_2D, GL_LINEAR_MIPMAP_LINEAR);
@@ -181,19 +183,34 @@ bool Engine::setSource(int w, int h, const uint16_t *rgbaHalf) {
     return glGetError() == GL_NO_ERROR;
 }
 
-void Engine::setLayer(int index, const uint8_t *alpha, int w, int h) {
-    if (index < 0 || index >= kMaxLayers) return;
-    glBindTexture(GL_TEXTURE_2D_ARRAY, layersTex_);
-    GLint cw = 0, ch = 0;
-    glGetTexLevelParameteriv(GL_TEXTURE_2D_ARRAY, 0, GL_TEXTURE_WIDTH, &cw);
-    glGetTexLevelParameteriv(GL_TEXTURE_2D_ARRAY, 0, GL_TEXTURE_HEIGHT, &ch);
-    if (cw != w || ch != h) {
-        glDeleteTextures(1, &layersTex_);
-        layersTex_ = makeTex2D(GL_TEXTURE_2D_ARRAY, GL_LINEAR);
-        glTexStorage3D(GL_TEXTURE_2D_ARRAY, 1, GL_R8, w, h, kMaxLayers);
+// Bilinear resample of an 8 bit mask (pixel centre mapping). Masks cover the whole frame, so stretching is exact in meaning.
+static void resampleMask(const uint8_t *src, int sw, int sh, uint8_t *dst, int dw, int dh) {
+    for (int y = 0; y < dh; y++) {
+        float fy = std::min(std::max((y + 0.5f) * sh / dh - 0.5f, 0.f), float(sh - 1));
+        int y0 = int(fy), y1 = std::min(y0 + 1, sh - 1); float ty = fy - y0;
+        for (int x = 0; x < dw; x++) {
+            float fx = std::min(std::max((x + 0.5f) * sw / dw - 0.5f, 0.f), float(sw - 1));
+            int x0 = int(fx), x1 = std::min(x0 + 1, sw - 1); float tx = fx - x0;
+            float top = src[y0 * sw + x0] * (1 - tx) + src[y0 * sw + x1] * tx;
+            float bot = src[y1 * sw + x0] * (1 - tx) + src[y1 * sw + x1] * tx;
+            dst[y * dw + x] = uint8_t(top * (1 - ty) + bot * ty + 0.5f);
+        }
     }
+}
+
+// All layers share one fixed size array texture (kLayerTex squared), so a layer of any size never disturbs the others.
+void Engine::setLayer(int index, const uint8_t *alpha, int w, int h) {
+    if (index < 0 || index >= kMaxLayers || !alpha || w <= 0 || h <= 0) return;
+    glBindTexture(GL_TEXTURE_2D_ARRAY, layersTex_);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, index, w, h, 1, GL_RED, GL_UNSIGNED_BYTE, alpha);
+    if (w == kLayerTex && h == kLayerTex) {
+        glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, index, w, h, 1, GL_RED, GL_UNSIGNED_BYTE, alpha);
+        return;
+    }
+    std::vector<uint8_t> tmp;
+    try { tmp.resize(size_t(kLayerTex) * kLayerTex); } catch (const std::bad_alloc &) { return; }
+    resampleMask(alpha, w, h, tmp.data(), kLayerTex, kLayerTex);
+    glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, index, kLayerTex, kLayerTex, 1, GL_RED, GL_UNSIGNED_BYTE, tmp.data());
 }
 
 void Engine::setOverlay(const uint8_t *rgbaHalfBytes, int w, int h) {

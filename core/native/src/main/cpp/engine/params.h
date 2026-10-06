@@ -11,6 +11,7 @@ constexpr int kMaxBlocks = 1 + kMaxMasks;        // block 0 is global
 constexpr int kMaskTexels = 32;
 constexpr int kMaskFloats = kMaskTexels * 4;
 constexpr int kMaxLayers = 16;
+constexpr int kLayerTex = 1024;   // side of the shared bitmap-mask array texture; layers are resampled to it on upload
 constexpr int kLayerSize = 2048;
 constexpr int kCurveSize = 256;
 constexpr int kCurveRows = kMaxBlocks * 4;

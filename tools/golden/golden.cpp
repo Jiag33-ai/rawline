@@ -183,6 +183,19 @@ int main(int argc, char **argv) {
             m[4] = 3; m[5] = 0; m[6] = 0; m[7] = 0;   // type bitmap, layer 0
             p[G_NUM_MASKS] = 1;
             p[kOffBlocks + kBlockFloats + S_EXPOSURE] = v;
+        } else if (k == "masklayers") {   // two bitmap layers of different sizes in one mask: both discs must show (upload of the second must not wipe the first)
+            const int aw = 512, ah = 341, bw = 200, bh = 300;
+            std::vector<uint8_t> a(aw * ah, 0), b(bw * bh, 0);
+            for (int y = 0; y < ah; y++) for (int x = 0; x < aw; x++) { float dx = x - 130.f, dy = y - 90.f; if (dx * dx + dy * dy < 80.f * 80.f) a[y * aw + x] = 255; }
+            for (int y = 0; y < bh; y++) for (int x = 0; x < bw; x++) { float dx = x - 130.f, dy = y - 200.f; if (dx * dx + dy * dy < 60.f * 60.f) b[y * bw + x] = 255; }
+            eng.setLayer(0, a.data(), aw, ah);
+            eng.setLayer(1, b.data(), bw, bh);
+            float *m = p.data() + kOffMasks;
+            m[0] = 2; m[1] = 1; m[2] = 0; m[3] = 0;
+            m[4] = 3; m[5] = 0; m[6] = 0; m[7] = 0;     // component 0: bitmap, layer 0
+            m[16] = 3; m[17] = 0; m[18] = 0; m[19] = 1; // component 1: bitmap, layer 1, add
+            p[G_NUM_MASKS] = 1;
+            p[kOffBlocks + kBlockFloats + S_EXPOSURE] = v;
         } else if (k == "maskrad") {
             float *m = p.data() + kOffMasks;
             m[0] = 1; m[1] = 1; m[2] = 0; m[3] = 0;

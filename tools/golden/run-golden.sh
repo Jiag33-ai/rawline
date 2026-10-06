@@ -33,6 +33,7 @@ SCENES=(
   "mask|maskexp=-1.5"
   "radial|maskrad=1.2 vig=-40"
   "layer|masklayer=1.5"
+  "layers2|masklayers=1.5"
   "crop|cropw=0.6 angle=0.05"
   "rotcrop|angle=0.1 autofit=1"
   "cropmove|angle=0.05 cropw=0.6 autofit=1"
