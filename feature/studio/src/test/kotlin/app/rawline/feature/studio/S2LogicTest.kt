@@ -37,6 +37,6 @@ class S2LogicTest {
         assertEquals(listOf("Rectangle", "Ellipse", "Lasso"), SelectionText.tools.map { SelectionText.toolName(it) })
         assertTrue(SelectionText.isSelect(Tool.LASSO_SELECT)); assertFalse(SelectionText.isSelect(Tool.BRUSH))
         assertEquals(SelOp.entries.toSet(), SelectionText.ops.toSet())
-        for (t in SelectionText.tools) assertFalse(SelectionText.hint(t).contains("—"))
+        for (t in SelectionText.tools) assertFalse(SelectionText.hint(t).contains("\u2014"))
     }
 }

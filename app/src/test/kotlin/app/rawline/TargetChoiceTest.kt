@@ -18,6 +18,6 @@ class TargetChoiceTest {
     @Test fun onlyMediaStoreIsCalledWeakAndEveryPlaceHasWords() {
         assertTrue(TargetChoice.isWeak(TargetKind.MEDIASTORE)); assertFalse(TargetChoice.isWeak(TargetKind.FILES)); assertFalse(TargetChoice.isWeak(TargetKind.FOLDER))
         assertTrue(TargetChoice.label(TargetKind.MEDIASTORE).contains("may not be found after a reinstall"))
-        for (k in TargetKind.values()) assertFalse(TargetChoice.label(k).contains('—'))
+        for (k in TargetKind.values()) assertFalse(TargetChoice.label(k).contains('\u2014'))
     }
 }
