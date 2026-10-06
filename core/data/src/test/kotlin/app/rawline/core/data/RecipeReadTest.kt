@@ -2,6 +2,10 @@ package app.rawline.core.data
 
 import app.rawline.core.model.Adjust
 import app.rawline.core.model.EditRecipe
+import app.rawline.core.model.Mask
+import app.rawline.core.model.MaskComponent
+import app.rawline.core.model.MaskOp
+import app.rawline.core.model.MaskType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -42,5 +46,11 @@ class RecipeReadTest {
             assertTrue(e.message!!, "P1055415.RW2" in e.message!!)
             assertTrue(e.message!!, "could not be read" in e.message!!)
         }
+    }
+
+    @Test fun aMaskTypeFromANewerBuildIsUnreadableNotSilentlyDropped() {
+        val json = EditRecipe(masks = listOf(Mask("m1", "Sky", listOf(MaskComponent(MaskType.BITMAP, MaskOp.ADD, layerKey = "ai_1"))))).toJson()
+        assertTrue(RecipeRead.parse(json) is RecipeRead.Ok)
+        assertSame(RecipeRead.Unreadable, RecipeRead.parse(json.replace("BITMAP", "HOLOGRAM")))
     }
 }

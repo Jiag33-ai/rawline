@@ -43,7 +43,10 @@ android {
     buildTypes {
         debug { signingConfig = signingConfigs.getByName("release") }
         release {
-            isMinifyEnabled = false
+            // Off on purpose (docs/DECISIONS.md): R8 problems only show at run time and nothing here can run the app. The rules
+            // are ready; `-PminifyRelease=true` builds with them so assembleRelease can be proven to still work.
+            isMinifyEnabled = providers.gradleProperty("minifyRelease").orNull == "true"
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.getByName("release")
         }
     }

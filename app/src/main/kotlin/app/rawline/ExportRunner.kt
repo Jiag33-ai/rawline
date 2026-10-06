@@ -181,15 +181,7 @@ class ExportRunner(private val context: Context, private val graph: Graph) {
         e.saveAttributes()
     }
 
-    fun fileName(p: Photo, s: ExportSettings, n: Int): String {
-        val base = p.name.substringBeforeLast('.')
-        val date = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date(if (p.takenAt > 0) p.takenAt else p.modified))
-        var name = s.pattern.ifBlank { "{name}" }
-            .replace("{name}", base).replace("{date}", date).replace("{n}", n.toString().padStart(3, '0'))
-            .replace("{rating}", p.rating.toString()).replace("{camera}", (p.camera ?: "camera").replace(Regex("[^A-Za-z0-9]+"), "-"))
-        name = name.replace(Regex("[\\\\/:*?\"<>|]"), "_")
-        return "$name.${s.format.ext}"
-    }
+    fun fileName(p: Photo, s: ExportSettings, n: Int): String = ExportNaming.fileName(p, s, n)
 
     private fun openTarget(s: ExportSettings, name: String, mime: String): Pair<OutputStream, Uri>? {
         val dest = s.destination

@@ -16,6 +16,7 @@ import app.rawline.core.model.Kind
  * No pixel is decoded here, so a library of tens of thousands lists in a moment; thumbnails are made when a tile is shown.
  */
 class DeviceScanner(private val context: Context, private val dao: PhotoDao, private val catalog: Catalog?) {
+    @Volatile private var lastSuspicious: Int? = null
 
     /** @return true when the MediaStore listing completed. */
     suspend fun scanDevice(): Boolean {
@@ -52,9 +53,11 @@ class DeviceScanner(private val context: Context, private val dao: PhotoDao, pri
         val seen = HashSet<String>(rows.size)
         val fresh = ArrayList<PhotoEntity>()
         rows.forEach { r -> seen.add(r.uri); if (known[r.uri] == null) fresh.add(r) }
-        // An empty listing means permission was lost or the query failed, not that every photo was deleted.
-        val gone = if (rows.isEmpty()) emptyList() else known.values.filter { it.uri !in seen }.map { it.id }
-        gone.chunked(500).forEach { dao.delete(it) }
+        // An empty or much smaller listing is not believed until a second scan agrees (see ScanPrune).
+        val prune = ScanPrune.decide(known.values, seen, lastSuspicious)
+        if (prune.suspicious != null) PerfLog.event("device scan listed ${rows.size} of ${known.size} known photos; not pruning until a second scan agrees")
+        lastSuspicious = prune.suspicious
+        prune.gone.map { it.id }.chunked(500).forEach { dao.delete(it) }
         fresh.chunked(300).forEach { dao.insertAll(it) }
         catalog?.reapply("device:%")
         PerfLog.record("device_scan_ms (n=${rows.size})", (System.nanoTime() - t0) / 1_000_000)

@@ -3,50 +3,143 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: "17 19 * * *"   # nightly: only the external-links job runs
 
 permissions:
   contents: read
 
+# One run per branch at a time. A newer run on a branch or pull request cancels the older one. On main nothing is cancelled
+# half way (a release could be left half written); instead the publish step refuses to publish unless its commit is still the
+# head of main, so an older run can never publish after a newer one.
+concurrency:
+  group: build-${{ github.ref }}-${{ github.event_name == 'schedule' && 'nightly' || 'ci' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.event_name != 'schedule' }}
+
+env:
+  # The golden sample RAW (raw.pixls.us). The checksum is checked after every download and after a cache restore, so a
+  # replaced file can neither silently change the reference renders nor be baked in by --update.
+  RW2_SHA: 4a52f1706a69d5d37587bfba70f9e6bf554399ac2123f0be9b30a156b513d446
+  RW2_URL: https://raw.pixls.us/data/Panasonic/DC-S5M2X/P1055415.RW2
+
+# Actions are pinned to exact release tags (versions checked on each project's releases page on 6 Oct 2026). Dependabot
+# (.github/dependabot.yml) proposes updates. Commit hashes were not used: they could not be confirmed from the build sandbox.
 jobs:
   golden:
-    # The real shader pipeline on Mesa llvmpipe against stored reference renders.
-    runs-on: ubuntu-latest
+    # The real shader pipeline on Mesa llvmpipe against stored reference renders. Needs no model downloads.
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
+      - name: Cache LibRaw build and sample RAW
+        uses: actions/cache@v6.1.0
+        with:
+          path: /tmp/golden-work
+          # run-golden.sh holds the LibRaw version and tarball SHA-256, so a change there rebuilds it
+          key: golden-${{ hashFiles('tools/golden/run-golden.sh') }}-${{ env.RW2_SHA }}
       - name: Mesa and Pillow
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libgles2-mesa-dev libegl1-mesa-dev libgl1-mesa-dri libegl-mesa0 cmake python3-pil
+      - name: Sample RAW (checksummed, retried)
+        run: |
+          mkdir -p /tmp/golden-work
+          f=/tmp/golden-work/P1055415.RW2
+          if [ -f "$f" ] && echo "$RW2_SHA  $f" | sha256sum -c --status -; then
+            echo "sample RAW from cache, checksum ok"
+          else
+            rm -f "$f"
+            curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 20 -o "$f" "$RW2_URL"
+            echo "$RW2_SHA  $f" | sha256sum -c -
+          fi
       - name: Golden render tests
         run: ./tools/golden/run-golden.sh
-      - name: Model download links are alive
-        run: ./tools/models/fetch.sh
       - name: Preview parser test on real S5IIX files
         run: |
           mkdir -p testdata
-          curl -fsSL -o testdata/P1055415.RW2 https://raw.pixls.us/data/Panasonic/DC-S5M2X/P1055415.RW2
+          cp /tmp/golden-work/P1055415.RW2 testdata/
           ./tools/test-preview-parser.sh
+      - name: Trim cache
+        run: rm -rf /tmp/golden-work/obj /tmp/golden-work/*.ppm
+
+  external-links:
+    # Checks hosts we do not control (model downloads). Never blocks a release: it is not in any "needs" and a failure here
+    # does not fail the run. Download links are only HEAD checked on pushes to main; the nightly and manual runs also download
+    # the small packs and compare their SHA-256 with Models.kt.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Model links (HEAD, size)
+        if: github.event_name == 'push'
+        run: ./tools/models/fetch.sh
+      - name: Model links and hashes
+        if: github.event_name != 'push'
+        run: ./tools/models/fetch.sh --verify-hashes 60
+
+  lint:
+    # Android lint for every module (the app's release build only runs lintVital, which skips the library modules).
+    # Not blocking yet: it currently reports a few real errors in core/render and core/ml (see docs/AUDIT.md). The HTML
+    # reports are attached to the run. Make it blocking by removing continue-on-error once those are fixed.
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-java@v6.0.1
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: actions/cache@v6.1.0
+        with:
+          path: .android-sdk
+          key: android-sdk-${{ hashFiles('tools/setup-sdk.sh') }}
+      - uses: gradle/actions/setup-gradle@v6.4.0
+      - name: Android SDK and NDK
+        run: ./tools/setup-sdk.sh
+      - name: Lint
+        run: |
+          source tools/env.sh
+          ./gradlew lintDebug --no-daemon --continue
+      - name: Lint reports
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: lint-reports
+          path: "**/build/reports/lint-results-debug.html"
+          if-no-files-found: ignore
 
   build:
     needs: golden
-    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
     permissions:
       contents: write   # only this job publishes a release
     env:
       GITHUB_RUN_NUMBER: ${{ github.run_number }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0     # the release notes list commits since the last release
+          fetch-tags: true
+      - uses: actions/setup-java@v6.0.1
         with:
           distribution: temurin
           java-version: "21"
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6.1.0
         with:
           path: .android-sdk
           key: android-sdk-${{ hashFiles('tools/setup-sdk.sh') }}
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6.4.0
       - name: Android SDK and NDK
         run: ./tools/setup-sdk.sh
+      - name: Model list agrees with the app (offline)
+        run: ./tools/models/fetch.sh --consistency
       - name: Unit tests
         run: |
           source tools/env.sh
@@ -62,33 +155,56 @@ jobs:
           else
             echo "signed=false" >> "$GITHUB_OUTPUT"
           fi
-      - name: Build signed release APK
-        if: steps.key.outputs.signed == 'true'
+      - name: Build release APK
         env:
-          RAWLINE_KEYSTORE: ${{ runner.temp }}/rawline.jks
+          # Secrets win. Without them none of these is set and the committed sideload key signs (app/build.gradle.kts).
+          RAWLINE_KEYSTORE: ${{ steps.key.outputs.signed == 'true' && format('{0}/rawline.jks', runner.temp) || '' }}
           RAWLINE_KEYSTORE_PASSWORD: ${{ secrets.RAWLINE_KEYSTORE_PASSWORD }}
           RAWLINE_KEY_ALIAS: ${{ secrets.RAWLINE_KEY_ALIAS }}
           RAWLINE_KEY_PASSWORD: ${{ secrets.RAWLINE_KEY_PASSWORD }}
         run: |
+          # an empty variable is not the same as an unset one for the Gradle script
+          if [ -z "$RAWLINE_KEYSTORE" ]; then unset RAWLINE_KEYSTORE RAWLINE_KEYSTORE_PASSWORD RAWLINE_KEY_ALIAS RAWLINE_KEY_PASSWORD; fi
           source tools/env.sh
-          ./gradlew assembleRelease --no-daemon
+          # LibRaw is fetched from libraw.org by CMake; one retry covers a passing outage of that host
+          ./gradlew assembleRelease --no-daemon || { echo "retrying once"; ./gradlew assembleRelease --no-daemon; }
           cp app/build/outputs/apk/release/app-release.apk rawline.apk
-      - name: Build release APK with the committed sideload key
-        if: steps.key.outputs.signed != 'true'
-        run: |
-          source tools/env.sh
-          ./gradlew assembleRelease --no-daemon
-          cp app/build/outputs/apk/release/app-release.apk rawline.apk
+          sha256sum rawline.apk | tee rawline.apk.sha256
       - name: Publish release
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
+          SIGNED: ${{ steps.key.outputs.signed }}
         run: |
-          TAG="v0.1.${{ github.run_number }}"
-          NOTE="Build ${{ github.run_number }}, commit ${GITHUB_SHA::7}. Signed: ${{ steps.key.outputs.signed }}"
+          set -euo pipefail
+          # Only the newest commit on main may publish. An older run that finishes late would otherwise become the newest release.
+          HEAD_SHA=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
+          if [ "$HEAD_SHA" != "$GITHUB_SHA" ]; then
+            echo "main has moved on to ${HEAD_SHA::7}; not publishing the older build ${GITHUB_SHA::7}."
+            exit 0
+          fi
+          TAG="v0.1.${GITHUB_RUN_NUMBER}"
+          PREV=$(gh release list --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName // empty' || true)
+          LOG=""
+          if [ -n "$PREV" ] && git rev-parse -q --verify "refs/tags/$PREV" >/dev/null; then
+            LOG=$(git log --no-merges --pretty='- %s' "$PREV..$GITHUB_SHA" | head -40 || true)
+          fi
+          if [ -z "$LOG" ]; then LOG=$(git log --no-merges --pretty='- %s' -n 15 "$GITHUB_SHA"); fi
+          {
+            echo "Build ${GITHUB_RUN_NUMBER}, commit ${GITHUB_SHA::7}. Signed with Actions secrets: ${SIGNED}"
+            echo
+            echo "SHA-256 of rawline.apk (also attached as rawline.apk.sha256):"
+            echo '```'
+            cat rawline.apk.sha256
+            echo '```'
+            echo
+            echo "Changes since ${PREV:-the first release}:"
+            echo "$LOG"
+          } > "$RUNNER_TEMP/notes.md"
           # Re-running a job keeps the run number, so update the release if it exists; always tag the built commit.
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" rawline.apk --clobber
+            gh release upload "$TAG" rawline.apk rawline.apk.sha256 --clobber
+            gh release edit "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
           else
-            gh release create "$TAG" rawline.apk --target "$GITHUB_SHA" --title "Rawline $TAG" --notes "$NOTE"
+            gh release create "$TAG" rawline.apk rawline.apk.sha256 --target "$GITHUB_SHA" --title "Rawline $TAG" --notes-file "$RUNNER_TEMP/notes.md" --latest
           fi

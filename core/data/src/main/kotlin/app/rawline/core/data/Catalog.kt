@@ -24,11 +24,11 @@ class Catalog(private val context: Context, private val db: RawlineDb, private v
     suspend fun readRecipe(p: Photo): RecipeRead = RecipeRead.parse(edits.get(p.key)?.json)
 
     suspend fun saveRecipe(p: Photo, r: EditRecipe) {
-        // A stored recipe we could not read (for example written by a newer build) must not be deleted just because
-        // the editor opened with defaults and the user changed nothing.
-        if (r.isDefault && edits.get(p.key)?.let { runCatching { EditRecipe.fromJson(it.json) }.isFailure } == true) return
-        if (r.isDefault) { edits.delete(p.key); photos.setEdited(p.id, false) }
-        else { edits.put(EditEntity(p.key, r.toJson(), System.currentTimeMillis())); photos.setEdited(p.id, true) }
+        when (saveAction(r.isDefault, if (r.isDefault) readRecipe(p) else RecipeRead.Missing)) {   // only a default save needs the stored row
+            SaveAction.KEEP_UNREADABLE -> return
+            SaveAction.DELETE -> { edits.delete(p.key); photos.setEdited(p.id, false) }
+            SaveAction.PUT -> { edits.put(EditEntity(p.key, r.toJson(), System.currentTimeMillis())); photos.setEdited(p.id, true) }
+        }
     }
 
     suspend fun setRating(list: List<Photo>, rating: Int) { list.chunked(400).forEach { photos.setRating(it.map { p -> p.id }, rating) }; saveMeta(list) { it.copy(rating = rating) } }
@@ -120,11 +120,7 @@ class Catalog(private val context: Context, private val db: RawlineDb, private v
         keys.chunked(500).forEach { c -> edits.metaFor(c).forEach { meta[it.key] = it } }
         val edited = HashSet<String>()
         keys.chunked(500).forEach { c -> c.forEach { k -> if (edits.get(k) != null) edited.add(k) } }
-        all.forEachIndexed { i, p ->
-            val k = keys[i]; val m = meta[k]
-            if ((m != null && (m.rating != p.rating || m.flag != p.flag || m.label != p.label)) || (k in edited) != p.edited)
-                photos.restoreMeta(p.uri, m?.rating ?: p.rating, m?.flag ?: p.flag, m?.label ?: p.label, k in edited)
-        }
+        Reapply.plan(all, meta, edited).forEach { photos.restoreMeta(it.uri, it.rating, it.flag, it.label, it.edited) }
     }
 }
 
