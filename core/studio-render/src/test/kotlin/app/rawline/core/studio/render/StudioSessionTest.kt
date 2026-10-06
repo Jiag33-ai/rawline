@@ -355,9 +355,12 @@ class StudioSessionTest {
         assertEquals(4f, h.st.document.layers[0].common.scale, 0f)
         h.s.undo()
         assertEquals(1f, h.st.document.layers[0].common.scale, 0f); assertFalse(h.st.canUndo)
-        h.s.scaleActiveTo(50f)                                               // numeric entry keeps the layer centred
+        h.s.previewScale(50f); h.s.previewScale(50f); h.s.commitPreview()   // numeric entry keeps the layer centred
         val c = h.st.document.layers[0].common
         assertEquals(0.5f, c.scale, 0f); assertEquals(16, c.x); assertEquals(12, c.y)
+        h.s.previewScale(200f); h.s.previewScale(100f); h.s.commitPreview()         // a drag that ends at 100 percent: from the start values, so back to the original place
+        assertEquals(1f, h.st.document.layers[0].common.scale, 0f); assertEquals(0, h.st.document.layers[0].common.x)
+        h.s.undo(); assertEquals(0.5f, h.st.document.layers[0].common.scale, 0f)
     }
 
     @Test fun aMovedAndScaledLayerIsPaintedWhereTheFingerIs() {

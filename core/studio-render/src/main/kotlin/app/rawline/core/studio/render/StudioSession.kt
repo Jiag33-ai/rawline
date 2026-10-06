@@ -84,6 +84,7 @@ class StudioSession(
     private var surfaceH = 0
     private var viewFitted = false
     @Volatile private var drag: Any? = null
+    private var scaleBase: Triple<Int, Int, Float>? = null       // placement when a numeric or slider scale began
     private var trimmedToast = false
     @Volatile private var released = false
     private val messageId = AtomicLong()
@@ -150,9 +151,16 @@ class StudioSession(
     fun setTool(t: Tool) { if (drag == null) _state.update { it.copy(tool = t) } }
     /** Sets the settings of the active tool (brush or eraser). Values are coerced into range by the caller. */
     fun setBrush(b: Brush) = _state.update { if (it.tool == Tool.ERASER) it.copy(eraser = b.copy(erase = true)) else it.copy(brush = b.copy(erase = false)) }
-    fun setColour(c: Rgb) = _state.update { it.copy(colour = c, recent = (listOf(c) + it.recent.filter { r -> r != c }).take(8)) }
+    /** Changes the settings of the active tool from what they are NOW (no stale copy in the caller: two sliders moved in a row cannot undo each other). */
+    fun updateBrush(f: (Brush) -> Brush) = _state.update { if (it.tool == Tool.ERASER) it.copy(eraser = f(it.eraser).copy(erase = true)) else it.copy(brush = f(it.brush).copy(erase = false)) }
+    /** The colour changes while a picker is dragged: it is not remembered until [pushRecent]. */
+    fun setColour(c: Rgb) = _state.update { it.copy(colour = c) }
+    /** Puts [c] first in the 8 recent colours (kept in memory for the project; persisting them is S2). */
+    fun pushRecent(c: Rgb) = _state.update { it.copy(recent = (listOf(c) + it.recent.filter { r -> r != c }).take(8)) }
     fun setBackground(c: Rgb) = _state.update { it.copy(background = c) }
     fun swapColours() = _state.update { it.copy(colour = it.background, background = it.colour) }
+    /** Shows a message from the UI side (a picture that could not be read). */
+    fun reportProblem(text: String) = toast(text)
     fun consumeMessage(id: Long) = _state.update { if (it.message?.id == id) it.copy(message = null) else it }
 
     // ---- input (main thread) ------------------------------------------------------------------------------------------------------
@@ -237,15 +245,19 @@ class StudioSession(
     /** The slider was released: one history entry for the whole drag. */
     fun commitPreview() = model { guarded { commitWorking(); publish() } }
 
-    /** Move and Scale numeric entry: scale of the active layer in percent (25 to 400), about the layer's own centre. One history entry. */
-    fun scaleActiveTo(percent: Float) = model {
+    /**
+     * Scale of the active layer in percent (25 to 400) about the layer's own centre, shown at once and recorded by [commitPreview]. The slider and the typed value both
+     * come through here (a typed value is a preview and a commit in a row), so a drag is one history entry. Every step is computed from the placement at the start of the drag (no rounding drift).
+     */
+    fun previewScale(percent: Float) = model {
         guarded {
             val l = layer(activeId) as? Layer.Pixel ?: return@guarded
             if (!editable(l)) return@guarded
-            val c = l.common
-            val cx = c.x + l.width * c.scale / 2f; val cy = c.y + l.height * c.scale / 2f
-            val (x, y, s) = Placement.scaleAbout(c.x, c.y, c.scale, percent / 100f, cx, cy)
-            applyDocument(LayerOps.setPlacement(history.document, c.id, x, y, s), emptyMap(), null)
+            val base = scaleBase ?: Triple(l.common.x, l.common.y, l.common.scale).also { scaleBase = it }
+            val cx = base.first + l.width * base.third / 2f; val cy = base.second + l.height * base.third / 2f
+            val (x, y, sc) = Placement.scaleAbout(base.first, base.second, base.third, percent / 100f, cx, cy)
+            working = LayerOps.setPlacement(history.document, l.common.id, x, y, sc)
+            updateFrame(); publishDoc()
         }
     }
 
@@ -447,14 +459,14 @@ class StudioSession(
     /** Puts a finished drag or slider into the history as one entry. */
     private fun commitWorking() {
         val w = working ?: return
-        working = null
+        working = null; scaleBase = null
         history.commitDocument(w)
         markDirty()
     }
 
     private fun cancelWorking() {
         if (working == null) return
-        working = null
+        working = null; scaleBase = null
         updateFrame(); publish()
     }
 
@@ -480,7 +492,7 @@ class StudioSession(
         for ((id, px) in newPixels) { unsaved[id] = px; dirty += id; blank -= id }
         syncSlots(next)
         history.commitDocument(next)
-        working = null
+        working = null; scaleBase = null
         if (newActive != null) activate(newActive, take = newPixels[newActive])
         ensureActiveValid(next)
         markDirty()
@@ -599,7 +611,7 @@ class StudioSession(
     }
 
     private fun upload(slot: Int, px: RawPixels) {
-        val ok = gpuCall(20_000) { it.setLayerImage(slot, px.rgba, px.w, px.h) } == true
+        val ok = gpuCall(120_000) { it.setLayerImage(slot, px.rgba, px.w, px.h) } == true
         if (!ok) throw IllegalStateException("Could not put the layer on the GPU. The picture may be too large for the memory that is free.")
     }
 

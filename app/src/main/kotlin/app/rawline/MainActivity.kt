@@ -368,6 +368,7 @@ private fun RawlineRoot(openRoute: String?, onOpened: () -> Unit) {
                             xmpOn = xmp, onXmpChange = vm::setXmp,
                             onBackup = { backupOut.launch("rawline-backup.zip") }, onRestore = { backupIn.launch(arrayOf("application/zip", "application/octet-stream")) },
                             message = message,
+                            onVersionLongPress = DebugEntry.versionLongPress(context),
                             onBack = { nav.popBackStack() },
                         )
                     }

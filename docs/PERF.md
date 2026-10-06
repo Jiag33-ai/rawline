@@ -30,7 +30,8 @@ Measured on the build machine, only to show where work goes; the phone is a diff
 - LibRaw half-size decode of a 24 MP RW2 on the x86 build machine: about 0.9 s single thread. The phone budget for Edit to first frame is 1.2 s, so this is the number to watch.
 - GL pipeline on Mesa llvmpipe (CPU rasteriser) at 960 x 640: about 35 ms per frame. A real GPU is far faster, but this is unmeasured.
 - Models on the same x86 machine (CPU): MobileSAM encoder 1.3 s, decoder 0.1 s, SegFormer sky 0.25 s, LaMa 512 px tile 5.8 s, NAFNet 256 px tile 1.8 s. The app tries the GPU delegate first.
-- Studio compositor (S1a, Mesa llvmpipe, golden scene studio_blend3, 4 layers, 256 x 192 output): holds 1.25 MB of textures; no speed number was taken. The Studio rows above stay unmeasured until S1b adds the timers to the Copy report (budgets are in docs/STUDIO_SPEC.md 2.17).
+- Studio compositor (S1a, Mesa llvmpipe, golden scene studio_blend3, 4 layers, 256 x 192 output): holds 1.25 MB of textures; no speed number was taken. The Studio rows above stay unmeasured until Jai pastes a Copy report from the phone (budgets are in docs/STUDIO_SPEC.md 2.17).
+- Studio S1b timers now in the Copy report (all "not measured" until the phone): `studio_frame_ms` (render plus display pass, per frame), `studio_stroke_stamp_ms` (addStamps), `studio_commit_ms` (readback plus bake), `studio_autosave_ms` (encode plus writes), `studio_input_to_pixel_ms` (event time to the frame that shows it; recorded, no target), gauges `studio_texture_mb`, `studio_history_mb`, and a Studio section (canvas size, layers, memory guard state, autosave state). Sandbox: the brush goldens run on Mesa llvmpipe; no speed number was taken.
 
 ## Checks that need the phone
 Sliders under 16 ms; grid 120 fps; swipe timings; Edit to first frame; export time; AI mask readiness (< 2 s after editing starts, tap-to-select < 300 ms); remove a person-sized object from 24 MP in under 10 s; 30 minute soak test.

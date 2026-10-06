@@ -24,6 +24,9 @@ android {
         ndk { abiFilters += "arm64-v8a" }
         buildConfigField("int", "BUILD_NUMBER", "$buildNumber")
         buildConfigField("String", "BUILD_DATE", "\"${LocalDate.now()}\"")
+        // Studio (docs/STUDIO_SPEC.md): off unless a build asks for it with -PstudioEnabled=true. S1b has no entry gated by it; the only way in is the debug-only Studio screen
+        // (src/debug), which is not compiled into release. S1c puts the mode switch behind this flag.
+        buildConfigField("boolean", "STUDIO_ENABLED", "${providers.gradleProperty("studioEnabled").orNull == "true"}")
     }
     signingConfigs {
         create("release") {
@@ -80,6 +83,8 @@ dependencies {
     implementation(project(":feature:export"))
     implementation(libs.androidx.exifinterface)
     implementation(project(":feature:settings"))
+    // the Studio canvas is only reachable from the debug build (DebugEntry in src/debug); release has neither the code nor the entry
+    debugImplementation(project(":feature:studio"))
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.core.ktx)

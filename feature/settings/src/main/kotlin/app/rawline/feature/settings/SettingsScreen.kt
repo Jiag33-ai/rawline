@@ -1,5 +1,6 @@
 package app.rawline.feature.settings
 
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -49,6 +50,8 @@ fun SettingsScreen(
     cacheBytes: Long = 0L,
     onClearThumbnails: () -> Unit = {},
     onClearCrash: () -> Unit = {},
+    /** Debug builds only: a long press on the Version row. Null (release) leaves the row exactly as it was. */
+    onVersionLongPress: (() -> Unit)? = null,
 ) {
     var confirmRestore by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     val libraw = runCatching { Native.librawVersion() }.getOrElse { "failed: ${it.message}" }
@@ -59,7 +62,7 @@ fun SettingsScreen(
             Text("Settings", style = MaterialTheme.typography.headlineMedium)
         }
         Spacer(Modifier.height(8.dp))
-        Item("Version", "$versionName (build $buildNumber)")
+        Item("Version", "$versionName (build $buildNumber)", if (onVersionLongPress != null) Modifier.combinedClickable(onClick = {}, onLongClick = onVersionLongPress) else Modifier)
         Item("Built", buildDate)
         Item("LibRaw", libraw)
         Row(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
@@ -112,8 +115,8 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun Item(label: String, value: String) {
-    Column(Modifier.padding(vertical = 8.dp)) {
+private fun Item(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(modifier.padding(vertical = 8.dp)) {
         Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(value, style = MaterialTheme.typography.bodyLarge)
     }
