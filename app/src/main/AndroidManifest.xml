@@ -10,6 +10,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROCESSING" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- the render engine needs OpenGL ES 3.2: refuse to install where it is missing instead of failing at the first photo -->
+    <uses-feature android:glEsVersion="0x00030002" android:required="true" />
     <application
         android:allowBackup="false"
         android:largeHeap="true"

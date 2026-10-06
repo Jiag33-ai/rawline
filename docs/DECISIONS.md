@@ -35,3 +35,7 @@
 - Crop is its own workspace (status pill, ruler, circular utilities, Aspect | Geometry tray, X / check bar). X restores the crop from when it was opened.
 - Tone curve is drawn over the photo; the tray holds Done, channel selectors and the parametric sliders.
 - Known gaps against the spec: the canvas refit when a panel opens is a snap (no FLIP animation, because resizing the GL surface every frame is too costly); no tablet or desktop recomposition; no shared-element return to the library thumbnail.
+- R8 minification stays off for release (fifth audit pass). The rules are ready in `app/proguard-rules.pro` and `./gradlew assembleRelease -PminifyRelease=true` builds and keeps the JNI class, but R8 mistakes only show at run time (reflection in LiteRT and the GPU delegate, Room, JNI), nothing in the sandbox or CI runs the app, and a minified build would also make the stack traces in the Copy report unreadable without mapping.txt. Turn it on only after a minified build has been run through the Copy report checks on the phone, and attach mapping.txt to the release.
+- Actions are pinned to exact release tags, not commit hashes, because the hashes could not be confirmed from the build sandbox and a wrong hash stops every release. Dependabot proposes tag updates.
+- The Copy report never contains file paths beyond photo names, addresses or secrets (`ReportText.redact`), and every free text line passes through it. Photo file names do appear in error lines.
+

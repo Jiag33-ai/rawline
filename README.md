@@ -8,7 +8,7 @@ Spec: docs/SPEC.md. Working notes: CLAUDE.md. Timings: docs/PERF.md.
 2. On the phone open the repo's Releases page, download `rawline.apk`, tap to install.
 3. Settings shows version, build date and the LibRaw version.
 
-Release signing uses Actions secrets `RAWLINE_KEYSTORE_B64`, `RAWLINE_KEYSTORE_PASSWORD`, `RAWLINE_KEY_ALIAS`, `RAWLINE_KEY_PASSWORD`. Without them CI builds a debug APK instead.
+Release signing uses Actions secrets `RAWLINE_KEYSTORE_B64`, `RAWLINE_KEYSTORE_PASSWORD`, `RAWLINE_KEY_ALIAS`, `RAWLINE_KEY_PASSWORD`. Without them CI signs the release APK with the committed sideload key (`app/rawline-sideload.jks`, not secret) so updates still install over the top. Each release also carries `rawline.apk.sha256` and a list of the commits since the last release.
 
 ## What is in it
 Library (grid, filters, ratings, flags, labels, copy/paste/sync edits, backup), viewer (fast embedded preview, prefetch, zoom, info), RAW editor (light, curves, colour, mixer, grading, effects, detail, optics with lens profiles, geometry, masks, AI masks, remove/heal/clone, AI denoise, presets, history, snapshots) and export (JPEG, PNG, 16-bit TIFF, sizes, sharpening, Display P3, metadata, batch service, share).

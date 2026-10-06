@@ -107,8 +107,7 @@ class ExportRunner(private val context: Context, private val graph: Graph) {
         root.listFiles()?.forEach { if (it.lastModified() < cutoff) it.deleteRecursively() }
         val dir = File(root, "s" + System.currentTimeMillis() + "-" + System.nanoTime() % 100000).apply { mkdirs() }
         val f = File(dir, fileName(p, s, 1))
-        cancelled = false  // a cancel aimed at an earlier queue job must not abort this share
-        f.outputStream().use { out -> write(p, s.copy(destination = null), out, f.toURI().toString(), null) ?: return null }
+        f.outputStream().use { out -> write(p, s.copy(destination = null), out, f.toURI().toString(), null) { false } ?: return null }
         applyExif(f, p, s)
         return f
     }
@@ -120,7 +119,7 @@ class ExportRunner(private val context: Context, private val graph: Graph) {
             // providers refuse an "rw" reopen), then copy the finished file to the destination.
             val tmp = File.createTempFile("export", ".jpg", File(context.cacheDir, "export-tmp").apply { mkdirs() })
             try {
-                if (tmp.outputStream().use { write(p, s, it, name, onFraction) } == null) return null
+                if (tmp.outputStream().use { write(p, s, it, name, onFraction) { cancelled } } == null) return null
                 runCatching { writeExif(ExifInterface(tmp.path), p, s) }.onFailure { app.rawline.core.cache.PerfLog.error("export EXIF ${p.name}: ${it.message}") }
                 val (out, uri) = openTarget(s, name, s.format.mime) ?: throw IllegalStateException("No place to save")
                 try { out.use { o -> tmp.inputStream().use { it.copyTo(o) } } } catch (e: Throwable) { discard(uri); throw e }
@@ -129,24 +128,29 @@ class ExportRunner(private val context: Context, private val graph: Graph) {
             } finally { tmp.delete() }
         }
         val (out, uri) = openTarget(s, name, s.format.mime) ?: throw IllegalStateException("No place to save")
-        val ok = try { out.use { stream -> write(p, s, stream, name, onFraction) } } catch (e: Throwable) { discard(uri); throw e }
+        val ok = try { out.use { stream -> write(p, s, stream, name, onFraction) { cancelled } } } catch (e: Throwable) { discard(uri); throw e }
         if (ok == null) { discard(uri); return null }
         publish(uri)
         return uri
     }
 
+    /** Makes a finished MediaStore file visible. If that fails the photo would stay hidden from Gallery for good, so the job fails instead of reporting Done. */
     private fun publish(uri: Uri) {
-        if (uri.authority == MediaStore.AUTHORITY) runCatching { context.contentResolver.update(uri, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null) }
+        if (uri.authority != MediaStore.AUTHORITY) return
+        val updated = try { context.contentResolver.update(uri, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null) }
+        catch (e: Throwable) { app.rawline.core.cache.PerfLog.error("export publish: ${e.javaClass.simpleName} ${e.message}"); discard(uri); throw java.io.IOException("The photo was written but could not be made visible in Gallery") }
+        if (updated == 0) { app.rawline.core.cache.PerfLog.error("export publish: nothing updated"); discard(uri); throw java.io.IOException("The photo was written but could not be made visible in Gallery") }
     }
 
     private fun discard(uri: Uri) {
         runCatching { if (DocumentsContract.isDocumentUri(context, uri)) DocumentsContract.deleteDocument(context.contentResolver, uri) else context.contentResolver.delete(uri, null, null) }
     }
 
-    private fun write(p: Photo, s: ExportSettings, out: OutputStream, label: String, onFraction: ((Float) -> Unit)?): Unit? {
+    /** [isCancelled] is per call: a Share render has its own (never cancelled), so the queue's Cancel and a Share cannot affect each other. */
+    private fun write(p: Photo, s: ExportSettings, out: OutputStream, label: String, onFraction: ((Float) -> Unit)?, isCancelled: () -> Boolean): Unit? {
         // An edit that exists but cannot be read must fail the export, not produce an unedited photo.
         val recipe = runBlocking { graph.catalog.readRecipe(p) }.forExport(p.name)
-        val res = exporter.render(p, recipe, s, if (s.format == ExportFormat.TIFF16) out else null, { onFraction?.invoke(it) }, { cancelled }) ?: return null
+        val res = exporter.render(p, recipe, s, if (s.format == ExportFormat.TIFF16) out else null, { onFraction?.invoke(it) }, isCancelled) ?: return null
         val bmp = res.bitmap ?: return Unit
         when (s.format) {
             ExportFormat.JPEG -> if (!bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, s.quality, out)) throw java.io.IOException("Could not encode the JPEG")
@@ -159,7 +163,7 @@ class ExportRunner(private val context: Context, private val graph: Graph) {
 
     private fun applyExif(f: File, p: Photo, s: ExportSettings) {
         if (s.format != ExportFormat.JPEG || s.metadata == MetadataMode.NONE) return
-        runCatching { writeExif(ExifInterface(f.path), p, s) }
+        runCatching { writeExif(ExifInterface(f.path), p, s) }.onFailure { app.rawline.core.cache.PerfLog.error("share EXIF ${p.name}: ${it.message}") }
     }
 
     private fun writeExif(e: ExifInterface, p: Photo, s: ExportSettings) {
