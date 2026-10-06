@@ -131,91 +131,26 @@ fun CropStatusPill(text: String, modifier: Modifier = Modifier) {
     }
 }
 
-/** 44 dp circle, #2A2A2A, 1 dp #414141, 20 dp icon. */
+/**
+ * Bottom bar of the crop workspace: Cancel on the left (puts the crop back as it was when the tool opened), the Crop | Perspective
+ * switch in the middle, and Done in the single accent blue on the right. Every part is at least 48 dp tall.
+ */
 @Composable
-fun CropUtilityButton(icon: LrIcon, description: String, onClick: () -> Unit, modifier: Modifier = Modifier, active: Boolean = false) {
-    Box(
-        modifier.size(44.dp).clip(CircleShape).background(Lr.CircleButton).border(1.dp, if (active) Lr.Accent else Lr.CircleButtonBorder, CircleShape)
-            .clickable(onClick = onClick).semantics { contentDescription = description },
-        contentAlignment = Alignment.Center,
-    ) { LrIconView(icon, if (active) Lr.Accent else Lr.IconPrimary, size = 20.dp) }
-}
-
-/** Compact dotted ruler with the live angle above it. Drag sideways; it snaps gently at zero. */
-@Composable
-fun CropRotationRuler(angle: Float, onChange: (Float) -> Unit, onCommit: () -> Unit, modifier: Modifier = Modifier) {
-    val cur by rememberUpdatedState(angle)
-    val change by rememberUpdatedState(onChange)
-    val commit by rememberUpdatedState(onCommit)
-    Column(modifier.fillMaxWidth().height(60.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(String.format(java.util.Locale.US, "%.2f°", angle), style = ValueStyle.copy(fontSize = 11.sp, lineHeight = 14.sp), color = Lr.TextPrimary)
-        Canvas(
-            Modifier.fillMaxWidth().weight(1f).pointerInput(Unit) {
-                val perDeg = 9.dp.toPx()
-                detectHorizontalDragGestures(onDragEnd = { commit() }, onDragCancel = { commit() }) { c, dx ->
-                    c.consume()
-                    var a = (cur - dx / perDeg).coerceIn(-45f, 45f)
-                    if (abs(a) < 0.25f) a = 0f
-                    change(a)
-                }
-            },
-        ) {
-            val perDeg = 9.dp.toPx(); val cx = size.width / 2f
-            val first = (angle - cx / perDeg).toInt() - 1; val last = (angle + cx / perDeg).toInt() + 1
-            for (d in first..last) {
-                if (d < -45 || d > 45) continue
-                val x = cx + (d - angle) * perDeg
-                val bow = (x - cx) / cx; val y0 = 4.dp.toPx() + bow * bow * 10.dp.toPx()
-                val major = d % 5 == 0
-                val len = if (d == 0) 14.dp.toPx() else if (major) 9.dp.toPx() else 4.dp.toPx()
-                val col = if (d == 0) Lr.TextPrimary else if (major) Lr.IconSecondary else Lr.TextDisabled
-                drawLine(col, Offset(x, y0), Offset(x, y0 + len), if (d == 0) 2.dp.toPx() else 1.2.dp.toPx())
-            }
-        }
-    }
-}
-
-/** Icon above text, 52 to 62 dp wide, neutral #303030 when selected. */
-@Composable
-fun AspectOptionTile(icon: LrIcon, label: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    val bg by animateColorAsState(if (selected) Lr.SurfaceSelected else Color.Transparent, tween(LrMotion.fast), label = "aspect")
-    Column(
-        modifier.size(width = 58.dp, height = 60.dp).clip(RoundedCornerShape(4.dp)).background(bg).clickable(onClick = onClick).semantics { contentDescription = label },
-        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
-    ) {
-        LrIconView(icon, if (selected) Lr.IconPrimary else Lr.IconSecondary, size = 22.dp)
-        Spacer(Modifier.height(5.dp))
-        Text(label, style = MaterialTheme.typography.labelMedium, color = if (selected) Lr.TextPrimary else Lr.TextMuted, maxLines = 1)
-    }
-}
-
-/** Anchored list of ratios: narrow, dense, 14 dp checkboxes. */
-@Composable
-fun RatioPopover(expanded: Boolean, onDismiss: () -> Unit, selected: String, onPick: (String) -> Unit) {
-    LrDropdown(expanded, onDismiss, width = 124.dp) {
-        listOf("10:16", "9:16", "8.5:11", "5:7", "4:5", "3:4", "2:3", "1:2", "1:1").forEach { id ->
-            Row(Modifier.fillMaxWidth().height(32.dp).clickable { onPick(id); onDismiss() }.padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier.size(14.dp).clip(RoundedCornerShape(2.dp)).background(if (selected == id) Lr.Accent else Color.Transparent)
-                        .border(1.dp, if (selected == id) Lr.Accent else Lr.FunctionBorder, RoundedCornerShape(2.dp)),
-                    contentAlignment = Alignment.Center,
-                ) { if (selected == id) LrIconView(LrIcon.CHECK, Color.White, size = 10.dp, strokeWidth = 2.6f) }
-                Spacer(Modifier.width(10.dp))
-                Text(id.replace(":", " × "), style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp), color = Lr.TextPrimary)
-            }
-        }
-    }
-}
-
-/** X, title, check. 56 dp, 1 dp divider above. */
-@Composable
-fun CropConfirmationBar(title: String, onCancel: () -> Unit, onConfirm: () -> Unit, modifier: Modifier = Modifier) {
+fun CropConfirmationBar(sub: String, onSub: (String) -> Unit, onCancel: () -> Unit, onConfirm: () -> Unit, modifier: Modifier = Modifier) {
     Column(modifier.fillMaxWidth().background(Lr.Surface1)) {
         Box(Modifier.fillMaxWidth().height(1.dp).background(Lr.Divider))
-        Row(Modifier.fillMaxWidth().height(LrDim.confirmBar), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(48.dp).clickable(onClick = onCancel).semantics { contentDescription = "Cancel" }, contentAlignment = Alignment.Center) { LrIconView(LrIcon.CLOSE, Lr.IconPrimary, size = 24.dp) }
-            Text(title, style = MaterialTheme.typography.titleMedium, color = Lr.TextPrimary, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-            Box(Modifier.size(48.dp).clickable(onClick = onConfirm).semantics { contentDescription = "Apply crop" }, contentAlignment = Alignment.Center) { LrIconView(LrIcon.CHECK, Lr.IconPrimary, size = 24.dp) }
+        Row(Modifier.fillMaxWidth().height(LrDim.confirmBar).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            app.rawline.core.ui.SecondaryButton("Cancel", onCancel, Modifier.height(LrDim.touch).semantics { contentDescription = "Cancel crop" })
+            Row(Modifier.weight(1f), horizontalArrangement = Arrangement.Center) {
+                listOf("crop" to "Crop", "perspective" to "Perspective").forEach { (id, label) ->
+                    val on = sub == id
+                    Column(Modifier.height(LrDim.touch).clickable { onSub(id) }.padding(horizontal = 10.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                        Text(label, style = MaterialTheme.typography.titleSmall.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Normal), color = if (on) Lr.TextPrimary else Lr.TextMuted)
+                        Box(Modifier.padding(top = 3.dp).height(2.dp).width(24.dp).background(if (on) Lr.TextPrimary else Color.Transparent))
+                    }
+                }
+            }
+            app.rawline.core.ui.PrimaryButton("Done", onConfirm, Modifier.height(LrDim.touch).semantics { contentDescription = "Apply crop" })
         }
     }
 }

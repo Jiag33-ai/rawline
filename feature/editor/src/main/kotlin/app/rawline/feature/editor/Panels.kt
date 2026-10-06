@@ -9,6 +9,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
@@ -28,12 +32,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import app.rawline.core.model.Adjust
 import app.rawline.core.model.Detail
 import app.rawline.core.model.EditRecipe
 import app.rawline.core.model.Effects
 import app.rawline.core.model.Optics
 import app.rawline.core.ui.ChipButton
+import app.rawline.core.ui.LrDim
+import app.rawline.core.ui.PanelHeader
+import app.rawline.core.ui.LrOutlineButton
+import app.rawline.core.ui.LrIcon
 import app.rawline.core.ui.RawSlider
 import app.rawline.core.ui.SectionTitle
 import app.rawline.core.ui.LrTabs
@@ -61,6 +71,17 @@ fun AdjSlider(
     )
 }
 
+/** Edits the Adjust of [target] (the whole photo or a mask) as one history step. */
+fun editAdjust(state: EditorState, target: AdjustTarget, label: String, f: (Adjust) -> Adjust) =
+    state.edit(label) { r -> target.set(r, f(target.get(r))) }
+
+/** The Reset text button at the right end of a tab row. Dim while nothing differs; shows "Name: reset" when used. */
+@Composable
+fun TabReset(name: String, modified: Boolean, onReset: () -> Unit) {
+    val feedback = app.rawline.core.ui.LocalValueFeedback.current
+    TextButton({ onReset(); feedback.flash(name, "reset") }, Modifier.height(LrDim.touch), enabled = modified) { Text("Reset") }
+}
+
 @Composable
 fun PanelColumn(content: @Composable () -> Unit) {
     val scroll = rememberScrollState()
@@ -70,7 +91,10 @@ fun PanelColumn(content: @Composable () -> Unit) {
 // ---------------- Light ----------------
 
 @Composable
-fun LightPanel(state: EditorState, target: AdjustTarget = AdjustTarget.Global, onAuto: (() -> Unit)? = null) = PanelColumn {
+fun LightPanel(state: EditorState, target: AdjustTarget = AdjustTarget.Global, onAuto: (() -> Unit)? = null, onCurve: (() -> Unit)? = null) = PanelColumn {
+    PanelHeader("Light", Resets.lightModified(target.get(state.recipe)), { editAdjust(state, target, "Reset light") { Resets.light(it) } }, trailing = {
+        if (onCurve != null) LrOutlineButton("Curve", onCurve, icon = LrIcon.CURVE, small = true)
+    })
     AdjSlider(state, target, "Exposure", -5f..5f, { it.exposure }, { a, v -> a.copy(exposure = v) }, decimals = 2)
     AdjSlider(state, target, "Contrast", -100f..100f, { it.contrast }, { a, v -> a.copy(contrast = v) })
     AdjSlider(state, target, "Highlights", -100f..100f, { it.highlights }, { a, v -> a.copy(highlights = v) })
@@ -84,9 +108,21 @@ fun LightPanel(state: EditorState, target: AdjustTarget = AdjustTarget.Global, o
 @Composable
 fun EffectsPanel(state: EditorState, target: AdjustTarget = AdjustTarget.Global) {
     var sub by remember { mutableStateOf("effects") }
+    fun resetSub(id: String) = when (id) {
+        "vignette" -> state.edit("Reset vignette") { it.copy(effects = Resets.vignette(it.effects)) }
+        "grain" -> state.edit("Reset grain") { it.copy(effects = Resets.grain(it.effects)) }
+        else -> editAdjust(state, target, "Reset effects") { Resets.presence(it) }
+    }
+    val subModified = when (sub) {
+        "vignette" -> Resets.vignetteModified(state.recipe.effects)
+        "grain" -> Resets.grainModified(state.recipe.effects)
+        else -> Resets.presenceModified(target.get(state.recipe))
+    }
     Column {
-        if (!target.isMask) LrTabs(listOf("effects" to "Effects", "vignette" to "Vignette", "grain" to "Grain"), sub, { sub = it })
+        if (!target.isMask) LrTabs(listOf("effects" to "Effects", "vignette" to "Vignette", "grain" to "Grain"), sub, { sub = it },
+            onDoubleTap = { id -> sub = id; resetSub(id) }, trailing = { TabReset(sub.replaceFirstChar { it.uppercase() }, subModified) { resetSub(sub) } })
         PanelColumn {
+            if (target.isMask) PanelHeader("Effects", subModified, { resetSub("effects") })
             if (target.isMask || sub == "effects") {
                 AdjSlider(state, target, "Texture", -100f..100f, { it.texture }, { a, v -> a.copy(texture = v) })
                 AdjSlider(state, target, "Clarity", -100f..100f, { it.clarity }, { a, v -> a.copy(clarity = v) })
@@ -116,8 +152,18 @@ private fun EffectSlider(state: EditorState, label: String, range: ClosedFloatin
 @Composable
 fun DetailPanel(state: EditorState, onAiDenoiseChanged: (Boolean) -> Unit = {}) {
     var sub by remember { mutableStateOf("sharpen") }
+    fun resetSub(id: String) {
+        when (id) {
+            "sharpen" -> state.edit("Reset sharpening") { it.copy(detail = Resets.sharpen(it.detail)) }
+            "noise" -> { val had = state.recipe.detail.aiDenoise; state.edit("Reset noise") { it.copy(detail = Resets.noise(it.detail)) }; if (had) onAiDenoiseChanged(false) }
+            else -> state.edit("Reset colour noise") { it.copy(detail = Resets.colourNoise(it.detail)) }
+        }
+    }
+    val dd = state.recipe.detail
+    val subModified = when (sub) { "sharpen" -> Resets.sharpenModified(dd); "noise" -> Resets.noiseModified(dd); else -> Resets.colourNoiseModified(dd) }
     Column {
-        LrTabs(listOf("sharpen" to "Sharpening", "noise" to "Noise", "colour" to "Color noise"), sub, { sub = it })
+        LrTabs(listOf("sharpen" to "Sharpening", "noise" to "Noise", "colour" to "Color noise"), sub, { sub = it },
+            onDoubleTap = { id -> sub = id; resetSub(id) }, trailing = { TabReset(when (sub) { "sharpen" -> "Sharpening"; "noise" -> "Noise"; else -> "Color noise" }, subModified) { resetSub(sub) } })
         PanelColumn {
             when (sub) {
                 "sharpen" -> {
@@ -152,6 +198,7 @@ private fun DetailSlider(state: EditorState, label: String, range: ClosedFloatin
 @Composable
 fun OpticsPanel(state: EditorState, lensName: String?, photoLens: String?) = PanelColumn {
     val o = state.recipe.optics
+    PanelHeader("Optics", Resets.opticsModified(o), { state.edit("Reset optics") { it.copy(optics = Resets.optics(it.optics)) } })
     SectionTitle("Lens profile")
     Text(
         if (lensName != null) "Profile found: $lensName" else if (photoLens.isNullOrBlank()) "No lens name in this photo, so no profile can be chosen." else "No profile for \"$photoLens\" in the lens database.",
@@ -159,7 +206,7 @@ fun OpticsPanel(state: EditorState, lensName: String?, photoLens: String?) = Pan
     )
     app.rawline.core.ui.ToggleRow("Fix distortion and vignetting", o.lensCorrection, { on -> state.edit(if (on) "Lens profile on" else "Lens profile off") { it.copy(optics = it.optics.copy(lensCorrection = on)) } }, enabled = lensName != null)
     app.rawline.core.ui.ToggleRow("Remove chromatic aberration", o.removeCa, { on -> state.edit(if (on) "Remove CA on" else "Remove CA off") { it.copy(optics = it.optics.copy(removeCa = on)) } }, enabled = lensName != null)
-    SectionTitle("Manual")
+    SectionTitle("Manual") { state.edit("Reset manual optics") { it.copy(optics = it.optics.copy(distortion = 0f, vignetting = 0f)) } }
     OpticSlider(state, "Distortion", -100f..100f, { it.distortion }, { o2, v -> o2.copy(distortion = v) })
     OpticSlider(state, "Vignetting", -100f..100f, { it.vignetting }, { o2, v -> o2.copy(vignetting = v) })
 }
@@ -177,14 +224,18 @@ fun tempToKelvin(temp: Float): Float = 5500f * 2f.pow(temp / 50f)
 fun kelvinToTemp(k: Float): Float = 50f * log2(k / 5500f)
 
 @Composable
-fun ColourBasicsPanel(state: EditorState, target: AdjustTarget, onAutoWb: (() -> Unit)?, onPickWb: (() -> Unit)?) {
+fun ColourBasicsPanel(state: EditorState, target: AdjustTarget, onAutoWb: (() -> Unit)?, onPickWb: (() -> Unit)?, header: Boolean = target.isMask) {
+    if (header) PanelHeader("Color", Resets.colourBasicsModified(target.get(state.recipe)), { editAdjust(state, target, "Reset color") { Resets.colourBasics(it) } })
     if (!target.isMask) {
         var wbName by remember { mutableStateOf("As Shot") }
         var open by remember { mutableStateOf(false) }
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("White balance", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+        val feedback = app.rawline.core.ui.LocalValueFeedback.current
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            // double tap the title: white balance back to as shot
+            Text("White balance", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f).heightIn(min = LrDim.touch).wrapContentHeight(Alignment.CenterVertically)
+                .pointerInput(Unit) { detectTapGestures(onDoubleTap = { wbName = "As Shot"; state.edit("Reset white balance") { r -> target.set(r, target.get(r).copy(temp = 0f, tint = 0f)) }; feedback.flash("White balance", "as shot") }) })
             Box(Modifier.weight(1f)) {
-                Row(Modifier.clickable { open = true }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.heightIn(min = LrDim.touch).clickable { open = true }, verticalAlignment = Alignment.CenterVertically) {
                     Text(wbName, style = MaterialTheme.typography.titleMedium)
                     app.rawline.core.ui.LrIconView(app.rawline.core.ui.LrIcon.CHEVRON_DOWN, app.rawline.core.ui.Lr.Text, size = 20.dp)
                 }
@@ -199,7 +250,7 @@ fun ColourBasicsPanel(state: EditorState, target: AdjustTarget, onAutoWb: (() ->
                     if (onAutoWb != null) androidx.compose.material3.DropdownMenuItem(text = { Text("Auto") }, onClick = { open = false; wbName = "Auto"; onAutoWb() })
                 }
             }
-            if (onPickWb != null) Box(Modifier.size(48.dp).clickable { onPickWb() }, contentAlignment = Alignment.Center) {
+            if (onPickWb != null) Box(Modifier.size(48.dp).clickable { onPickWb() }.semantics { contentDescription = "Pick white balance from the photo" }, contentAlignment = Alignment.Center) {
                 app.rawline.core.ui.LrIconView(app.rawline.core.ui.LrIcon.SELECT, app.rawline.core.ui.Lr.Text, size = 24.dp)
             }
         }

@@ -25,6 +25,7 @@ enum class LrIcon {
     EDIT, PRESETS, CROP, LIGHT, COLOR, EFFECTS, DETAIL, OPTICS, GEOMETRY, MASKING, HEALING, AUTO, CURVE, CLOSE, CHEVRON_DOWN, HISTOGRAM,
     VERSIONS, RESET, FOLDER, IMPORT, CAMERA, SELECT, TRASH, DOWNLOAD, ERROR, PAUSE, REFRESH,
     LOCK, UNLOCK, ROTATE, HELP, ORIGINAL, RATIOS, FREE_CROP, EYEDROPPER, COPY, SEARCH,
+    ROTATE_LEFT, FLIP_H, FLIP_V, SWAP_ORIENTATION, LEVEL,
 }
 
 @Composable
@@ -105,5 +106,10 @@ private fun DrawScope.draw(icon: LrIcon, c: Color, sw: Float) {
         LrIcon.EYEDROPPER -> { line(0.2f, 0.8f, 0.6f, 0.4f); rrect(0.55f, 0.15f, 0.3f, 0.3f, 0.08f); line(0.2f, 0.8f, 0.12f, 0.88f) }
         LrIcon.COPY -> { rrect(0.3f, 0.3f, 0.55f, 0.58f, 0.05f); poly(0.2f, 0.7f, 0.15f, 0.7f, 0.15f, 0.12f, 0.58f, 0.12f, 0.58f, 0.2f) }
         LrIcon.SEARCH -> { circle(0.43f, 0.43f, 0.28f); line(0.65f, 0.65f, 0.85f, 0.85f) }
+        LrIcon.ROTATE_LEFT -> { drawArc(c, 110f, 280f, false, Offset(0.15f * w, 0.15f * h), Size(0.7f * w, 0.7f * h), style = st); poly(0.3f, 0.1f, 0.18f, 0.25f, 0.35f, 0.3f) }
+        LrIcon.FLIP_H -> { line(0.5f, 0.1f, 0.5f, 0.9f); poly(0.4f, 0.25f, 0.12f, 0.75f, 0.4f, 0.75f, close = true); poly(0.6f, 0.25f, 0.88f, 0.75f, 0.6f, 0.75f, close = true) }
+        LrIcon.FLIP_V -> { line(0.1f, 0.5f, 0.9f, 0.5f); poly(0.25f, 0.4f, 0.75f, 0.12f, 0.75f, 0.4f, close = true); poly(0.25f, 0.6f, 0.75f, 0.88f, 0.75f, 0.6f, close = true) }
+        LrIcon.SWAP_ORIENTATION -> { rrect(0.1f, 0.34f, 0.5f, 0.34f, 0.04f); rrect(0.56f, 0.18f, 0.34f, 0.5f, 0.04f); poly(0.2f, 0.84f, 0.5f, 0.84f); poly(0.42f, 0.76f, 0.5f, 0.84f, 0.42f, 0.92f) }
+        LrIcon.LEVEL -> { line(0.1f, 0.62f, 0.9f, 0.38f); line(0.1f, 0.5f, 0.28f, 0.5f); line(0.72f, 0.5f, 0.9f, 0.5f); circle(0.5f, 0.5f, 0.06f, true) }
     }
 }

@@ -84,9 +84,11 @@ object LrRadius { val none = 0.dp; val xs = 2.dp; val sm = 4.dp; val md = 6.dp; 
 /** Control sizes in dp. */
 object LrDim {
     val topBar = 52.dp; val libraryHeader = 48.dp; val idleDock = 66.dp; val masterRail = 54.dp; val categoryRail = 64.dp
-    val tabBar = 44.dp; val button = 40.dp; val smallButton = 34.dp; val hit = 44.dp; val menuRow = 40.dp; val presetRow = 58.dp
-    val sliderBlock = 46.dp; val bottomNav = 56.dp; val confirmBar = 56.dp; val pill = 28.dp; val activeTile = 42.dp
+    val tabBar = 48.dp; val button = 40.dp; val smallButton = 34.dp; val hit = 44.dp; val menuRow = 40.dp; val presetRow = 58.dp
+    val sliderBlock = 48.dp; val bottomNav = 56.dp; val confirmBar = 56.dp; val pill = 28.dp; val activeTile = 42.dp
     val dockMargin = 28.dp
+    /** Smallest touch target for anything tappable in the editor. The visible shape can be smaller. */
+    val touch = 48.dp
 }
 
 /** Durations in ms and easings. No springs anywhere. */

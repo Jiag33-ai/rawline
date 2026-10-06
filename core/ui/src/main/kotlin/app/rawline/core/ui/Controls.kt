@@ -27,12 +27,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -84,8 +86,13 @@ import java.util.Locale
 class ValueFeedback {
     var text by mutableStateOf<String?>(null)
     var held by mutableStateOf(false)
-    fun show(label: String, value: String) { text = "$label: $value"; held = true }
+    /** Counts flashes so two resets in a row restart the hold timer. */
+    var stamp by androidx.compose.runtime.mutableIntStateOf(0)
+    var holdMs by androidx.compose.runtime.mutableLongStateOf(350L)
+    fun show(label: String, value: String) { text = "$label: $value"; held = true; holdMs = 350L }
     fun release() { held = false }
+    /** A short note with nothing held, for a reset: "Shadows: 0 (reset)". Stays about a second, then fades. */
+    fun flash(label: String, value: String) { text = "$label: $value"; held = false; holdMs = 1000L; stamp++ }
 }
 
 val LocalValueFeedback = compositionLocalOf { ValueFeedback() }
@@ -93,7 +100,7 @@ val LocalValueFeedback = compositionLocalOf { ValueFeedback() }
 @Composable
 fun ValueFeedbackPill(feedback: ValueFeedback, modifier: Modifier = Modifier) {
     // hold about 350 ms after release, then fade (160 ms)
-    LaunchedEffect(feedback.held, feedback.text) { if (!feedback.held && feedback.text != null) { delay(350); feedback.text = null } }
+    LaunchedEffect(feedback.held, feedback.text, feedback.stamp) { if (!feedback.held && feedback.text != null) { delay(feedback.holdMs); feedback.text = null } }
     AnimatedVisibility(
         feedback.text != null && (feedback.held || true), modifier,
         enter = fadeIn(tween(LrMotion.instant, easing = LrMotion.enter)) + scaleIn(tween(LrMotion.instant, easing = LrMotion.enter), initialScale = 0.97f),
@@ -108,9 +115,16 @@ fun ValueFeedbackPill(feedback: ValueFeedback, modifier: Modifier = Modifier) {
 
 // ---------------- slider ----------------
 
+/** The text a slider shows for [v] (the same for the value label, the feedback pill and the reset note). */
+fun sliderText(v: Float, range: ClosedFloatingPointRange<Float>, decimals: Int, unit: String, format: ((Float) -> String)?): String {
+    val text = format?.invoke(v) ?: if (decimals == 0) Math.round(v).toString() else String.format(Locale.US, "%.${decimals}f", v)
+    return if (v > 0f && range.start < 0f && format == null) "+$text$unit" else "$text$unit"
+}
+
 /**
- * AdjustmentSlider: label left, value right (tabular), a 1 dp track with an 18 dp ring thumb. The block is 46 dp tall and the whole
- * block is the touch area. Only a sideways drag moves it (a vertical drag scrolls the panel). Double tap resets, tap the number to type.
+ * AdjustmentSlider: label left, value right (tabular), a 1 dp track with an 18 dp ring thumb. The block is 48 dp tall and the whole
+ * block is the touch area. Only a sideways drag moves it (a vertical drag scrolls the panel). Double tap anywhere on the block (the
+ * ring, the track, the label or the value) resets it to [default] and shows "Label: value (reset)"; tap the number once to type.
  * No easing on the data while dragging.
  */
 @Composable
@@ -129,12 +143,21 @@ fun RawSlider(
 ) {
     var typing by remember { mutableStateOf(false) }
     val feedback = LocalValueFeedback.current
-    val text = format?.invoke(value) ?: if (decimals == 0) value.toInt().toString() else String.format(Locale.US, "%.${decimals}f", value)
-    val shownValue = if (value > 0f && range.start < 0f && format == null) "+$text$unit" else "$text$unit"
+    val text = format?.invoke(value) ?: if (decimals == 0) Math.round(value).toString() else String.format(Locale.US, "%.${decimals}f", value)
+    val shownValue = sliderText(value, range, decimals, unit, format)
+    // everything a pointerInput block reads goes through these, so a gesture that outlives a recomposition never uses old values
     val currentChange by rememberUpdatedState(onChange)
     val currentCommit by rememberUpdatedState(onCommit)
     val currentText by rememberUpdatedState(shownValue)
     val currentValue by rememberUpdatedState(value)
+    val currentDefault by rememberUpdatedState(default)
+    val currentLabel by rememberUpdatedState(label)
+    val currentFormat by rememberUpdatedState(format)
+    val doReset = {
+        currentChange(currentDefault); currentCommit()
+        feedback.flash(currentLabel, sliderText(currentDefault, range, decimals, unit, currentFormat) + " (reset)")
+    }
+    val currentReset by rememberUpdatedState(doReset)
     Box(
         modifier.fillMaxWidth().height(LrDim.sliderBlock).semantics {
             // TalkBack and switch access can read and change the value, and reset it, without a touch drag
@@ -142,9 +165,11 @@ fun RawSlider(
             stateDescription = shownValue
             progressBarRangeInfo = androidx.compose.ui.semantics.ProgressBarRangeInfo(value.coerceIn(range.start, range.endInclusive), range.start..range.endInclusive)
             setProgress { v -> currentChange(v.coerceIn(range.start, range.endInclusive)); currentCommit(); true }
-            customActions = listOf(androidx.compose.ui.semantics.CustomAccessibilityAction("Reset $label") { currentChange(default); currentCommit(); true })
+            customActions = listOf(androidx.compose.ui.semantics.CustomAccessibilityAction("Reset $label") { currentReset(); true })
         }
-            .pointerInput(range) { detectTapGestures(onDoubleTap = { currentChange(default); currentCommit() }) }
+            // Double tap. Registered first so it sits outside the drag handler: a sideways drag consumes its moves in the main pass
+            // before this one looks, which cancels the tap, so a drag can never also count as a tap.
+            .pointerInput(Unit) { detectTapGestures(onDoubleTap = { currentReset() }) }
             .pointerInput(range) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
@@ -157,8 +182,8 @@ fun RawSlider(
                     if (slop != null) {
                         // keep the thumb where it is relative to the finger, so grabbing never makes it hop
                         val grab = thumbX(currentValue) - slop.position.x
-                        feedback.show(label, currentText)
-                        horizontalDrag(slop.id) { c -> currentChange(at(c.position.x + grab)); feedback.show(label, currentText); c.consume() }
+                        feedback.show(currentLabel, currentText)
+                        horizontalDrag(slop.id) { c -> currentChange(at(c.position.x + grab)); feedback.show(currentLabel, currentText); c.consume() }
                         feedback.release()
                         currentCommit()
                     }
@@ -167,9 +192,14 @@ fun RawSlider(
     ) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp).padding(top = 2.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text(label, style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 18.sp), color = Lr.TextPrimary)
-            Text(shownValue, style = ValueStyle, color = Lr.TextSecondary, modifier = Modifier.clickable { typing = true }.defaultMinSize(minWidth = 44.dp, minHeight = 20.dp).wrapContentWidth(Alignment.End))
+            // A tap types a number, a double tap resets. This is its own detector (not clickable) so the double tap is not swallowed.
+            Text(
+                shownValue, style = ValueStyle, color = Lr.TextSecondary,
+                modifier = Modifier.pointerInput(Unit) { detectTapGestures(onDoubleTap = { currentReset() }, onTap = { typing = true }) }
+                    .defaultMinSize(minWidth = 56.dp, minHeight = 30.dp).wrapContentWidth(Alignment.End).wrapContentHeight(Alignment.CenterVertically),
+            )
         }
-        Canvas(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(26.dp)) {
+        Canvas(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(28.dp)) {
             val thumbR = 9.dp.toPx(); val pad = 14.dp.toPx() + thumbR; val cy = size.height / 2f + 2.dp.toPx()
             val span = range.endInclusive - range.start
             fun px(v: Float) = pad + ((v - range.start) / span).coerceIn(0f, 1f) * (size.width - 2 * pad)
@@ -201,7 +231,7 @@ fun RawSlider(
                     decorationBox = { inner -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterStart) { inner() } },
                 )
             },
-            confirmButton = { TextButton(onClick = { input.toFloatOrNull()?.let { onChange(it.coerceIn(range.start, range.endInclusive)); onCommit() }; typing = false }) { Text("Set") } },
+            confirmButton = { TextButton(onClick = { input.toFloatOrNull()?.let { currentChange(it.coerceIn(range.start, range.endInclusive)); currentCommit() }; typing = false }) { Text("Set") } },
             dismissButton = { TextButton(onClick = { typing = false }) { Text("Cancel") } },
         )
     }
@@ -211,20 +241,28 @@ fun RawSlider(
 
 /** PanelTabs: 44 dp, light underline on the active one, no filled pills. */
 @Composable
-fun LrTabs(items: List<Pair<String, String>>, selected: String, onSelect: (String) -> Unit, modifier: Modifier = Modifier) {
-    Row(modifier.fillMaxWidth().height(LrDim.tabBar).padding(horizontal = 14.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+fun LrTabs(
+    items: List<Pair<String, String>>, selected: String, onSelect: (String) -> Unit, modifier: Modifier = Modifier,
+    /** Double tap on a tab (it is selected first): reset what that tab holds. A note "Tab: reset" shows in the value pill. */
+    onDoubleTap: ((String) -> Unit)? = null,
+    /** Extra content at the right end of the row, such as a Reset text button. */
+    trailing: (@Composable () -> Unit)? = null,
+) {
+    val feedback = LocalValueFeedback.current
+    Row(modifier.fillMaxWidth().height(LrDim.tabBar).padding(start = 14.dp, end = if (trailing != null) 4.dp else 14.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
         items.forEach { (id, label) ->
             val on = id == selected
             val colour by animateColorAsState(if (on) Lr.TextPrimary else Lr.TextSecondary.copy(alpha = 0.85f), tween(140), label = "tab")
             val line by animateColorAsState(if (on) Lr.TextPrimary else Color.Transparent, tween(140), label = "tabline")
             Column(
-                Modifier.height(LrDim.tabBar).clickable { onSelect(id) }.padding(horizontal = 4.dp).semantics { contentDescription = label },
+                Modifier.height(LrDim.tabBar).tapOrDoubleTap(onTap = { onSelect(id) }, onDoubleTap = { onDoubleTap?.let { it(id); feedback.flash(label, "reset") } }).padding(horizontal = 4.dp).semantics { contentDescription = label },
                 horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
             ) {
                 Text(label, color = colour, style = MaterialTheme.typography.titleSmall.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Normal))
                 Box(Modifier.padding(top = 3.dp).height(2.dp).width(IntrinsicSize.Max).fillMaxWidth().background(line))
             }
         }
+        trailing?.invoke()
     }
 }
 
@@ -299,12 +337,12 @@ fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit, modi
 
 /** 44 dp touch target, 22 dp icon, no permanent backing. */
 @Composable
-fun LrIconButton(icon: LrIcon, description: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, tint: Color = Lr.IconPrimary, size: Dp = 22.dp) {
+fun LrIconButton(icon: LrIcon, description: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, tint: Color = Lr.IconPrimary, size: Dp = 22.dp, hit: Dp = LrDim.hit) {
     val src = remember { MutableInteractionSource() }
     val pressed by src.collectIsPressedAsState()
     val bg by animateColorAsState(if (pressed) Lr.PressOverlay else Color.Transparent, tween(if (pressed) LrMotion.instant else LrMotion.fast), label = "press")
     Box(
-        modifier.size(LrDim.hit).clip(RoundedCornerShape(6.dp)).background(bg).clickable(interactionSource = src, indication = null, enabled = enabled, onClick = onClick).semantics { contentDescription = description },
+        modifier.size(hit).clip(RoundedCornerShape(6.dp)).background(bg).clickable(interactionSource = src, indication = null, enabled = enabled, onClick = onClick).semantics { contentDescription = description },
         contentAlignment = Alignment.Center,
     ) { LrIconView(icon, if (enabled) tint else Lr.TextDisabled, size = size) }
 }
@@ -440,7 +478,56 @@ fun Histogram(hist: IntArray?, modifier: Modifier = Modifier) {
     }
 }
 
+/** Small grey section label. With [onReset], a double tap on it resets what the section holds and shows a note. */
 @Composable
-fun SectionTitle(text: String) {
-    Text(text, style = MaterialTheme.typography.titleSmall, color = Lr.TextSecondary, modifier = Modifier.padding(start = 14.dp, top = 12.dp, bottom = 2.dp))
+fun SectionTitle(text: String, onReset: (() -> Unit)? = null) {
+    val feedback = LocalValueFeedback.current
+    val reset by rememberUpdatedState(onReset)
+    val mod = if (onReset != null) Modifier.pointerInput(text) { detectTapGestures(onDoubleTap = { reset?.invoke(); feedback.flash(text, "reset") }) } else Modifier
+    Text(text, style = MaterialTheme.typography.titleSmall, color = Lr.TextSecondary, modifier = mod.padding(start = 14.dp, top = 12.dp, bottom = 2.dp))
+}
+
+/**
+ * The first row of an editor panel: the section title on the left and a Reset text button on the right (dimmed while nothing differs
+ * from the default). A double tap on the title does the same as the button. Either one shows "Title: reset" in the value pill.
+ * [trailing] holds any extra action (for example the Curve button) between the title and Reset; [trailingEnd] sits after Reset (Done).
+ */
+@Composable
+fun PanelHeader(
+    title: String, modified: Boolean, onReset: () -> Unit, modifier: Modifier = Modifier,
+    trailing: (@Composable androidx.compose.foundation.layout.RowScope.() -> Unit)? = null,
+    trailingEnd: (@Composable androidx.compose.foundation.layout.RowScope.() -> Unit)? = null,
+) {
+    val feedback = LocalValueFeedback.current
+    val reset by rememberUpdatedState(onReset)
+    val doReset = { reset(); feedback.flash(title, "reset") }
+    Row(modifier.fillMaxWidth().height(LrDim.touch).padding(start = 14.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.weight(1f).fillMaxHeight().pointerInput(title) { detectTapGestures(onDoubleTap = { doReset() }) }.semantics { contentDescription = "$title. Double tap to reset" }, contentAlignment = Alignment.CenterStart) {
+            Text(title, style = MaterialTheme.typography.titleSmall, color = Lr.TextPrimary)
+        }
+        trailing?.invoke(this)
+        TextButton(doReset, Modifier.height(LrDim.touch), enabled = modified) { Text("Reset") }
+        trailingEnd?.invoke(this)
+    }
+}
+
+/** A chip whose touch area is the full 48 dp but whose visible shape stays 34 dp. Optional [accent] marks the selected chip's border (channel colours). */
+@Composable
+fun TouchChip(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, accent: Color? = null, onDoubleTap: (() -> Unit)? = null, leading: (@Composable () -> Unit)? = null) {
+    val bg by animateColorAsState(if (selected) Lr.SurfaceSelected else Color.Transparent, tween(LrMotion.fast), label = "touchchip")
+    Box(
+        modifier.defaultMinSize(minWidth = LrDim.touch, minHeight = LrDim.touch)
+            .tapOrDoubleTap(onTap = onClick, onDoubleTap = onDoubleTap ?: {})
+            .semantics { contentDescription = text + if (selected) ", selected" else "" },
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(
+            Modifier.height(LrDim.smallButton).clip(RoundedCornerShape(4.dp)).background(bg)
+                .border(1.dp, if (selected) (accent ?: Lr.BorderStrong) else Lr.BorderSubtle, RoundedCornerShape(4.dp)).padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            leading?.invoke()
+            Text(text, color = if (selected) Lr.TextPrimary else Lr.TextSecondary, style = MaterialTheme.typography.bodySmall)
+        }
+    }
 }
