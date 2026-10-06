@@ -1,32 +1,11 @@
 package app.rawline.feature.masking
 
 import android.graphics.Bitmap
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxScope
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.material3.MaterialTheme
-import app.rawline.core.ui.LrSwitch as Switch
-import androidx.compose.material3.Text
-import app.rawline.core.ui.LrTextButton as TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.unit.dp
 import app.rawline.core.cache.MaskStore
+import app.rawline.core.cache.PerfLog
 import app.rawline.core.ml.MaskAi
 import app.rawline.core.model.BrushStroke
 import app.rawline.core.model.EditRecipe
@@ -36,56 +15,59 @@ import app.rawline.core.model.MaskOp
 import app.rawline.core.model.MaskType
 import app.rawline.core.render.EditorSession
 import app.rawline.core.render.P
-import app.rawline.core.ui.ChipButton
-import app.rawline.core.ui.RawSlider
-import app.rawline.core.ui.SectionTitle
-import app.rawline.feature.editor.AdjSlider
-import app.rawline.feature.editor.AdjustTarget
-import app.rawline.feature.editor.ColourBasicsPanel
-import app.rawline.feature.editor.CurvePanel
 import app.rawline.feature.editor.EditorState
 import app.rawline.feature.editor.EditorTab
-import app.rawline.feature.editor.EffectsPanel
-import app.rawline.feature.editor.GradingPanel
-import app.rawline.feature.editor.LightPanel
-import app.rawline.feature.editor.MixerPanel
-import app.rawline.feature.editor.PanelColumn
 import app.rawline.feature.editor.PhotoMapper
 import app.rawline.feature.editor.ToolGestures
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.math.cos
-import kotlin.math.hypot
-import kotlin.math.sin
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Masking tab, on-photo handles and brush. One instance per open photo.
+ *
+ * Threading: the UI and the gesture callbacks run on the main thread. Everything that keeps the saved images and the GPU layers in step
+ * with the recipe ([persist], [restore]) goes through one [LatestWinsSerial] worker, so it never runs twice at once and the newest
+ * recipe always wins. [BrushLayer] is internally synchronised, so painting and the worker may touch the same layer safely.
+ *
  * @param reference software bitmap of the screen preview, used by edge-aware brush
  */
 class MaskingFeature(
-    private val state: EditorState,
+    internal val state: EditorState,
     private val session: EditorSession,
     private val store: MaskStore,
     private val scope: CoroutineScope,
     private val reference: suspend (Int) -> Bitmap?,
-    private val ai: MaskAi? = null,
+    internal val ai: MaskAi? = null,
 ) {
     val ui = MaskUi()
+
+    // ---------------------------------------------------------------- brush layers and persistence
+
     private val brushLayers = HashMap<String, BrushLayer>()
-    private var refPixels: IntArray? = null
-    private var refDims = 0 to 0
+    private class Ref(val w: Int, val h: Int, val px: IntArray)
+    @Volatile private var ref: Ref? = null
+    /** What each layer currently holds on the GPU / in its saved PNG, as a [LayerPlan.brushSignature]. */
+    private val uploaded = ConcurrentHashMap<String, Int>()
+    private val saved = ConcurrentHashMap<String, Int>()
 
     private fun layerDims() = BrushLayer.dims(session.baseAspect())
 
-    private fun brushLayer(key: String): BrushLayer {
+    /** The layer for [key] at the current frame size. A new or resized layer (for example after a rotate) is redrawn from [strokes]. */
+    private fun brushLayer(key: String, strokes: List<BrushStroke>): BrushLayer {
         val (w, h) = layerDims()
         synchronized(brushLayers) {
             brushLayers[key]?.let { if (it.w == w && it.h == h) return it }
-            // New or resized layer (for example after a rotate): redraw this brush's strokes into it
-            val strokes = state.recipe.masks.flatMap { it.components }.firstOrNull { it.layerKey == key }?.strokes ?: emptyList()
-            return BrushLayer(w, h, if (refDims == (w to h)) refPixels else null).also { if (strokes.isNotEmpty()) it.renderAll(strokes); brushLayers[key] = it }
+            val r = ref
+            val l = BrushLayer(w, h, if (r != null && r.w == w && r.h == h) r.px else null)
+            if (strokes.isNotEmpty()) l.renderAll(strokes)
+            brushLayers[key] = l
+            return l
         }
     }
 
@@ -93,431 +75,543 @@ class MaskingFeature(
     fun ensureReference() {
         scope.launch(Dispatchers.Default) {
             val (w, h) = layerDims()
-            if (refPixels != null && refDims == (w to h)) return@launch
+            val cur = ref
+            if (cur != null && cur.w == w && cur.h == h) return@launch
             val b = reference(maxOf(w, h)) ?: return@launch
             val s = Bitmap.createScaledBitmap(b, w, h, true)
             val px = IntArray(w * h); s.getPixels(px, 0, w, 0, 0, w, h)
-            refPixels = px; refDims = w to h
+            ref = Ref(w, h, px)
             synchronized(brushLayers) { brushLayers.values.forEach { it.reference = px } }
         }
     }
 
-    private val savedHash = HashMap<String, Int>()
+    private class SyncReq(val recipe: EditRecipe, val force: Boolean)
+
+    private val serial = LatestWinsSerial<SyncReq>(
+        // NonCancellable: a save that has been asked for finishes even if the editor is left straight after the last stroke
+        launch = { r -> scope.launch(Dispatchers.Default + NonCancellable) { r.run() } },
+        merge = { old, n -> SyncReq(n.recipe, n.force || old?.force == true) },
+        onError = { PerfLog.error("masks sync: ${it.message}") },
+        work = { sync(it.recipe, it.force) },
+    )
 
     /**
-     * Keeps the saved alpha images of brush masks in step with the recipe (after commits, undo, redo). Export reads these,
-     * so the exported mask is the very image the screen used.
+     * Keeps the saved alpha images of brush masks and the GPU layers in step with the recipe (after commits, undo, redo). Export reads
+     * the saved images, so the exported mask is the very image the screen used. Runs one at a time, newest recipe wins.
      */
-    fun persist(recipe: EditRecipe) {
-        scope.launch(Dispatchers.Default) {
-            prune(recipe)
-            // A key freed above may be wanted again (undo of a delete): AI layers come back from the store, brushes are redrawn below.
-            val live = session.layerIndex
-            recipe.masks.flatMap { it.components }.filter { it.type == MaskType.BITMAP && it.layerKey?.startsWith("brush_") != true }.forEach { c ->
-                val key = c.layerKey ?: return@forEach
-                if (key !in live) store.load(key)?.let { (a, w, h) -> upload(key, a, w, h) }
-            }
-            recipe.masks.flatMap { it.components }.filter { it.type == MaskType.BITMAP && it.layerKey?.startsWith("brush_") == true }.forEach { c ->
-                val key = c.layerKey ?: return@forEach
-                val hash = c.strokes.hashCode()
-                if (savedHash[key] == hash) return@forEach
-                val l = brushLayer(key)
-                l.renderAll(c.strokes)
-                store.save(key, l.alpha, l.w, l.h)
-                upload(key, l.snapshot(), l.w, l.h)
-                savedHash[key] = hash
-            }
+    fun persist(recipe: EditRecipe) = serial.submit(SyncReq(recipe, false))
+
+    /** Re-creates GPU layers for every bitmap mask after opening a photo. */
+    fun restore(recipe: EditRecipe) = serial.submit(SyncReq(recipe, true))
+
+    private fun sync(recipe: EditRecipe, force: Boolean) {
+        prune(recipe)
+        val live = session.layerIndex
+        recipe.masks.flatMap { it.components }.filter { it.type == MaskType.BITMAP }.forEach { c ->
+            val key = c.layerKey ?: return@forEach
+            if (MaskRules.isBrush(c)) syncBrush(key, c.strokes, force)
+            // An AI layer is never edited: it only needs to come back from its saved image when the slot was freed (undo of a delete) or on open.
+            else if (force || key !in live) store.load(key)?.let { (a, w, h) -> upload(key, a, w, h) }
+        }
+    }
+
+    private fun syncBrush(key: String, strokes: List<BrushStroke>, force: Boolean) {
+        val l = brushLayer(key, strokes)
+        val hash = strokes.hashCode()
+        // Pixels differ from the recipe (undo, redo, resize): redraw. Never while a finger is painting on this layer; that commit syncs again.
+        if (l.syncedStrokes != hash && !l.renderAllIfIdle(strokes)) return
+        if (l.drawing) return
+        val sig = LayerPlan.brushSignature(hash, l.w, l.h)
+        if (force || uploaded[key] != sig || key !in session.layerIndex) { upload(key, l.snapshot(), l.w, l.h); uploaded[key] = sig }
+        if (saved[key] != sig) {
+            // on open the saved image is already right; do not re-encode every brush just to be sure
+            if (!(force && saved[key] == null && store.file(key).exists())) store.save(key, l.snapshot(), l.w, l.h)
+            saved[key] = sig
         }
     }
 
     /** Gives back the GPU layer slots (there are only a few) of masks that no longer exist: after delete, undo, redo, reset. */
     private fun prune(recipe: EditRecipe) {
-        val used = recipe.masks.flatMap { it.components }.mapNotNull { it.layerKey }.toSet()
-        session.layerIndex.keys.filter { it !in used }.forEach { k ->
+        LayerPlan.unused(session.layerIndex.keys, recipe).forEach { k ->
             session.removeLayer(k)
             synchronized(brushLayers) { brushLayers.remove(k) }
-            savedHash.remove(k)
+            uploaded.remove(k); saved.remove(k)
         }
     }
 
-    private fun upload(key: String, bytes: ByteArray, w: Int, h: Int) = session.setLayer(key, bytes.copyOf(), w, h)
+    private fun upload(key: String, bytes: ByteArray, w: Int, h: Int) = session.setLayer(key, bytes, w, h)
 
-    /** Re-creates GPU layers for every bitmap mask after opening a photo. */
-    fun restore(recipe: EditRecipe) {
-        scope.launch(Dispatchers.Default) {
-            recipe.masks.forEach { m ->
-                m.components.filter { it.type == MaskType.BITMAP }.forEach { c ->
-                    val key = c.layerKey ?: return@forEach
-                    if (c.strokes.isNotEmpty()) {
-                        val l = brushLayer(key)
-                        l.renderAll(c.strokes)
-                        upload(key, l.snapshot(), l.w, l.h)
-                    } else store.load(key)?.let { (a, w, h) -> upload(key, a, w, h) }
-                }
-            }
+    // ---------------------------------------------------------------- coordinates
+
+    /**
+     * The crop rectangle (cropX, cropY, cropW, cropH of the returned Geometry) that is actually rendered. This is the ONLY place the
+     * masking code reads crop fields, so the view <-> frame mapping, brush ring and default gradient placement all follow it.
+     * TODO(PM): after merging the edge fix, return the session's effective crop (EditorSession.effectiveCrop / Geo.constrainGeometry)
+     * here instead of the recipe's own fields.
+     */
+    internal fun cropRect(): app.rawline.core.model.Geometry = state.recipe.geometry
+
+    private fun pf(p: Offset): V2 {
+        val g = cropRect()
+        return V2(g.cropX + p.x * g.cropW, g.cropY + p.y * g.cropH)
+    }
+    private fun toOut(f: V2): V2 {
+        val g = cropRect()
+        return V2((f.x - g.cropX) / g.cropW, (f.y - g.cropY) / g.cropH)
+    }
+    /** View position (px) of a frame position. */
+    internal fun viewOf(mapper: PhotoMapper, f: V2): V2 { val o = toOut(f); val v = mapper.toView(o.x, o.y); return V2(v.x, v.y) }
+    private fun frameOf(mapper: PhotoMapper, pos: Offset): V2? = mapper.toImage(pos.x, pos.y)?.let { pf(it) }
+    internal fun aspect() = session.baseAspect()
+    private fun dp(v: Float) = v * ui.density
+
+    // ---------------------------------------------------------------- selection and navigation
+
+    internal val masks get() = state.recipe.masks
+    internal val selIndex get() = MaskRules.indexOf(state.recipe, ui.selectedId)
+    internal val selMask: Mask? get() = masks.getOrNull(selIndex)
+    internal val selComp: MaskComponent? get() = selMask?.components?.getOrNull(ui.selectedComp)
+
+    internal fun effectiveOverlay(): Boolean = ui.overlayPref ?: (ui.sub == "mask")
+
+    private var lastShown = -2
+
+    /** Points the red tint at the selected mask (an index into all masks; RenderParams maps it to the visible ones). */
+    internal fun syncOverlay() {
+        val idx = selIndex
+        val want = if (ui.active && ui.page == MaskPage.EDIT && idx >= 0 && effectiveOverlay()) idx else -1
+        if (want != lastShown) { lastShown = want; session.setShowMask(want) }
+    }
+
+    /** Called when the recipe changes under us (undo, redo, reset, delete): drops a selection that no longer exists. */
+    internal fun reconcile() {
+        val (id, part) = MaskRules.reconcile(ui.selectedId, ui.selectedComp, masks)
+        if (id != ui.selectedId) { ui.selectedId = id; if (ui.page == MaskPage.EDIT) ui.page = MaskPage.LIST; ui.renaming = false; cancelPicks() }
+        if (part != ui.selectedComp) ui.selectedComp = part
+    }
+
+    internal fun select(id: String, part: Int = 0) {
+        cancelPicks()
+        ui.selectedId = id; ui.selectedComp = part; ui.sub = "mask"; ui.page = MaskPage.EDIT; ui.renaming = false; ui.toast = null
+    }
+
+    internal fun selectPart(i: Int) { cancelPicks(); ui.selectedComp = i }
+
+    internal fun toList() { cancelWork(); ui.renaming = false; ui.page = MaskPage.LIST }
+
+    internal fun openPicker() {
+        cancelPicks(); ui.renaming = false
+        ui.pickFrom = if (ui.page == MaskPage.EDIT && selMask != null) MaskPage.EDIT else MaskPage.LIST
+        ui.page = MaskPage.PICK
+    }
+
+    internal fun closePicker() {
+        cancelWork()
+        ui.page = if (ui.pickFrom == MaskPage.EDIT && selMask != null) MaskPage.EDIT else MaskPage.LIST
+    }
+
+    /** Back inside the tray. Returns false when there is nothing to step out of, so the editor can close the panel. */
+    internal fun back(): Boolean {
+        if (ui.busy != null || ui.pickingObject || ui.pickingColour) { cancelWork(); return true }
+        if (ui.renaming) { ui.renaming = false; return true }
+        return when (ui.page) {
+            MaskPage.EDIT -> { toList(); true }
+            MaskPage.PICK -> if (masks.isEmpty()) false else { closePicker(); true }
+            MaskPage.LIST -> false
         }
     }
 
-    private fun pf(p: Offset): Offset {
-        val g = state.recipe.geometry
-        return Offset(g.cropX + p.x * g.cropW, g.cropY + p.y * g.cropH)
-    }
-    private fun toOut(f: Offset): Offset {
-        val g = state.recipe.geometry
-        return Offset((f.x - g.cropX) / g.cropW, (f.y - g.cropY) / g.cropH)
-    }
+    // ---------------------------------------------------------------- creating, editing, deleting
 
-    private val masks get() = state.recipe.masks
-    private val selMask: Mask? get() = masks.getOrNull(ui.selected)
-    private val selComp: MaskComponent? get() = selMask?.components?.getOrNull(ui.selectedComp)
+    internal fun notify(text: String, actionLabel: String? = null, action: (() -> Unit)? = null) { ui.toast = MaskToast(text, actionLabel, action) }
 
-    private fun select(i: Int) { ui.selected = i; ui.selectedComp = 0; session.setShowMask(if (ui.showOverlay) i else -1); ui.sub = "mask" }
+    private fun limitMessage(r: EditRecipe, newLayers: Int) =
+        if (r.masks.size >= P.MAX_MASKS) "A photo can have ${P.MAX_MASKS} masks. Delete one to add another."
+        else "Too many brush and AI parts on this photo (${P.MAX_LAYERS} at most). Delete one first."
 
-    private fun add(kind: MaskKind) {
-        val m = MaskFactory.mask(kind, masks.size + 1)
-        if (masks.size >= P.MAX_MASKS) return
-        state.edit("Add ${kind.label} mask") { it.copy(masks = it.masks + m) }
-        select(masks.lastIndex)
-        if (kind == MaskKind.BRUSH) m.components[0].layerKey?.let { k -> val l = brushLayer(k); upload(k, l.snapshot(), l.w, l.h) }
-    }
-
-    private fun addAi(label: String, alpha: ByteArray, w: Int, h: Int) {
-        val key = "ai_${MaskFactory.newId()}"
-        runBlockingIo { store.save(key, alpha, w, h) }
-        upload(key, alpha, w, h)
-        val m = Mask(MaskFactory.newId(), label, listOf(MaskComponent(MaskType.BITMAP, MaskOp.ADD, layerKey = key, label = label)))
-        state.edit("Add $label mask") { it.copy(masks = it.masks + m) }
-        select(masks.lastIndex)
+    internal fun create(tool: MaskTool) {
+        val r = state.recipe
+        val kind = tool.kind
+        if (kind == null) {
+            if (ai == null) { notify("AI masks are not available on this device."); return }
+            if (!MaskRules.canAddMask(r, 1)) { notify(limitMessage(r, 1)); return }
+            if (tool == MaskTool.OBJECT) { startObjectPick(AiTarget.NewMask) } else runAiTool(tool, AiTarget.NewMask)
+            return
+        }
+        val need = if (kind == MaskKind.BRUSH) 1 else 0
+        if (!MaskRules.canAddMask(r, need)) { notify(limitMessage(r, need)); return }
+        val m = MaskFactory.mask(kind, MaskRules.nextName(tool.nameBase, r.masks), cropRect())
+        state.edit("Add ${tool.label} mask") { it.copy(masks = it.masks + m) }
+        select(m.id)
+        if (kind == MaskKind.COLOR) ui.pickingColour = true
     }
 
-    private fun runBlockingIo(f: () -> Unit) { f() }
+    /** Adds a part to the selected mask, combined with [MaskUi.nextOp]. */
+    internal fun addPart(tool: MaskTool) {
+        val id = ui.selectedId ?: return
+        val r = state.recipe
+        val kind = tool.kind
+        val need = if (kind == null || kind == MaskKind.BRUSH) 1 else 0
+        if (!MaskRules.canAddPart(r, id, need)) {
+            notify(if ((selMask?.components?.size ?: 0) >= MaskRules.MAX_PARTS) "A mask can have ${MaskRules.MAX_PARTS} parts." else limitMessage(r, need)); return
+        }
+        if (kind == null) {
+            if (ai == null) { notify("AI masks are not available on this device."); return }
+            val target = AiTarget.Part(id, ui.nextOp)
+            if (tool == MaskTool.OBJECT) startObjectPick(target) else runAiTool(tool, target)
+            return
+        }
+        val c = MaskFactory.component(kind, ui.nextOp, crop = cropRect())
+        state.edit("Add mask part") { MaskRules.addPart(it, id, c) }
+        ui.selectedComp = selMask?.components?.lastIndex ?: 0
+        if (kind == MaskKind.COLOR) ui.pickingColour = true
+    }
 
-    private fun runAi(label: String, job: suspend (Int, Int) -> ByteArray?) {
-        if (masks.size >= P.MAX_MASKS) return
-        ui.busy = "Finding $label"
-        scope.launch {
+    internal fun deleteMask(id: String) {
+        if (MaskRules.indexOf(state.recipe, id) < 0) return
+        cancelPicks()
+        state.edit("Delete mask") { MaskRules.deleteMask(it, id) }
+        ui.selectedId = null; ui.selectedComp = 0; ui.renaming = false; ui.page = MaskPage.LIST
+        notify("Mask deleted", "Undo") { state.undo(); ui.toast = null }
+    }
+
+    internal fun duplicateMask(id: String) {
+        val r = state.recipe
+        val m = r.masks.firstOrNull { it.id == id } ?: return
+        val newLayers = m.components.count { MaskRules.isBrush(it) }
+        if (!MaskRules.canAddMask(r, newLayers)) { notify(limitMessage(r, newLayers)); return }
+        val d = MaskFactory.duplicate(m, MaskRules.nextName(m.name.replace(Regex(" \\d+$"), ""), r.masks))
+        // the copy's brush layers are drawn from its strokes by the persist step that the commit triggers
+        state.edit("Duplicate mask") { it.copy(masks = it.masks + d) }
+        select(d.id)
+    }
+
+    internal fun toggleVisible(id: String) = state.edit("Show or hide mask") { r -> MaskRules.mapMask(r, id) { it.copy(visible = !it.visible) } }
+    internal fun toggleInvert(id: String) = state.edit("Invert mask") { r -> MaskRules.mapMask(r, id) { it.copy(invert = !it.invert) } }
+    internal fun rename(id: String, raw: String) { state.edit("Rename mask") { MaskRules.rename(it, id, raw) } }
+    internal fun setPartOp(id: String, part: Int, op: MaskOp) = state.edit("Mask part ${op.name.lowercase()}") { MaskRules.setPartOp(it, id, part, op) }
+    internal fun togglePartInvert(id: String, part: Int) = state.edit("Invert part") { MaskRules.togglePartInvert(it, id, part) }
+    internal fun removePart(id: String, part: Int) {
+        cancelPicks()
+        state.edit("Remove mask part") { MaskRules.removePart(it, id, part) }
+        reconcile()
+    }
+
+    internal fun toggleOverlay() { ui.overlayPref = !effectiveOverlay() }
+
+    /**
+     * Takes back the last brush stroke. When that stroke is the newest history step it is a plain Undo (so Redo brings it back);
+     * otherwise it is a new edit that removes it.
+     */
+    internal fun undoStroke() {
+        val id = ui.selectedId ?: return
+        val ci = ui.selectedComp
+        val cur = state.recipe
+        if (MaskRules.part(cur, id, ci)?.strokes.isNullOrEmpty()) return
+        val without = MaskRules.removeLastStroke(cur, id, ci)
+        if (state.canUndo && state.history[state.historyIndex - 1].recipe == without) state.undo()
+        else state.edit("Undo brush stroke") { MaskRules.removeLastStroke(it, id, ci) }
+    }
+
+    internal fun clearBrush() {
+        val id = ui.selectedId ?: return
+        val ci = ui.selectedComp
+        state.edit("Clear brush") { MaskRules.mapPart(it, id, ci) { c -> c.copy(strokes = emptyList()) } }
+    }
+
+    internal fun brushPreview() { ui.brushPreviewTick++ }
+
+    internal fun startColourPick() { cancelPicks(); ui.pickingColour = true }
+
+    // ---------------------------------------------------------------- AI
+
+    private var aiJob: Job? = null
+
+    private fun startObjectPick(target: AiTarget) { cancelWork(); ui.aiTarget = target; ui.pickingObject = true; ui.toast = null }
+
+    /** Stops a running AI job and any "tap the photo" mode. */
+    internal fun cancelWork() {
+        aiJob?.cancel(); aiJob = null
+        ui.busy = null; ui.pickingObject = false; ui.pickingColour = false
+    }
+
+    private fun cancelPicks() { ui.pickingObject = false; ui.pickingColour = false; if (ui.busy != null) { aiJob?.cancel(); aiJob = null; ui.busy = null } }
+
+    private suspend fun <T> guarded(block: suspend () -> T?): T? =
+        try { withContext(Dispatchers.Default) { block() } } catch (e: CancellationException) { throw e } catch (t: Throwable) { PerfLog.error("mask ai: ${t.message}"); null }
+
+    private fun runAiTool(tool: MaskTool, target: AiTarget, at: V2? = null) {
+        val ai = ai ?: return
+        if (ui.busy != null) return
+        ui.toast = null
+        ui.busy = "Finding ${tool.label.lowercase()}"
+        aiJob = scope.launch {
             val (w, h) = layerDims()
-            val out = withContext(Dispatchers.Default) { runCatching { job(w, h) }.getOrNull() }
+            if (tool == MaskTool.PEOPLE) {
+                val parts = guarded { ai.people(w, h) }.orEmpty().filter { (_, a) -> a.any { it.toInt() != 0 } }
+                ui.busy = null
+                if (parts.isEmpty()) { notify("No people found in this photo."); return@launch }
+                val r = state.recipe
+                val room = minOf(P.MAX_MASKS - r.masks.size, P.MAX_LAYERS - MaskRules.layerKeys(r).size)
+                if (room <= 0) { notify(limitMessage(r, 1)); return@launch }
+                var last: String? = null
+                parts.take(room).forEach { (n, a) -> last = addAiResult(n, a, w, h, AiTarget.NewMask, selectIt = false) }
+                last?.let { select(it) }
+                if (parts.size > room) notify("Added $room of ${parts.size} people. That is the limit for this photo.")
+                return@launch
+            }
+            val out: ByteArray? = guarded {
+                when (tool) {
+                    MaskTool.SUBJECT -> ai.subject(w, h)
+                    MaskTool.SKY -> ai.sky(w, h)
+                    MaskTool.BACKGROUND -> ai.subject(w, h)?.let { a -> if (a.all { it.toInt() == 0 }) a else ByteArray(a.size) { i -> (255 - (a[i].toInt() and 255)).toByte() } }
+                    MaskTool.OBJECT -> at?.let { ai.objectAt(it.x, it.y, w, h) }
+                    else -> null
+                }
+            }
             ui.busy = null
-            if (out != null) addAi(label, out, w, h) else ui.busy = null
+            // for Background an empty subject comes back unchanged (all zero), so "empty" means nothing was found either way
+            if (out == null || out.all { it.toInt() == 0 }) notify("Couldn't find ${tool.label.lowercase()} in this photo. Try the brush instead.")
+            else addAiResult(tool.label, out, w, h, target, selectIt = true)
         }
     }
 
-    // ---------------- Tab ----------------
+    /** Saves the computed alpha and adds it as a new mask or as a part. Returns the mask id it ended up in. */
+    private suspend fun addAiResult(label: String, alpha: ByteArray, w: Int, h: Int, target: AiTarget, selectIt: Boolean): String? {
+        val key = "ai_${MaskFactory.newId()}"
+        withContext(Dispatchers.IO) { store.save(key, alpha, w, h) }
+        var id: String? = null
+        when (target) {
+            AiTarget.NewMask -> {
+                val r = state.recipe
+                if (!MaskRules.canAddMask(r, 1)) { notify(limitMessage(r, 1)); return null }
+                val m = Mask(MaskFactory.newId(), MaskRules.nextName(label, r.masks), listOf(MaskFactory.aiPart(label, key)))
+                state.edit("Add $label mask") { it.copy(masks = it.masks + m) }
+                id = m.id
+            }
+            is AiTarget.Part -> {
+                val r = state.recipe
+                if (!MaskRules.canAddPart(r, target.maskId, 1)) { notify("That mask has changed. Add the part again."); return null }
+                state.edit("Add $label part") { MaskRules.addPart(it, target.maskId, MaskFactory.aiPart(label, key, target.op)) }
+                id = target.maskId
+            }
+        }
+        upload(key, alpha, w, h)
+        if (selectIt) {
+            val part = if (target is AiTarget.Part) (state.recipe.masks.firstOrNull { it.id == id }?.components?.lastIndex ?: 0) else 0
+            select(id!!, part)
+        }
+        return id
+    }
 
-    /** Leaving the masking tool (switch, close, Back) removes the tint and drops pick modes so nothing leaks into the next tool. */
+    // ---------------------------------------------------------------- tab
+
+    /** The tray came on screen: tint allowed, edge-aware brush reference and the AI models warming up. */
+    internal fun onEnter() {
+        ui.active = true
+        ensureReference()
+        if (ai != null) scope.launch(Dispatchers.Default) { runCatching { ai.prepare() } }
+    }
+
+    /** Leaving the masking tool (switch, close, Back) removes the tint, stops AI work and drops every pick mode so nothing leaks into the next tool. */
     fun onExit() {
+        cancelWork()
+        ui.clearTransient()
+        ui.active = false
+        ui.selectedId = null; ui.selectedComp = 0; ui.page = MaskPage.LIST; ui.pickFrom = MaskPage.LIST; ui.sub = "mask"; ui.overlayPref = null
+        lastShown = -2
         session.setShowMask(-1)
-        if (ui.pickingObject) ui.busy = null
-        ui.pickingObject = false; ui.pickingColour = false
     }
-    val tab = EditorTab("masking", "Masking", onExit = ::onExit) { Content() }
+
+    val tab = EditorTab("masking", "Masking", onExit = ::onExit) { MaskTray(this) }
 
     @Composable
-    private fun Content() {
-        // entering, and any change to the mask list (undo, redo, reset, delete): keep the selection and the tint pointing at a mask that exists
-        LaunchedEffect(masks.size) {
-            if (ui.selected !in masks.indices) { ui.selected = if (masks.isEmpty()) -1 else masks.lastIndex; ui.selectedComp = 0 }
-            session.setShowMask(if (ui.showOverlay && ui.selected in masks.indices) ui.selected else -1)
-        }
-        LaunchedEffect(Unit) {
-            ensureReference()
-            if (ai != null) scope.launch(Dispatchers.Default) { runCatching { ai.prepare() } }
-        }
-        Column(Modifier.fillMaxWidth()) {
-            Text(ui.busy ?: "", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 16.dp))
-            Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (ai != null) {
-                    ChipButton("Subject", false, { runAi("Subject") { w, h -> ai.subject(w, h) } })
-                    ChipButton("Sky", false, { runAi("Sky") { w, h -> ai.sky(w, h) } })
-                    ChipButton("Background", false, { runAi("Background") { w, h -> ai.subject(w, h)?.let { a -> ByteArray(a.size) { i -> (255 - (a[i].toInt() and 255)).toByte() } } } })
-                    ChipButton("People", false, {
-                        if (masks.size < P.MAX_MASKS) {
-                            ui.busy = "Finding people"
-                            scope.launch {
-                                val (w, h) = layerDims()
-                                val parts = withContext(Dispatchers.Default) { runCatching { ai.people(w, h) }.getOrDefault(emptyList()) }
-                                ui.busy = null
-                                parts.take(P.MAX_MASKS - masks.size).forEach { (n, a) -> addAi(n, a, w, h) }
-                            }
-                        }
-                    })
-                    ChipButton("Object", false, { ui.pickingObject = true; ui.busy = "Tap the object in the photo" })
-                }
-                MaskKind.entries.forEach { k -> ChipButton(k.label, false, { add(k) }) }
-            }
-            Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                masks.forEachIndexed { i, m -> ChipButton(m.name, ui.selected == i, { select(i) }) }
-                if (masks.isEmpty()) Text("No masks yet. Choose a tool above.", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(8.dp))
-            }
-            val m = selMask
-            if (m != null) {
-                Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf("mask" to "Mask", "light" to "Light", "colour" to "Colour", "effects" to "Effects", "curve" to "Curve", "mixer" to "Mixer", "grade" to "Grade").forEach { (id, n) ->
-                        ChipButton(n, ui.sub == id, { ui.sub = id })
-                    }
-                }
-                val target = AdjustTarget({ r -> r.masks.getOrNull(ui.selected)?.adjust ?: app.rawline.core.model.Adjust() }, { r, a -> r.withMask(ui.selected) { it.copy(adjust = a) } }, isMask = true)
-                when (ui.sub) {
-                    "light" -> LightPanel(state, target)
-                    "colour" -> PanelColumn { ColourBasicsPanel(state, target, null, null) }
-                    "effects" -> EffectsPanel(state, target)
-                    "curve" -> CurvePanel(state, target, null)
-                    "mixer" -> MixerPanel(state, target, mixBand, { mixBand = it }, mixMode, { mixMode = it }, null)
-                    "grade" -> GradingPanel(state, target)
-                    else -> MaskSettings(m)
-                }
-            }
-        }
+    fun BoxScope.Overlay(tabId: String, mapper: PhotoMapper) {
+        if (tabId != "masking") return
+        MaskOverlay(this@MaskingFeature, mapper)
     }
 
-    private var mixBand by androidx.compose.runtime.mutableIntStateOf(0)
-    private var mixMode by androidx.compose.runtime.mutableIntStateOf(0)
+    // ---------------------------------------------------------------- on photo
 
-    @Composable
-    private fun MaskSettings(m: Mask) = PanelColumn {
-        val mi = ui.selected
-        RawSlider("Amount", m.amount * 100f, 0f..100f, 100f, unit = "%",
-            onChange = { v -> state.live { it.withMask(mi) { mm -> mm.copy(amount = v / 100f) } } }, onCommit = { state.commit("Mask amount") })
-        Row(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            ChipButton(if (m.invert) "Inverted" else "Invert", m.invert, { state.edit("Invert mask") { it.withMask(mi) { mm -> mm.copy(invert = !mm.invert) } } })
-            ChipButton(if (m.visible) "Hide" else "Show", false, { state.edit("Toggle mask") { it.withMask(mi) { mm -> mm.copy(visible = !mm.visible) } } })
-            ChipButton("Duplicate", false, { if (masks.size < P.MAX_MASKS) { val d = MaskFactory.duplicate(m); state.edit("Duplicate mask") { it.copy(masks = it.masks + d) }; restore(state.recipe); select(masks.lastIndex) } })
-            ChipButton("Delete", false, {
-                state.edit("Delete mask") { it.copy(masks = it.masks.filterIndexed { i, _ -> i != mi }) }
-                prune(state.recipe)
-                select(-1)
-            })
-        }
-        Row(Modifier.padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Show mask overlay")
-            Switch(ui.showOverlay, { ui.showOverlay = it; session.setShowMask(if (it) ui.selected else -1) })
-        }
-        SectionTitle("Parts of this mask")
-        m.components.forEachIndexed { ci, c ->
-            Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                ChipButton(c.label.ifEmpty { c.type.name }, ui.selectedComp == ci, { ui.selectedComp = ci })
-                MaskOp.entries.forEach { op -> ChipButton(op.name.lowercase().replaceFirstChar { it.uppercase() }, c.op == op, { state.edit("Mask part ${op.name}") { it.withComponent(mi, ci) { cc -> cc.copy(op = op) } } }) }
-                ChipButton("Inv", c.invert, { state.edit("Invert part") { it.withComponent(mi, ci) { cc -> cc.copy(invert = !cc.invert) } } })
-                if (m.components.size > 1) ChipButton("X", false, { state.edit("Remove part") { it.withMask(mi) { mm -> mm.copy(components = mm.components.filterIndexed { i, _ -> i != ci }) } }; prune(state.recipe); ui.selectedComp = 0 })
-            }
-        }
-        Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Add part:", modifier = Modifier.padding(top = 10.dp))
-            MaskKind.entries.forEach { k ->
-                ChipButton("+ ${k.label}", false, {
-                    if (m.components.size < 6) {
-                        state.edit("Add mask part") { it.withMask(mi) { mm -> mm.copy(components = mm.components + MaskFactory.component(k, MaskOp.ADD)) } }
-                        ui.selectedComp = state.recipe.masks[mi].components.lastIndex
-                        state.recipe.masks[mi].components.last().let { c -> if (c.type == MaskType.BITMAP) c.layerKey?.let { key -> val l = brushLayer(key); upload(key, l.snapshot(), l.w, l.h) } }
-                    }
-                })
-            }
-        }
-        val c = selComp
-        if (c != null) PartSettings(mi, ui.selectedComp, c)
-    }
-
-    @Composable
-    private fun PartSettings(mi: Int, ci: Int, c: MaskComponent) {
-        fun param(i: Int, default: Float) = c.params.getOrElse(i) { default }
-        fun setParam(i: Int, v: Float) = state.live { it.withComponent(mi, ci) { cc -> cc.copy(params = cc.params.toMutableList().also { l -> while (l.size <= i) l.add(0f); l[i] = v }) } }
-        when (c.type) {
-            MaskType.BITMAP -> if (c.strokes.isNotEmpty() || c.layerKey?.startsWith("brush_") == true) {
-                SectionTitle("Brush")
-                RawSlider("Size", ui.brushSize * 100f, 1f..30f, 6f, decimals = 1, onChange = { ui.brushSize = it / 100f }, onCommit = {})
-                RawSlider("Feather", ui.brushFeather * 100f, 0f..100f, 50f, onChange = { ui.brushFeather = it / 100f }, onCommit = {})
-                RawSlider("Flow", ui.brushFlow * 100f, 5f..100f, 100f, onChange = { ui.brushFlow = it / 100f }, onCommit = {})
-                Row(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    ChipButton("Erase", ui.brushErase, { ui.brushErase = !ui.brushErase })
-                    ChipButton("Auto mask", ui.brushAuto, { ui.brushAuto = !ui.brushAuto })
-                    ChipButton("Clear brush", false, {
-                        state.edit("Clear brush") { it.withComponent(mi, ci) { cc -> cc.copy(strokes = emptyList()) } }
-                        c.layerKey?.let { k -> val l = brushLayer(k); l.clear(); upload(k, l.snapshot(), l.w, l.h) }
-                    })
-                }
-            }
-            MaskType.RADIAL -> {
-                SectionTitle("Radial gradient")
-                RawSlider("Feather", param(5, 0.5f) * 100f, 1f..100f, 50f, onChange = { setParam(5, it / 100f) }, onCommit = { state.commit("Radial feather") })
-                RawSlider("Rotate", Math.toDegrees(param(4, 0f).toDouble()).toFloat(), -90f..90f, 0f, unit = "°", onChange = { setParam(4, Math.toRadians(it.toDouble()).toFloat()) }, onCommit = { state.commit("Radial rotate") })
-                RawSlider("Width", param(2, 0.3f) * 100f, 2f..100f, 30f, onChange = { setParam(2, it / 100f) }, onCommit = { state.commit("Radial width") })
-                RawSlider("Height", param(3, 0.3f) * 100f, 2f..100f, 30f, onChange = { setParam(3, it / 100f) }, onCommit = { state.commit("Radial height") })
-            }
-            MaskType.LINEAR -> { SectionTitle("Linear gradient"); Text("Drag the two handles on the photo. Effect is full at the end handle.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 16.dp)) }
-            MaskType.COLOR -> {
-                SectionTitle("Colour range")
-                Row(Modifier.padding(horizontal = 12.dp)) { ChipButton(if (ui.pickingColour) "Tap the photo..." else "Pick colour", ui.pickingColour, { ui.pickingColour = true }) }
-                RawSlider("Range", param(3, 0.2f) * 100f, 1f..100f, 20f, onChange = { setParam(3, it / 100f) }, onCommit = { state.commit("Colour range") })
-                RawSlider("Softness", param(4, 0.5f) * 100f, 0f..100f, 50f, onChange = { setParam(4, it / 100f) }, onCommit = { state.commit("Colour softness") })
-            }
-            MaskType.LUMINANCE -> {
-                SectionTitle("Luminance range")
-                RawSlider("From", param(0, 0.4f) * 100f, 0f..100f, 40f, onChange = { setParam(0, it / 100f) }, onCommit = { state.commit("Luminance from") })
-                RawSlider("To", param(1, 0.9f) * 100f, 0f..100f, 90f, onChange = { setParam(1, it / 100f) }, onCommit = { state.commit("Luminance to") })
-                RawSlider("Falloff", param(2, 0.15f) * 100f, 1f..50f, 15f, onChange = { setParam(2, it / 100f) }, onCommit = { state.commit("Luminance falloff") })
-            }
-        }
-    }
-
-    // ---------------- On photo ----------------
-
-    private var dragging = -1
-    private var currentStroke: BrushStroke? = null
     private var lastUpload = 0L
 
+    /** One finger input on the photo for the active tab, or null when the tab has none (a tap then closes the panel, as for other tools). */
     fun gestures(tabId: String, mapper: PhotoMapper): ToolGestures? {
         if (tabId != "masking") return null
-        val m = selMask ?: return if (ui.pickingObject) objectPicker(mapper) else null
-        val c = selComp ?: return null
-        val mi = ui.selected; val ci = ui.selectedComp
         if (ui.pickingObject) return objectPicker(mapper)
+        if (ui.page != MaskPage.EDIT) return null
+        val m = selMask ?: return null
+        val c = selComp ?: return null
+        val id = m.id; val ci = ui.selectedComp
         return when (c.type) {
-            MaskType.BITMAP -> if (c.layerKey?.startsWith("brush_") == true) brushGestures(mapper, mi, ci, c) else null
-            MaskType.LINEAR -> ToolGestures(
-                onDown = { pos ->
-                    val a = handleView(mapper, c.params.getOrElse(0) { 0f }, c.params.getOrElse(1) { 0f }); val b = handleView(mapper, c.params.getOrElse(2) { 0f }, c.params.getOrElse(3) { 0f })
-                    dragging = if (hypot(a.x - pos.x, a.y - pos.y) < 70f) 0 else if (hypot(b.x - pos.x, b.y - pos.y) < 70f) 1 else -1
-                    dragging >= 0
-                },
-                onMove = { pos ->
-                    val p = mapper.toImage(pos.x, pos.y)
-                    if (p != null && dragging >= 0) { val f = pf(p); state.live { it.withComponent(mi, ci) { cc -> cc.copy(params = cc.params.toMutableList().also { l -> l[dragging * 2] = f.x; l[dragging * 2 + 1] = f.y }) } } }
-                },
-                onUp = { cancelled -> dragging = -1; if (cancelled) state.jump(state.historyIndex) else state.commit("Move gradient") },
-            )
-            MaskType.RADIAL -> ToolGestures(
-                onDown = { pos ->
-                    val hs = radialHandles(mapper, c)
-                    dragging = hs.indexOfFirst { hypot(it.x - pos.x, it.y - pos.y) < 70f }
-                    dragging >= 0
-                },
-                onMove = { pos ->
-                    val p = mapper.toImage(pos.x, pos.y)
-                    if (p != null && dragging >= 0) {
-                        val f = pf(p)
-                        val cx = c.params.getOrElse(0) { 0.5f }; val cy = c.params.getOrElse(1) { 0.5f }
-                        val asp = session.baseAspect()
-                        state.live {
-                            it.withComponent(mi, ci) { cc ->
-                                val l = cc.params.toMutableList()
-                                when (dragging) {
-                                    0 -> { l[0] = f.x; l[1] = f.y }
-                                    1 -> l[2] = hypot((f.x - cx) * asp, f.y - cy).coerceAtLeast(0.01f)
-                                    2 -> l[3] = hypot((f.x - cx) * asp, f.y - cy).coerceAtLeast(0.01f)
-                                }
-                                cc.copy(params = l)
-                            }
-                        }
-                    }
-                },
-                onUp = { cancelled -> dragging = -1; if (cancelled) state.jump(state.historyIndex) else state.commit("Move radial") },
-            )
-            MaskType.COLOR -> if (ui.pickingColour) ToolGestures(
-                onDown = { pos ->
-                    val p = mapper.toImage(pos.x, pos.y)
-                    if (p != null) scope.launch {
-                        val rgb = session.sample(p.x, p.y)
-                        if (rgb != null) {
-                            // The shader compares gamma encoded colours of the edited image at that point
-                            state.edit("Pick colour") { it.withComponent(mi, ci) { cc -> cc.copy(params = cc.params.toMutableList().also { l -> l[0] = rgb[0]; l[1] = rgb[1]; l[2] = rgb[2] }) } }
-                        }
-                        ui.pickingColour = false
-                    }
-                    true
-                },
-                onMove = {}, onUp = {},
-            ) else null
+            MaskType.BITMAP -> if (MaskRules.isBrush(c)) c.layerKey?.let { brushGestures(mapper, id, ci, it) } else null
+            MaskType.LINEAR -> linearGestures(mapper, id, ci)
+            MaskType.RADIAL -> radialGestures(mapper, id, ci)
+            MaskType.COLOR -> if (ui.pickingColour) colourPicker(mapper, id, ci) else null
             MaskType.LUMINANCE -> null
         }
     }
 
-    private fun objectPicker(mapper: PhotoMapper) = ToolGestures(
+    private fun setParams(id: String, ci: Int, p: List<Float>) = state.live { r -> MaskRules.mapPart(r, id, ci) { c -> c.copy(params = p) } }
+
+    private fun endDrag(moved: Boolean, cancelled: Boolean, label: String) {
+        ui.dragHandle = -1
+        if (!moved) return
+        if (cancelled) state.jump(state.historyIndex) else state.commit(label)
+    }
+
+    private fun linearGestures(mapper: PhotoMapper, id: String, ci: Int): ToolGestures {
+        var part: LinearPart? = null
+        var start: List<Float> = emptyList()
+        var grab = V2(0f, 0f)
+        var moved = false
+        return ToolGestures(
+            onDown = { pos ->
+                val c = MaskRules.part(state.recipe, id, ci)
+                if (c == null || c.type != MaskType.LINEAR) false else {
+                    val q = LinearGeom.padded(c.params)
+                    val a = viewOf(mapper, V2(q[0], q[1])); val b = viewOf(mapper, V2(q[2], q[3]))
+                    val hit = LinearGeom.hit(a, b, V2(pos.x, pos.y), dp(32f), dp(22f))
+                    part = hit; start = q; moved = false
+                    // where the finger is in the frame; a handle at the very edge of the photo may read as outside, so fall back to the handle itself
+                    grab = frameOf(mapper, pos) ?: when (hit) { LinearPart.END -> V2(q[2], q[3]); else -> V2(q[0], q[1]) }
+                    ui.dragHandle = when (hit) { LinearPart.START -> 0; LinearPart.END -> 1; LinearPart.MOVE -> 2; null -> -1 }
+                    hit != null
+                }
+            },
+            onMove = { pos ->
+                val f = frameOf(mapper, pos)
+                val p = part
+                if (f != null && p != null) {
+                    val dx = f.x - grab.x; val dy = f.y - grab.y
+                    val np = when (p) {
+                        LinearPart.START -> LinearGeom.moveEnd(start, p, start[0] + dx, start[1] + dy)
+                        LinearPart.END -> LinearGeom.moveEnd(start, p, start[2] + dx, start[3] + dy)
+                        LinearPart.MOVE -> LinearGeom.translate(start, dx, dy)
+                    }
+                    moved = true
+                    setParams(id, ci, np)
+                }
+            },
+            onUp = { cancelled -> part = null; endDrag(moved, cancelled, "Move gradient") },
+        )
+    }
+
+    private fun radialGestures(mapper: PhotoMapper, id: String, ci: Int): ToolGestures {
+        var part: RadialPart? = null
+        var grab: RadialGeom.Grab? = null
+        var moved = false
+        val asp = aspect()
+        return ToolGestures(
+            onDown = { pos ->
+                val c = MaskRules.part(state.recipe, id, ci)
+                if (c == null || c.type != MaskType.RADIAL) false else {
+                    val q = RadialGeom.padded(c.params)
+                    val v = RadialGeom.viewHandles(q, asp, dp(40f)) { viewOf(mapper, it) }
+                    val f = frameOf(mapper, pos)
+                    val hit = RadialGeom.hit(v, V2(pos.x, pos.y), dp(30f), f != null && RadialGeom.contains(q, asp, f))
+                    part = hit; moved = false
+                    grab = if (hit != null) RadialGeom.grab(hit, q, f ?: V2(q[0], q[1]), asp) else null
+                    ui.dragHandle = hit?.ordinal ?: -1
+                    hit != null
+                }
+            },
+            onMove = { pos ->
+                val f = frameOf(mapper, pos)
+                val p = part; val g = grab
+                if (f != null && p != null && g != null) { moved = true; setParams(id, ci, RadialGeom.drag(p, g, f, asp)) }
+            },
+            onUp = { cancelled -> part = null; grab = null; endDrag(moved, cancelled, "Move radial") },
+        )
+    }
+
+    private fun colourPicker(mapper: PhotoMapper, id: String, ci: Int) = ToolGestures(
         onDown = { pos ->
             val p = mapper.toImage(pos.x, pos.y)
-            ui.pickingObject = false
-            if (p != null && ai != null && masks.size < P.MAX_MASKS) {
-                val f = pf(p)
-                runAi("Object") { w, h -> ai.objectAt(f.x, f.y, w, h) }
+            if (p != null) scope.launch {
+                val rgb = session.sample(p.x, p.y)
+                // the picking mode may have been cancelled while the sample was read back
+                if (rgb != null && ui.pickingColour) {
+                    // The shader compares gamma encoded colours of the edited image at that point
+                    state.edit("Pick colour") { r -> MaskRules.mapPart(r, id, ci) { c -> MaskRules.withParam(MaskRules.withParam(MaskRules.withParam(c, 0, rgb[0]), 1, rgb[1]), 2, rgb[2]) } }
+                }
+                ui.pickingColour = false
             }
             true
         },
         onMove = {}, onUp = {},
     )
 
-    private fun brushGestures(mapper: PhotoMapper, mi: Int, ci: Int, c: MaskComponent): ToolGestures {
-        val key = c.layerKey ?: return ToolGestures({ false }, {}, {})
+    private fun objectPicker(mapper: PhotoMapper) = ToolGestures(
+        onDown = { pos ->
+            val f = frameOf(mapper, pos)
+            if (f != null && ui.pickingObject) {
+                ui.pickingObject = false
+                runAiTool(MaskTool.OBJECT, ui.aiTarget, f)
+            }
+            true
+        },
+        onMove = {}, onUp = {},
+    )
+
+    private fun brushGestures(mapper: PhotoMapper, id: String, ci: Int, key: String): ToolGestures {
+        // points are collected in one growing list that the layer reads directly; it is frozen into the recipe only when the finger lifts
+        val pts = ArrayList<Float>()
+        var stroke: BrushStroke? = null
+        var layer: BrushLayer? = null
+        var lastX = 0f; var lastY = 0f
+        val asp = aspect()
         return ToolGestures(
             onDown = { pos ->
-                val p = mapper.toImage(pos.x, pos.y) ?: return@ToolGestures false
-                val f = pf(p)
-                currentStroke = BrushStroke(listOf(f.x, f.y), ui.brushSize, ui.brushFeather, ui.brushFlow, ui.brushErase, ui.brushAuto)
-                val l = brushLayer(key)
-                l.beginStroke(currentStroke!!)
-                l.update(currentStroke!!)
-                upload(key, l.snapshot(), l.w, l.h)
-                true
+                val f = frameOf(mapper, pos)
+                if (f == null) false else {
+                    val strokes = MaskRules.part(state.recipe, id, ci)?.strokes ?: emptyList()
+                    val l = brushLayer(key, strokes)
+                    pts.clear(); pts.add(f.x); pts.add(f.y); lastX = f.x; lastY = f.y
+                    val s = BrushStroke(pts, ui.brushSize, ui.brushFeather, ui.brushFlow, ui.brushErase, ui.brushAuto)
+                    stroke = s; layer = l
+                    l.beginStroke(s); l.update(s)
+                    upload(key, l.snapshot(), l.w, l.h)
+                    lastUpload = System.currentTimeMillis()
+                    ui.brushCursor = pos
+                    true
+                }
             },
             onMove = { pos ->
-                val p = mapper.toImage(pos.x, pos.y)
-                val s = currentStroke
-                if (p != null && s != null) {
-                    val f = pf(p)
-                    currentStroke = s.copy(points = s.points + listOf(f.x, f.y))
-                    val l = brushLayer(key)
-                    l.update(currentStroke!!)
+                ui.brushCursor = pos
+                val f = frameOf(mapper, pos)
+                val s = stroke; val l = layer
+                if (f != null && s != null && l != null && BrushMath.farEnough(lastX, lastY, f.x, f.y, asp)) {
+                    pts.add(f.x); pts.add(f.y); lastX = f.x; lastY = f.y
+                    l.update(s)
                     val now = System.currentTimeMillis()
-                    if (now - lastUpload > 33) { lastUpload = now; upload(key, l.snapshot(), l.w, l.h) }
+                    if (now - lastUpload > 40) { lastUpload = now; upload(key, l.snapshot(), l.w, l.h) }
                 }
             },
             onUp = { cancelled ->
-                val s = currentStroke
-                currentStroke = null
-                val l = brushLayer(key)
-                l.endStroke()
-                if (s != null && !cancelled) {
-                    upload(key, l.snapshot(), l.w, l.h)
-                    state.edit("Brush stroke") { it.withComponent(mi, ci) { cc -> cc.copy(strokes = cc.strokes + s) } }
-                    savedHash[key] = state.recipe.masks.getOrNull(mi)?.components?.getOrNull(ci)?.strokes.hashCode()
-                    val snapshot = l.alpha.copyOf()
-                    scope.launch(Dispatchers.IO) { store.save(key, snapshot, l.w, l.h) }
-                } else if (s != null) { l.renderAll(state.recipe.masks.getOrNull(mi)?.components?.getOrNull(ci)?.strokes ?: emptyList()); upload(key, l.snapshot(), l.w, l.h) }
+                ui.brushCursor = null
+                val s = stroke; val l = layer
+                stroke = null; layer = null
+                if (s != null && l != null) {
+                    l.endStroke()
+                    val cur = MaskRules.part(state.recipe, id, ci)?.strokes
+                    if (cancelled || cur == null) {
+                        // put the layer back to what the recipe says
+                        l.renderAll(cur ?: emptyList()); upload(key, l.snapshot(), l.w, l.h)
+                    } else {
+                        val done = s.copy(points = pts.toList())
+                        val next = cur + done
+                        // mark first: the commit below wakes the persist step, which must see these pixels as already in step with the recipe
+                        l.markSynced(next)
+                        upload(key, l.snapshot(), l.w, l.h)
+                        uploaded[key] = LayerPlan.brushSignature(next.hashCode(), l.w, l.h)
+                        state.edit("Brush stroke") { r -> MaskRules.mapPart(r, id, ci) { c -> c.copy(strokes = c.strokes + done) } }
+                    }
+                }
             },
         )
     }
 
-    private fun handleView(mapper: PhotoMapper, fx: Float, fy: Float): Offset { val o = toOut(Offset(fx, fy)); return mapper.toView(o.x, o.y) }
-
-    private fun radialHandles(mapper: PhotoMapper, c: MaskComponent): List<Offset> {
-        val cx = c.params.getOrElse(0) { 0.5f }; val cy = c.params.getOrElse(1) { 0.5f }
-        val rx = c.params.getOrElse(2) { 0.3f }; val ry = c.params.getOrElse(3) { 0.3f }; val a = c.params.getOrElse(4) { 0f }
-        val asp = session.baseAspect()
-        val h1 = Offset(cx + rx * cos(a) / asp, cy + rx * sin(a)); val h2 = Offset(cx - ry * sin(a) / asp, cy + ry * cos(a))
-        return listOf(handleView(mapper, cx, cy), handleView(mapper, h1.x, h1.y), handleView(mapper, h2.x, h2.y))
-    }
-
-    @Composable
-    fun BoxScope.Overlay(tabId: String, mapper: PhotoMapper) {
-        if (tabId != "masking") return
-        val c = selComp ?: return
-        // read state so the overlay redraws as the recipe changes
-        val params = c.params
-        Canvas(Modifier.fillMaxSize()) {
-            when (c.type) {
-                MaskType.LINEAR -> {
-                    val a = handleView(mapper, params.getOrElse(0) { 0f }, params.getOrElse(1) { 0f }); val b = handleView(mapper, params.getOrElse(2) { 0f }, params.getOrElse(3) { 0f })
-                    drawLine(Color.White, a, b, 3f)
-                    drawCircle(Color(0xFF8AB4F8), 16f, a); drawCircle(Color.White, 16f, b, style = Stroke(4f))
-                }
-                MaskType.RADIAL -> {
-                    val hs = radialHandles(mapper, c)
-                    drawCircle(Color.White, 14f, hs[0], style = Stroke(3f))
-                    drawLine(Color.White, hs[0], hs[1], 2f); drawLine(Color.White, hs[0], hs[2], 2f)
-                    drawCircle(Color(0xFF8AB4F8), 14f, hs[1]); drawCircle(Color(0xFF8AB4F8), 14f, hs[2])
-                }
-                else -> {}
-            }
-        }
-    }
-
+    /** Test hook and diagnostics: whether the persist worker has nothing queued or running. */
+    internal val syncIdle: Boolean get() = serial.isIdle
 }

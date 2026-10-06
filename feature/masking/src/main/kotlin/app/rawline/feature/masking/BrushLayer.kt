@@ -37,14 +37,32 @@ class BrushLayer(val w: Int, val h: Int, var reference: IntArray? = null) {
 
     @Synchronized fun clear() { alpha.fill(0) }
 
+    /** Hash of the strokes this layer's pixels currently show. The persist step compares it with the recipe to know whether a redraw is needed. */
+    @Volatile var syncedStrokes: Int = emptyList<BrushStroke>().hashCode()
+
+    /** True between [beginStroke] and [endStroke]: a finger is painting, so nothing else may redraw the layer underneath it. */
+    @Volatile var drawing = false
+
     @Synchronized fun renderAll(strokes: List<BrushStroke>) {
         clear()
         strokes.forEach { s -> beginStroke(s); update(s); }
         endStroke()
+        syncedStrokes = strokes.hashCode()
     }
+
+    /** Redraws from [strokes] unless a stroke is being painted right now. Returns false when it declined. */
+    @Synchronized fun renderAllIfIdle(strokes: List<BrushStroke>): Boolean {
+        if (drawing) return false
+        renderAll(strokes)
+        return true
+    }
+
+    /** The painted stroke was committed to the recipe: the pixels already show [strokes]. */
+    fun markSynced(strokes: List<BrushStroke>) { syncedStrokes = strokes.hashCode() }
 
     /** Call before the first [update] of a stroke. */
     @Synchronized fun beginStroke(s: BrushStroke) {
+        drawing = true
         base = alpha.copyOf()
         tmpCanvas.drawRect(0f, 0f, w.toFloat(), h.toFloat(), clear)
         if (s.autoMask && reference != null && s.points.size >= 2) seed = meanColour((s.points[0] * w).toInt(), (s.points[1] * h).toInt(), (s.size * h * 0.5f).toInt().coerceAtLeast(2))
@@ -88,7 +106,7 @@ class BrushLayer(val w: Int, val h: Int, var reference: IntArray? = null) {
         return intArrayOf(x0, y0, x1, y1)
     }
 
-    @Synchronized fun endStroke() { base = ByteArray(0) }
+    @Synchronized fun endStroke() { base = ByteArray(0); drawing = false }
 
     private fun meanColour(cx: Int, cy: Int, r: Int): IntArray {
         val ref = reference ?: return intArrayOf(0, 0, 0)
