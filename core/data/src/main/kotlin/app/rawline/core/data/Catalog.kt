@@ -12,13 +12,21 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.InputStream
 import java.io.OutputStream
-import java.util.zip.ZipEntry
-import java.util.zip.ZipOutputStream
 
 /** Edits, ratings, snapshots, presets and backup. Everything is keyed by [Photo.key] so it survives re-indexing. */
 class Catalog(private val context: Context, private val db: RawlineDb, private val maskStore: app.rawline.core.cache.MaskStore? = null, private val patchStore: app.rawline.core.cache.PatchStore? = null) {
     private val photos = db.photos()
     private val edits = db.edits()
+
+    /** Called (on whatever thread made the change) with the counter value after each edit, rating, flag, label, preset or snapshot change (D6). */
+    @Volatile var onChange: ((before: Long, after: Long) -> Unit)? = null
+    private val counter by lazy { ChangeCounter(object : CounterStore {
+        private val p = context.getSharedPreferences("rawline", Context.MODE_PRIVATE)
+        override fun getLong(key: String, default: Long) = p.getLong(key, default)
+        override fun putLong(key: String, value: Long) { p.edit().putLong(key, value).apply() }
+    }) }
+    fun changeCount(): Long = counter.value()
+    private fun changed(by: Int = 1) { val after = counter.bump(by); onChange?.invoke(after - by, after) }
 
     suspend fun loadRecipe(p: Photo): EditRecipe? = (readRecipe(p) as? RecipeRead.Ok)?.recipe
 
@@ -28,8 +36,8 @@ class Catalog(private val context: Context, private val db: RawlineDb, private v
     suspend fun saveRecipe(p: Photo, r: EditRecipe) {
         when (saveAction(r.isDefault, if (r.isDefault) readRecipe(p) else RecipeRead.Missing)) {   // only a default save needs the stored row
             SaveAction.KEEP_UNREADABLE -> return
-            SaveAction.DELETE -> { edits.delete(p.key); photos.setEdited(p.id, false) }
-            SaveAction.PUT -> { edits.put(EditEntity(p.key, r.toJson(), System.currentTimeMillis())); photos.setEdited(p.id, true) }
+            SaveAction.DELETE -> { edits.delete(p.key); photos.setEdited(p.id, false); changed() }
+            SaveAction.PUT -> { edits.put(EditEntity(p.key, r.toJson(), System.currentTimeMillis())); photos.setEdited(p.id, true); changed() }
         }
     }
 
@@ -46,6 +54,7 @@ class Catalog(private val context: Context, private val db: RawlineDb, private v
         val now = System.currentTimeMillis()
         val updated = list.map { f(old[it.key] ?: MetaEntity(it.key, it.rating, it.flag, it.label)).copy(updatedAt = now) }
         edits.putMeta(updated)
+        changed()
         if (!sidecar || !xmpEnabled()) return SidecarResult.NONE
         return withContext(Dispatchers.IO) {
             val byKey = updated.associateBy { it.key }
@@ -65,28 +74,40 @@ class Catalog(private val context: Context, private val db: RawlineDb, private v
     suspend fun snapshots(p: Photo) = edits.snapshots(p.key)
     suspend fun addSnapshot(p: Photo, name: String, r: EditRecipe): Long {
         edits.addSnapshot(SnapshotEntity(key = p.key, name = name, json = r.toJson(), createdAt = System.currentTimeMillis()))
+        changed()
         return edits.snapshots(p.key).firstOrNull()?.id ?: 0
     }
 
     suspend fun presets() = edits.presets()
-    suspend fun addPreset(name: String, r: EditRecipe) = edits.addPreset(PresetEntity(name = name, json = r.toJson(), createdAt = System.currentTimeMillis()))
-    suspend fun deletePreset(id: Long) = edits.deletePreset(id)
+    suspend fun addPreset(name: String, r: EditRecipe) = edits.addPreset(PresetEntity(name = name, json = r.toJson(), createdAt = System.currentTimeMillis())).also { changed() }
+    suspend fun deletePreset(id: Long) = edits.deletePreset(id).also { changed() }
 
     // ---------------- Backup ----------------
 
-    /** One zip with edits, snapshots, presets and ratings as JSON. Photos themselves are never included. */
-    suspend fun writeBackup(out: OutputStream) {
-        ZipOutputStream(out).use { z ->
-            fun entry(name: String, text: String) { z.putNextEntry(ZipEntry(name)); z.write(text.toByteArray()); z.closeEntry() }
-            entry("version.json", JSONObject().put("format", 1).put("created", System.currentTimeMillis()).toString())
-            entry("edits.json", JSONArray().also { a -> edits.all().forEach { a.put(JSONObject().put("key", it.key).put("json", it.json).put("t", it.updatedAt)) } }.toString())
-            entry("snapshots.json", JSONArray().also { a -> edits.allSnapshots().forEach { a.put(JSONObject().put("key", it.key).put("name", it.name).put("json", it.json).put("t", it.createdAt)) } }.toString())
-            entry("presets.json", JSONArray().also { a -> edits.presets().forEach { a.put(JSONObject().put("name", it.name).put("json", it.json).put("t", it.createdAt)) } }.toString())
-            // AI mask images and repair patches are not in the recipes, so they travel in the zip too
-            fun files(prefix: String, dir: java.io.File?) { dir?.listFiles()?.filter { BackupReader.imageName(prefix + it.name) != null }?.forEach { f -> z.putNextEntry(ZipEntry(prefix + f.name)); f.inputStream().use { it.copyTo(z) }; z.closeEntry() } }
-            files("masks/", maskStore?.dir); files("heals/", patchStore?.dir)
-            entry("meta.json", JSONArray().also { a -> edits.allMeta().forEach { a.put(JSONObject().put("key", it.key).put("rating", it.rating).put("flag", it.flag).put("label", it.label).put("t", it.updatedAt)) } }.toString())
+    /**
+     * One zip with edits, snapshots, presets and ratings as JSON, then manifest.json last (format 2: the size and SHA-256 of every other
+     * entry, so the writer can check its own output and a restore can refuse a damaged file). Photos themselves are never included.
+     * version.json stays so a format 1 reader still reads it. [appVersion] goes into the manifest.
+     */
+    suspend fun writeBackup(out: OutputStream, appVersion: String = "", nowMs: Long = System.currentTimeMillis()) {
+        // the JSON is built here (the DAOs are suspend); the zip writer then streams every part
+        val allEdits = edits.all(); val snaps = edits.allSnapshots(); val presets = edits.presets(); val metas = edits.allMeta()
+        val parts = ArrayList<BackupPart>()
+        fun text(name: String, s: String) { val b = s.toByteArray(); parts += BackupPart(name) { java.io.ByteArrayInputStream(b) } }
+        text("version.json", JSONObject().put("format", 1).put("created", nowMs).toString())
+        text("edits.json", JSONArray().also { a -> allEdits.forEach { a.put(JSONObject().put("key", it.key).put("json", it.json).put("t", it.updatedAt)) } }.toString())
+        text("snapshots.json", JSONArray().also { a -> snaps.forEach { a.put(JSONObject().put("key", it.key).put("name", it.name).put("json", it.json).put("t", it.createdAt)) } }.toString())
+        text("presets.json", JSONArray().also { a -> presets.forEach { a.put(JSONObject().put("name", it.name).put("json", it.json).put("t", it.createdAt)) } }.toString())
+        // AI mask images and repair patches are not in the recipes, so they travel in the zip too
+        fun files(prefix: String, dir: java.io.File?): Int {
+            val list = dir?.listFiles()?.filter { it.isFile && BackupReader.imageName(prefix + it.name) != null }?.sortedBy { it.name } ?: return 0
+            list.forEach { f -> parts += BackupPart(prefix + f.name) { f.inputStream() } }
+            return list.size
         }
+        val masks = files("masks/", maskStore?.dir); val heals = files("heals/", patchStore?.dir)
+        text("meta.json", JSONArray().also { a -> metas.forEach { a.put(JSONObject().put("key", it.key).put("rating", it.rating).put("flag", it.flag).put("label", it.label).put("t", it.updatedAt)) } }.toString())
+        val counts = mapOf("edits" to allEdits.size, "snapshots" to snaps.size, "presets" to presets.size, "meta" to metas.size, "masks" to masks, "heals" to heals)
+        withContext(Dispatchers.IO) { BackupZip.write(out, parts, counts, nowMs, appVersion) }
     }
 
     /**
