@@ -75,6 +75,16 @@ class StudioHistory(initial: Document, private val maxEntries: Int = 100, privat
         }
     }
 
+    /** Drops the oldest entries until the pixel deltas take at most [maxBytes] (memory pressure). Keeps at least the newest entry. Returns true when anything was dropped. */
+    fun trimBytes(maxBytes: Long): Boolean {
+        var dropped = false
+        while (deltaBytes > maxBytes && undo.size > 1) {
+            val e = undo.removeFirst(); dropped = true
+            if (e is Entry.Stroke) deltaBytes -= e.delta.bytes
+        }
+        return dropped
+    }
+
     private fun push(e: Entry) {
         undo.addLast(e)
         dropRedo()

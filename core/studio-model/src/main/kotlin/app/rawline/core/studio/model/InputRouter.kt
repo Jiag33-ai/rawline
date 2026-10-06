@@ -93,3 +93,23 @@ class InputRouter {
         return Triple((a[0] + b[0]) / 2f, (a[1] + b[1]) / 2f, hypot(a[0] - b[0], a[1] - b[1]))
     }
 }
+
+/** One sample of a pointer (screen px) with its pressure and the event's uptime in ms. */
+class Sample(val x: Float, val y: Float, val pressure: Float, val timeMs: Long)
+
+/**
+ * Compose gives a move as the historical positions plus the current one, with the pressure of the current event only. A stylus
+ * samples faster than the display, so every historical position becomes a stamp-path point whose pressure is interpolated by time between the last known pressure and the current one.
+ */
+object InputSamples {
+    fun expand(prevPressure: Float, prevTime: Long, historical: List<Sample>, current: Sample): List<Sample> {
+        val out = ArrayList<Sample>(historical.size + 1)
+        val span = (current.timeMs - prevTime).toFloat()
+        for (h in historical) {
+            val f = if (span <= 0f) 1f else ((h.timeMs - prevTime) / span).coerceIn(0f, 1f)
+            out += Sample(h.x, h.y, prevPressure + (current.pressure - prevPressure) * f, h.timeMs)
+        }
+        out += current
+        return out
+    }
+}

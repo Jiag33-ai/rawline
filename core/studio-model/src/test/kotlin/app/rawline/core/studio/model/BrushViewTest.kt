@@ -309,3 +309,33 @@ class InputRouterTest {
         assertEquals(listOf("StrokeCancel"), names(r.onEvent(ev(Phase.CANCEL, 0, 1f, 1f))))
     }
 }
+
+class GestureAndSamplesTest {
+    @Test fun aGestureStepKeepsTheDocumentPointUnderTheFingerCentre() {
+        val v = CanvasView(120f, 80f, 1.5f)
+        // the centre was at (300, 400), moves to (340, 380) while the fingers spread by 1.4
+        val before = floatArrayOf(v.toDocX(300f), v.toDocY(400f))
+        val w = v.gestured(40f, -20f, 1.4f, 340f, 380f)
+        assertEquals(before[0], w.toDocX(340f), 1e-3f); assertEquals(before[1], w.toDocY(380f), 1e-3f)
+        assertEquals(1.5f * 1.4f, w.zoom, 1e-6f)
+    }
+
+    @Test fun historicalSamplesGetPressureByTime() {
+        val s = InputSamples.expand(0.2f, 100, listOf(Sample(1f, 1f, 9f, 110), Sample(2f, 2f, 9f, 130)), Sample(3f, 3f, 0.8f, 140))
+        assertEquals(3, s.size)
+        assertEquals(0.2f + 0.6f * 0.25f, s[0].pressure, 1e-6f)
+        assertEquals(0.2f + 0.6f * 0.75f, s[1].pressure, 1e-6f)
+        assertEquals(0.8f, s[2].pressure, 0f)
+        assertEquals(0.8f, InputSamples.expand(0.2f, 140, listOf(Sample(1f, 1f, 0f, 140)), Sample(3f, 3f, 0.8f, 140))[0].pressure, 0f)   // no time passed: the current pressure
+    }
+
+    @Test fun trimBytesDropsTheOldestStrokesAndKeepsTheNewest() {
+        val d = Document("d", "D", 40, 30, layers = listOf(Layer.Pixel(LayerCommon("a", "a"), 40, 30)))
+        val h = StudioHistory(d)
+        repeat(6) { h.commitStroke("a", PixelDelta(0, 0, 5, 5, ByteArray(100), ByteArray(100))) }   // 200 bytes each
+        assertTrue(h.trimBytes(500)); assertTrue(h.deltaBytes <= 500)
+        var n = 0; while (h.undo() != null) n++
+        assertEquals(2, n)
+        assertFalse(h.trimBytes(0))
+    }
+}

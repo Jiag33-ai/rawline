@@ -23,6 +23,12 @@ data class CanvasView(val x: Float = 0f, val y: Float = 0f, val zoom: Float = 1f
     /** Moves the picture with the fingers: a drag of ([dsx], [dsy]) screen pixels. */
     fun panBy(dsx: Float, dsy: Float) = copy(x = x - dsx / zoom, y = y - dsy / zoom)
 
+    /**
+     * One step of a two finger gesture: the centre moved by ([dsx], [dsy]) to ([cx], [cy]) and the fingers' distance changed by [factor]. The picture is panned first and
+     * then zoomed about the new centre, so the document point that was under the old centre ends under the new one exactly (zooming first and panning after is off by the zoom).
+     */
+    fun gestured(dsx: Float, dsy: Float, factor: Float, cx: Float, cy: Float): CanvasView = panBy(dsx, dsy).zoomAbout(factor, cx, cy)
+
     /** Keeps at least [margin] screen pixels of the canvas on screen, so the picture cannot be thrown away off screen. */
     fun clamped(canvasW: Int, canvasH: Int, screenW: Int, screenH: Int, margin: Float = 64f): CanvasView {
         val minX = (margin - screenW) / zoom; val maxX = canvasW - margin / zoom
