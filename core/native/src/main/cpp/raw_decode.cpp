@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "engine/halfs.h"
+#include "orient_map.h"
 
 namespace {
 // Runs fn(beginRow, endRow) on up to four threads.
@@ -55,7 +56,7 @@ bool decodeRaw(const std::string &path, bool halfSize, RawImage &out, std::strin
     if (!img || w <= 0 || h <= 0) { err = "no image"; return false; }
 
     int flip = lr.imgdata.sizes.flip;
-    out.orientation = flip == 3 ? 3 : flip == 5 ? 8 : flip == 6 ? 6 : 1;
+    out.orientation = exifOrientationFromLibrawFlip(flip);
     out.camera = std::string(lr.imgdata.idata.make) + " " + lr.imgdata.idata.model;
     for (int i = 0; i < 4; i++) out.wbMul[i] = lr.imgdata.color.cam_mul[i];
     {   // LibRaw's own rule for the white point it would have lowered (adjust_maximum, default threshold 0.75), evaluated on the unscaled decode

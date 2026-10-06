@@ -124,6 +124,12 @@ numericChecks() {
   return $rc
 }
 numericChecks || fail=1
+# AE-051: Texture and Clarity are measured on the picture with its heal patches (the patch interior is not boosted)
+python3 "$ROOT/tools/golden/overlay_analysis_check.py" /tmp/golden/golden || fail=1
+# AE-041: all eight EXIF orientations through the real shader equal the definition of each orientation
+python3 "$ROOT/tools/golden/orient_check.py" /tmp/golden/golden || fail=1
+# AE-041: LibRaw's flip field maps to the EXIF orientation, mirrored cases included (round trip of dcraw's table)
+g++ -O1 -std=c++17 -I"$ROOT/core/native/src/main/cpp" "$ROOT/tools/golden/orient_map_test.cpp" -o /tmp/golden/orient_map_test && /tmp/golden/orient_map_test || fail=1
 # Host unit test for the half float conversion (AE-028)
 g++ -O1 -std=c++17 -I"$ROOT/core/native/src/main/cpp" "$ROOT/tools/golden/halfs_test.cpp" -o /tmp/golden/halfs_test && /tmp/golden/halfs_test || fail=1
 # Host test for GL robustness: failed upload keeps the old source, context restore, stale errors (AE-006, AE-011, AE-034)

@@ -281,10 +281,11 @@ void Engine::setLayer(int index, const uint8_t *alpha, int w, int h) {
 void Engine::setOverlay(const uint8_t *rgbaHalfBytes, int w, int h) {
     glDeleteTextures(1, &overlayTex_);
     overlayTex_ = makeTex2D(GL_TEXTURE_2D, GL_LINEAR);
-    if (!rgbaHalfBytes) { glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA16F, 1, 1); overlayW_ = 0; return; }
+    if (!rgbaHalfBytes) { glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA16F, 1, 1); overlayW_ = 0; invalidateAnalysis(); return; }
     glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA16F, w, h);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_HALF_FLOAT, rgbaHalfBytes);
     overlayW_ = w;
+    invalidateAnalysis();   // the analysis layers include the overlay
 }
 
 void Engine::updateOverlayRegion(int x, int y, int w, int h, const uint8_t *data) {
@@ -292,6 +293,7 @@ void Engine::updateOverlayRegion(int x, int y, int w, int h, const uint8_t *data
     glBindTexture(GL_TEXTURE_2D, overlayTex_);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glTexSubImage2D(GL_TEXTURE_2D, 0, x, y, w, h, GL_RGBA, GL_HALF_FLOAT, data);
+    invalidateAnalysis();
 }
 
 void Engine::setBaseCurve(const float *lut) {
@@ -355,6 +357,7 @@ void Engine::runAnalysis(const float *p) {
         key = (key ^ b) * 1099511628211ull;
     }
     key ^= uint64_t(srcW_) << 20 ^ uint64_t(srcH_) << 40 ^ uint64_t(srcTex_);
+    key = (key ^ uint64_t(overlayW_ > 0 && p[G_OVERLAY] > 0.5f ? 0x9e3779b97f4a7c15ull : 1ull)) * 1099511628211ull;   // the analysis sees the overlay only while it is switched on
     if (key == analysisKey_) return;
     analysisKey_ = key;
 
@@ -371,6 +374,11 @@ void Engine::runAnalysis(const float *p) {
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, srcTex_);
     glUniform1i(lowres_.u("uSrc"), 0);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, overlayTex_);
+    glUniform1i(lowres_.u("uOverlay"), 1);
+    glUniform1f(lowres_.u("uOverlayOn"), overlayW_ > 0 ? p[G_OVERLAY] : 0.f);
+    glActiveTexture(GL_TEXTURE0);
     glUniform1f(lowres_.u("uFlipY"), 0.f);
     setGeometryUniforms(lowres_, p);
     float ratio = std::max(float(ow) / lw, float(oh) / lh);

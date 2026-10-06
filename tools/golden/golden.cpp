@@ -202,6 +202,11 @@ static const std::vector<KeyDef> kMaskKeys = {
 static const std::vector<KeyDef> kGeometryKeys = {
     {"angle", G_GEO}, {"cropx", G_CROP}, {"cropw", G_CROP + 2}, {"ksv", G_GEO2}, {"ksh", G_GEO2 + 1},
     {"autofit", [](Scene &s, const char *, float v, const char *) { s.autofit = v > 0.5f; }},
+    {"orient", [](Scene &s, const char *, float v, const char *) {   // EXIF orientation 1..8 as RenderParams.orientationToRotFlip maps it: (rot90 clockwise, flipH)
+        static const int rotOf[9] = {0, 0, 0, 2, 2, 1, 1, 3, 3}, flipOf[9] = {0, 0, 1, 0, 1, 1, 0, 1, 0};
+        int o = int(v); if (o < 1 || o > 8) o = 1;
+        s.p[G_GEO + 3] = float(rotOf[o]); s.p[G_GEO + 1] = float(flipOf[o]);
+    }},
 };
 
 // -- lens profile (optics) --
