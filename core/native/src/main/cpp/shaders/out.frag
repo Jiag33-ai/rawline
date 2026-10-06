@@ -23,6 +23,11 @@ uniform float uMark;         // 1 = draw pure magenta where the image is empty (
 
 const vec3 Y = vec3(0.28807, 0.71184, 0.0000857);
 
+// 5x5 spatial weights, index (j + 2) * 5 + (i + 2): exp(-(i*i + j*j) * 0.25) for noise reduction, exp(-(i*i + j*j) * 0.2) for the sharpen base.
+const float W_NR[25] = float[25](0.1353353, 0.2865048, 0.3678794, 0.2865048, 0.1353353, 0.2865048, 0.6065307, 0.7788008, 0.6065307, 0.2865048, 0.3678794, 0.7788008, 1.0000000, 0.7788008, 0.3678794, 0.2865048, 0.6065307, 0.7788008, 0.6065307, 0.2865048, 0.1353353, 0.2865048, 0.3678794, 0.2865048, 0.1353353);
+const float W_BASE[25] = float[25](0.2018965, 0.3678794, 0.4493290, 0.3678794, 0.2018965, 0.3678794, 0.6703200, 0.8187308, 0.6703200, 0.3678794, 0.4493290, 0.8187308, 1.0000000, 0.8187308, 0.4493290, 0.3678794, 0.6703200, 0.8187308, 0.6703200, 0.3678794, 0.2018965, 0.3678794, 0.4493290, 0.3678794, 0.2018965);
+const float W_BASE_SUM = 12.5041407;
+
 vec4 fetchE(ivec2 o) {
     ivec2 base = ivec2(vUv * uPx) + uMargin + o;
     return texelFetch(uE, base, 0);
@@ -42,44 +47,53 @@ void main() {
     if (nrL > 0.0 || nrC > 0.0 || sharp > 0.0) {
         float sc = max(uPxScale, 0.5);
         int st = int(clamp(floor(uDetail.y * sc + 0.5), 1.0, 3.0));
-        // Neighbourhood in a perceptual-ish domain
-        float yc = pow(max(dot(c, Y), 0.0), 1.0 / 2.4);
-        vec3 acc = vec3(0.0);
-        float wsum = 0.0;
-        float ysum = 0.0, ywsum = 0.0;
-        float grad = 0.0;
-        for (int j = -2; j <= 2; j++) {
-            for (int i = -2; i <= 2; i++) {
-                vec3 n = fetchE(ivec2(i, j) * st).rgb;
-                float yn = pow(max(dot(n, Y), 0.0), 1.0 / 2.4);
-                float d = abs(yn - yc);
-                float w = exp(-d * d / (0.0008 + nrL * 0.01)) * exp(-float(i * i + j * j) * 0.25);
-                acc += n * w; wsum += w;
-                ysum += yn * exp(-float(i * i + j * j) * 0.2); ywsum += exp(-float(i * i + j * j) * 0.2);
-                grad += d;
+        if (nrL > 0.0 || sharp > 0.0) {
+            // Neighbourhood in a perceptual-ish domain. The bilateral sums are only built when luminance noise reduction is on
+            // (it is off by default), and the spatial weights are constants instead of 50 exp() calls per pixel.
+            float yc = pow(max(dot(c, Y), 0.0), 1.0 / 2.4);
+            vec3 acc = vec3(0.0);
+            float wsum = 0.0;
+            float ysum = 0.0;
+            float grad = 0.0;
+            for (int j = -2; j <= 2; j++) {
+                for (int i = -2; i <= 2; i++) {
+                    int k = (j + 2) * 5 + (i + 2);
+                    vec3 n = fetchE(ivec2(i, j) * st).rgb;
+                    float yn = pow(max(dot(n, Y), 0.0), 1.0 / 2.4);
+                    float d = abs(yn - yc);
+                    if (nrL > 0.0) {
+                        float w = exp(-d * d / (0.0008 + nrL * 0.01)) * W_NR[k];
+                        acc += n * w; wsum += w;
+                    }
+                    ysum += yn * W_BASE[k];
+                    grad += d;
+                }
+            }
+            if (nrL > 0.0) c = mix(c, acc / wsum, clamp(nrL, 0.0, 1.0));
+            if (sharp > 0.0) {
+                float yb = ysum / W_BASE_SUM;
+                float ycur = pow(max(dot(c, Y), 0.0), 1.0 / 2.4);
+                float edge = smoothstep(0.0, 0.08, grad / 25.0);
+                float mask = mix(1.0, edge, uDetail.w * 0.01);
+                float amount = sharp * 1.5 * mask * (0.5 + uDetail.z * 0.01);
+                float ynew = max(ycur + (ycur - yb) * amount, 0.0);
+                float lin = pow(ynew, 2.4);
+                float yl = dot(c, Y);
+                // Luma ratio sharpening. ProPhoto blues have almost no luma, where the ratio explodes (sparkles) or zeroes the pixel:
+                // below a small luma the change is added as a neutral offset instead.
+                if (yl > 1.0e-3) c *= lin / yl;
+                else c = max(c + vec3(lin - yl), 0.0);
             }
         }
-        vec3 den = acc / wsum;
-        c = mix(c, den, clamp(nrL, 0.0, 1.0));
         if (nrC > 0.0) {
             // Chroma smoothing: keep luminance, take the chroma of the neighbourhood average.
             float yl = dot(c, Y);
             vec3 avg = vec3(0.0);
             for (int j = -2; j <= 2; j++) for (int i = -2; i <= 2; i++) avg += fetchE(ivec2(i, j) * st).rgb;
             avg /= 25.0;
-            float ya = max(dot(avg, Y), 1.0e-5);
-            vec3 chroma = avg / ya;
-            c = mix(c, chroma * yl, clamp(nrC, 0.0, 1.0));
-        }
-        if (sharp > 0.0) {
-            float yb = ysum / ywsum;
-            float ycur = pow(max(dot(c, Y), 0.0), 1.0 / 2.4);
-            float edge = smoothstep(0.0, 0.08, grad / 25.0);
-            float mask = mix(1.0, edge, uDetail.w * 0.01);
-            float amount = sharp * 1.5 * mask * (0.5 + uDetail.z * 0.01);
-            float ynew = max(ycur + (ycur - yb) * amount, 0.0);
-            float lin = pow(ynew, 2.4);
-            c *= lin / max(dot(c, Y), 1.0e-5);
+            float ya = dot(avg, Y);
+            // a neighbourhood with no luma (saturated ProPhoto blue) has no usable chroma ratio: leave the pixel alone
+            if (ya > 1.0e-3) c = mix(c, (avg / ya) * yl, clamp(nrC, 0.0, 1.0));
         }
     }
 

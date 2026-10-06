@@ -147,6 +147,9 @@ int main(int argc, char **argv) {
         if (blockSlots.count(k)) p[kOffBlocks + blockSlots[k]] = v;
         else if (k == "sharpen") p[G_DETAIL] = v;
         else if (k == "nrl") p[G_NR] = v;
+        else if (k == "nrc") p[G_NR + 1] = v;
+        else if (k == "optvig") p[G_GEO2 + 3] = v;   // manual lens vignetting correction slider (already in shader units)
+        else if (k == "cropx") p[G_CROP] = v;
         else if (k == "vig") p[G_FX] = v;
         else if (k == "angle") p[G_GEO] = v;
         else if (k == "grain") p[G_FX2] = v;

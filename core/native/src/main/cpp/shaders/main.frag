@@ -136,7 +136,7 @@ vec3 adjust(vec3 c, int block, float bs, float bl, float bd, out float gainTone)
     float Ym = max(luma(c), 1.0e-5);
     float fine = log2(Ym / max(bs * gain * tone, 1.0e-5));
     float broad = log2(Ym / max(bl * gain * tone, 1.0e-5));
-    float mid = 1.0 - abs(pow(Ym, 1.0 / 2.4) * 2.0 - 1.0);
+    float mid = max(1.0 - abs(pow(Ym, 1.0 / 2.4) * 2.0 - 1.0), 0.0);   // 0 above white: clarity never reverses sign on super-white pixels
     c *= exp2(clamp(fine, -2.0, 2.0) * texture * 0.01 * 0.8 + clamp(broad, -2.0, 2.0) * clarity * 0.01 * 0.8 * mid);
 
     // Dehaze via dark channel prior.
@@ -276,8 +276,11 @@ void main() {
         float lg = 1.0 / max(corr, 0.12);
         c *= lg; vgain *= lg;
     }
-    // Manual vignetting correction
-    vec2 d = (p - 0.5) * vec2(uAspect, 1.0);
+    // Manual vignetting correction, centred on the frame (the uncropped picture, like the profile based correction above), not on
+    // the crop: after cropping into a corner the correction used to be centred on the crop and its sign flipped across the middle.
+    vec2 pf = uCrop.xy + p * uCrop.zw;
+    vec2 bdim = baseDims();
+    vec2 d = (pf - 0.5) * vec2(bdim.x / bdim.y, 1.0);
     float mg = 1.0 / max(1.0 - uGeo2.w * dot(d, d) * 2.0, 0.2);
     c *= mg; vgain *= mg;
 
@@ -289,8 +292,6 @@ void main() {
     float bs = texture(uBs, p).x * vgain, bl = texture(uBl, p).x * vgain, bd = texture(uBd, p).y * vgain;
     float gt0;
     c = adjust(c, 0, bs, bl, bd, gt0);
-    vec2 pf = uCrop.xy + p * uCrop.zw;
-    vec2 bdim = baseDims();
     float asp = bdim.x / bdim.y;
     for (int m = 0; m < 8; m++) {
         if (m >= uNumMasks) break;

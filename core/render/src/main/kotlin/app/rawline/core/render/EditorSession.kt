@@ -65,12 +65,12 @@ class EditorSession(
     @Volatile private var engine = 0L
     private var surfaceW = 1
     private var surfaceH = 1
-    private var photo: Photo? = null
+    @Volatile private var photo: Photo? = null
     @Volatile var lens: LensCorrection? = null
         private set
-    private var orientation = 1
-    private var srcW = 1
-    private var srcH = 1
+    @Volatile private var orientation = 1   // written on the GL thread, read on the main thread (baseAspect, sourceWidth)
+    @Volatile private var srcW = 1
+    @Volatile private var srcH = 1
     private var loadStart = 0L
     private var firstFrameDone = false
     @Volatile private var wantHistogram = false
@@ -102,7 +102,7 @@ class EditorSession(
     /** A finished picture (JPEG, HEIC, PNG) already has its tone curve baked in, so the raw base curve and baseline look must not be applied. */
     @Volatile private var finishedPicture = false
     @Volatile private var fullRequested = false
-    @Volatile private var generation = 0
+    private val generation = java.util.concurrent.atomic.AtomicInteger()   // bumped from the main thread and from reloadSource: not a volatile increment
 
     val layerIndex: Map<String, Int> get() = synchronized(layers) { LinkedHashMap(layers) }
 
@@ -112,12 +112,12 @@ class EditorSession(
         photo = p
         finishedPicture = p.kind != Kind.RAW
         lens = LensProfiles.get(context).find(p.lens, p.focal.toFloat(), p.aperture.toFloat())
-        generation++
+        generation.incrementAndGet()
         fullRequested = false
         firstFrameDone = false
         loadStart = System.nanoTime()
         _state.value = SessionState(Stage.LOADING, "Decoding raw")
-        val gen = generation
+        val gen = generation.get()
         scope.launch {
             try {
                 val t0 = System.nanoTime()
@@ -128,7 +128,7 @@ class EditorSession(
                 onTiming("edit_decode_ms", decodeMs)
                 try { maybeDenoise(handle) } catch (e: Throwable) { Native.freeRaw(handle); throw e }
                 post(onDrop = { Native.freeRaw(handle) }) {
-                    if (gen != generation || engine == 0L) { Native.freeRaw(handle); return@post }
+                    if (gen != generation.get() || engine == 0L) { Native.freeRaw(handle); return@post }
                     val u0 = System.nanoTime()
                     val ok = Native.engineSetSource(engine, handle).also { Native.engineSetBaseCurve(engine, !finishedPicture) }
                     val upMs = (System.nanoTime() - u0) / 1_000_000
@@ -175,6 +175,9 @@ class EditorSession(
 
     fun setOverlayActive(on: Boolean) { overlayOn = on; post { rebuild(); requestRender() } }
 
+    /** True when the source carries the camera look base curve (raw files); false for finished pictures (JPEG, HEIC, PNG). */
+    val usesBaseCurve: Boolean get() = !finishedPicture
+
     val sourceWidth get() = srcW
     val sourceHeight get() = srcH
     val orientationValue get() = orientation
@@ -215,15 +218,15 @@ class EditorSession(
         val p = photo ?: return
         if (fullRequested || p.kind != Kind.RAW) return
         fullRequested = true
-        val gen = generation
+        val gen = generation.get()
         scope.launch {
             val t0 = System.nanoTime()
             val handle = try { decodeFor(p, half = false) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; 0L }
-            if (handle == 0L) { if (gen == generation) fullRequested = false; return@launch }  // let a later zoom try again
+            if (handle == 0L) { if (gen == generation.get()) fullRequested = false; return@launch }  // let a later zoom try again
             onTiming("full_decode_ms", (System.nanoTime() - t0) / 1_000_000)
             try { maybeDenoise(handle) } catch (e: Throwable) { Native.freeRaw(handle); throw e }
             post(onDrop = { Native.freeRaw(handle) }) {
-                if (gen != generation || engine == 0L) { Native.freeRaw(handle); return@post }
+                if (gen != generation.get() || engine == 0L) { Native.freeRaw(handle); return@post }
                 if (!Native.engineSetSource(engine, handle)) {
                     // The engine builds the new texture first and only swaps it in when it is complete, so the preview source is still
                     // in place and the picture keeps drawing. The upload failed for size (GPU memory), so asking again would fail the
@@ -290,7 +293,9 @@ class EditorSession(
         val d = CompletableDeferred<android.graphics.Bitmap?>()
         post(onDrop = { d.complete(null) }) {
             val g = recipe.geometry.copy(cropX = 0f, cropY = 0f, cropW = 1f, cropH = 1f, keystoneV = recipe.geometry.keystoneV, keystoneH = recipe.geometry.keystoneH)
-            val arr = RenderParams.build(EditRecipe(geometry = g), orientation, emptyMap(), useBaseline = !finishedPicture)
+            // The picture on screen has the lens profile and the manual distortion applied between the frame and the source; the AI
+            // must see the same picture or its mask edges land displaced (about 150 px at 24 MP in the corners of a 20 mm shot).
+            val arr = RenderParams.build(EditRecipe(geometry = g, optics = recipe.optics), orientation, emptyMap(), useBaseline = !finishedPicture, lens = lens)
             val ow = Native.engineOutputSize(engine, arr)
             val s = maxEdge.toFloat() / maxOf(ow[0], ow[1])
             val w = (ow[0] * s).toInt().coerceAtLeast(8); val h = (ow[1] * s).toInt().coerceAtLeast(8)
@@ -366,7 +371,7 @@ class EditorSession(
         val d = recipe.detail
         val wanted = if (d.aiDenoise) d.aiDenoiseAmount else -1f
         if (wanted == appliedDenoise) return
-        val gen = ++generation
+        val gen = generation.incrementAndGet()
         fullRequested = false
         _status.value = if (d.aiDenoise) "AI denoise" else "Updating"
         scope.launch {
@@ -378,7 +383,7 @@ class EditorSession(
                 maybeDenoise(handle)
                 if (!d.aiDenoise) { _status.value = null }
                 post(onDrop = { Native.freeRaw(handle) }) {
-                    if (gen != generation || engine == 0L) { Native.freeRaw(handle); return@post }
+                    if (gen != generation.get() || engine == 0L) { Native.freeRaw(handle); return@post }
                     if (!Native.engineSetSource(engine, handle)) { _status.value = "Update failed"; return@post }   // the previous source stays in place
                     Native.engineSetBaseCurve(engine, !finishedPicture)
                     srcW = info[0]; srcH = info[1]

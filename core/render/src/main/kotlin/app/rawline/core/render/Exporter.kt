@@ -99,7 +99,7 @@ class Exporter(
                     override fun setOverlay(rgbaHalf: ShortArray?, w: Int, h: Int) = Native.engineSetOverlay(engine, rgbaHalf, w, h)
                     override fun updateOverlay(x: Int, y: Int, w: Int, h: Int, rgbaHalf: ShortArray) = Native.engineUpdateOverlay(engine, x, y, w, h, rgbaHalf)
                 }
-                val ov = HealOverlay(sink, info[0], info[1])
+                val ov = HealOverlay(sink, info[0], info[1], useBase = photo.kind == Kind.RAW)
                 recipe.heals.forEach { op ->
                     val key = op.patchKey ?: return@forEach
                     patches.load(key)?.let { (px, w, h) -> if (op.region.size == 4) ov.apply(op.region, px, w, h) }

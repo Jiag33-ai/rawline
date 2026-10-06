@@ -36,4 +36,29 @@ class HealOverlayTest {
         o.apply(listOf(0f, 0f, 0.5f, 0.5f), IntArray(64) { 0 }, 8, 8)
         assertTrue(sink.full!!.all { it == 0.toShort() })
     }
+
+    private fun neutralAfterPatch(useBase: Boolean): Float {
+        val sink = Sink()
+        val o = HealOverlay(sink, 200, 200, useBase)
+        o.apply(listOf(0.1f, 0.1f, 0.5f, 0.5f), IntArray(16 * 16) { (255 shl 24) or (128 shl 16) or (128 shl 8) or 128 }, 16, 16)
+        return Halfs.toFloat(sink.full!![(60 * sink.fw + 60) * 4])
+    }
+
+    @Test fun aPatchOnAFinishedPictureIsNotDarkenedByTheCameraCurve() {
+        // mid grey 128 is linear 0.216 in plain sRGB, which is what a JPEG shows (identity base curve)
+        val plain = neutralAfterPatch(useBase = false)
+        assertEquals(0.2158f, plain, 0.01f)
+        // for a raw the camera curve is inverted first, so the same display grey lands well below that (the old behaviour for every file)
+        val raw = neutralAfterPatch(useBase = true)
+        assertTrue("raw $raw plain $plain", raw < plain * 0.8f)
+    }
+
+    @Test fun displayAndWorkingRoundTripThroughBothCurves() {
+        val t = FloatArray(3); val back = FloatArray(3)
+        for (useBase in listOf(true, false)) for (v in listOf(0.1f, 0.3f, 0.5f, 0.8f)) {
+            ColorSpaces.displayToWorking(v, v, v, t, useBase = useBase)
+            ColorSpaces.workingToDisplay(t[0], t[1], t[2], back, useBase = useBase)
+            assertEquals("display $v (base=$useBase)", v, back[0], 0.01f)
+        }
+    }
 }

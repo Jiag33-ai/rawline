@@ -9,7 +9,7 @@ import kotlin.math.min
  * long edge. The shader lays this over the raw before any adjustment, so edits apply on top of the repair.
  * A CPU copy is kept so later patches can be composited over earlier ones.
  */
-class HealOverlay(private val session: OverlaySink, srcW: Int, srcH: Int) {
+class HealOverlay(private val session: OverlaySink, srcW: Int, srcH: Int, private val useBase: Boolean = true) {
     val w: Int
     val h: Int
     private val buf: ShortArray
@@ -51,12 +51,17 @@ class HealOverlay(private val session: OverlaySink, srcW: Int, srcH: Int) {
                     // keep what was there
                     out[o] = buf[di]; out[o + 1] = buf[di + 1]; out[o + 2] = buf[di + 2]; out[o + 3] = buf[di + 3]; continue
                 }
-                ColorSpaces.displayToWorking(r / a, g / a, b / a, tmp)
+                ColorSpaces.displayToWorking(r / a, g / a, b / a, tmp, useBase = useBase)
                 val na = a.coerceIn(0f, 1f)
                 val oldA = Halfs.toFloat(buf[di + 3])
                 val keep = 1f - na
-                val vals = floatArrayOf(tmp[0] * na + Halfs.toFloat(buf[di]) * keep, tmp[1] * na + Halfs.toFloat(buf[di + 1]) * keep, tmp[2] * na + Halfs.toFloat(buf[di + 2]) * keep, na + oldA * keep)
-                for (k in 0 until 4) { val hv = Halfs.toHalf(vals[k]); buf[di + k] = hv; out[o + k] = hv }
+                // written straight into the buffers: this loop used to allocate an array per pixel (about a million for a 1024 px patch)
+                val h0 = Halfs.toHalf(tmp[0] * na + Halfs.toFloat(buf[di]) * keep)
+                val h1 = Halfs.toHalf(tmp[1] * na + Halfs.toFloat(buf[di + 1]) * keep)
+                val h2 = Halfs.toHalf(tmp[2] * na + Halfs.toFloat(buf[di + 2]) * keep)
+                val h3 = Halfs.toHalf(na + oldA * keep)
+                buf[di] = h0; buf[di + 1] = h1; buf[di + 2] = h2; buf[di + 3] = h3
+                out[o] = h0; out[o + 1] = h1; out[o + 2] = h2; out[o + 3] = h3
             }
         }
         // upload row by row region at once

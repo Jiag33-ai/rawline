@@ -40,7 +40,7 @@ class Healer(
 
     private fun ensureOverlay(): HealOverlay {
         overlay?.let { return it }
-        return HealOverlay(session, session.sourceWidth, session.sourceHeight).also { overlay = it; session.setOverlayActive(true) }
+        return HealOverlay(session, session.sourceWidth, session.sourceHeight, useBase = session.usesBaseCurve).also { overlay = it; session.setOverlayActive(true) }
     }
 
     /** Rebuilds the overlay when the list of repairs changed (undo, redo, snapshot, opening a photo). */

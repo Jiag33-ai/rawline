@@ -92,6 +92,20 @@ def cmd_gradeluma(base, graded):
     print("ok  ", msg + ", colour shift %.1f" % chroma)
 
 
+def cmd_edges(path, expect):
+    """Mean luma of the leftmost and rightmost 6 columns. expect = 'left' (left edge brighter) or 'symmetric'."""
+    im = load(path)
+    w, h = im.size
+    def col(x0, x1):
+        vals = [(54 * r + 183 * g + 19 * b) / 256.0 for x in range(x0, x1) for y in range(h) for r, g, b in [im.getpixel((x, y))]]
+        return sum(vals) / len(vals)
+    left, right = col(0, 6), col(w - 6, w)
+    msg = "manual vignette on a cropped flat picture: left edge luma %.1f, right edge luma %.1f" % (left, right)
+    if expect == "left" and not (left > right + 8):
+        fail(msg + " (the correction must be centred on the frame: the crop's left edge is the frame corner, its right edge the frame centre)")
+    print("ok  ", msg)
+
+
 def cmd_flat(path, w, h, grey):
     Image.new("RGB", (int(w), int(h)), (int(grey),) * 3).save(path)
 
@@ -99,4 +113,4 @@ def cmd_flat(path, w, h, grey):
 if __name__ == "__main__":
     c, a = sys.argv[1], sys.argv[2:]
     {"dehaze": cmd_dehaze, "maxdiff": cmd_maxdiff, "pixel": cmd_pixel, "lumapixel": cmd_lumapixel, "pixelmatch": cmd_pixelmatch,
-     "gradeluma": cmd_gradeluma, "flat": cmd_flat}[c](*a)
+     "gradeluma": cmd_gradeluma, "flat": cmd_flat, "edges": cmd_edges}[c](*a)

@@ -26,9 +26,16 @@ object ColorSpaces {
     // linear sRGB (D65) -> ProPhoto (D50), Bradford
     private val m = floatArrayOf(0.5293f, 0.3300f, 0.1406f, 0.0984f, 0.8735f, 0.0282f, 0.0169f, 0.1177f, 0.8656f)
 
-    /** display r,g,b in 0..1 -> linear working space */
-    fun displayToWorking(r: Float, g: Float, b: Float, out: FloatArray, o: Int = 0) {
-        fun lin(v: Float): Float { val x = (v.coerceIn(0f, 1f) * 255f); val i = x.toInt().coerceAtMost(254); val f = x - i; return eotf(inverse[i] * (1 - f) + inverse[i + 1] * f) }
+    /**
+     * display r,g,b in 0..1 -> linear working space. [useBase] false is for finished pictures (JPEG, HEIC, PNG), which are drawn with
+     * an identity base curve: the display value is plain sRGB there, so the camera curve must not be inverted (it darkened every patch).
+     */
+    fun displayToWorking(r: Float, g: Float, b: Float, out: FloatArray, o: Int = 0, useBase: Boolean = true) {
+        fun lin(v: Float): Float {
+            if (!useBase) return eotf(v.coerceIn(0f, 1f))
+            val x = (v.coerceIn(0f, 1f) * 255f); val i = x.toInt().coerceAtMost(254); val f = x - i
+            return eotf(inverse[i] * (1 - f) + inverse[i + 1] * f)
+        }
         val lr = lin(r); val lg = lin(g); val lb = lin(b)
         out[o] = m[0] * lr + m[1] * lg + m[2] * lb
         out[o + 1] = m[3] * lr + m[4] * lg + m[5] * lb
@@ -40,12 +47,12 @@ object ColorSpaces {
     // ProPhoto -> linear sRGB
     private val inv = floatArrayOf(2.0343f, -0.7273f, -0.3067f, -0.2288f, 1.2317f, -0.0029f, -0.0086f, -0.1533f, 1.1617f)
 
-    /** linear working space -> display r,g,b 0..1 (through the camera look curve) */
-    fun workingToDisplay(r: Float, g: Float, b: Float, out: FloatArray, o: Int = 0) {
+    /** linear working space -> display r,g,b 0..1 (through the camera look curve, or plain sRGB when [useBase] is false) */
+    fun workingToDisplay(r: Float, g: Float, b: Float, out: FloatArray, o: Int = 0, useBase: Boolean = true) {
         val lr = (inv[0] * r + inv[1] * g + inv[2] * b).coerceIn(0f, 1f)
         val lg = (inv[3] * r + inv[4] * g + inv[5] * b).coerceIn(0f, 1f)
         val lb = (inv[6] * r + inv[7] * g + inv[8] * b).coerceIn(0f, 1f)
-        fun disp(l: Float): Float { val x = oetf(l).coerceIn(0f, 1f) * 255f; val i = x.toInt().coerceAtMost(254); val f = x - i; return curve[i] * (1 - f) + curve[i + 1] * f }
+        fun disp(l: Float): Float { val e = oetf(l).coerceIn(0f, 1f); if (!useBase) return e; val x = e * 255f; val i = x.toInt().coerceAtMost(254); val f = x - i; return curve[i] * (1 - f) + curve[i + 1] * f }
         out[o] = disp(lr); out[o + 1] = disp(lg); out[o + 2] = disp(lb)
     }
 }

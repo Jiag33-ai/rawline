@@ -31,11 +31,11 @@ class AiMasksImpl(private val context: Context, private val store: ModelStore, p
     private val samEnc = lazy { TfModel(context, store.file("sam_encoder.tflite"), "sam_encoder") }
     private val samDec = lazy { TfModel(context, store.file("sam_decoder.tflite"), "sam_decoder") }
 
-    private var embedding: FloatArray? = null
-    private var embedFrame = intArrayOf(0, 0, 0, 0)   // frame w, h, scaled w, scaled h
-    private var embedKey = ""
+    /** The encoder result with the frame it belongs to, replaced or cleared as one value (invalidate runs on another thread than encode). */
+    private class Embedding(val data: FloatArray, val key: String, val frameW: Int, val frameH: Int, val scaledW: Int, val scaledH: Int)
+    @Volatile private var embedding: Embedding? = null
 
-    override fun invalidate() { embedding = null; embedKey = "" }
+    override fun invalidate() { embedding = null }
 
     fun release() { listOf(skyModel, peopleModel, samEnc, samDec).forEach { if (it.isInitialized()) it.value.release() } }
 
@@ -120,7 +120,7 @@ class AiMasksImpl(private val context: Context, private val store: ModelStore, p
         // A cheap content probe so a changed frame (rotate, straighten) re-encodes
         val probe = (0 until 16).fold(0L) { a, i -> a * 31 + ref.getPixel((i * 97) % ref.width, (i * 61) % ref.height) }
         val k = "${ref.width}x${ref.height}:$probe"
-        if (embedding != null && embedKey == k) return
+        if (embedding?.key == k) return
         val s = 1024f / max(ref.width, ref.height)
         val nw = (ref.width * s).toInt().coerceIn(1, 1024); val nh = (ref.height * s).toInt().coerceIn(1, 1024)
         val scaled = Bitmap.createScaledBitmap(ref, nw, nh, true)
@@ -137,15 +137,16 @@ class AiMasksImpl(private val context: Context, private val store: ModelStore, p
         samEnc.value.run(arrayOf(inp), mapOf(0 to out))
         out.rewind()
         val e = FloatArray(64 * 64 * 256); out.asFloatBuffer().get(e)
-        embedding = e; embedKey = k; embedFrame = intArrayOf(ref.width, ref.height, nw, nh)
+        embedding = Embedding(e, k, ref.width, ref.height, nw, nh)
     }
 
     override suspend fun objectAt(nx: Float, ny: Float, w: Int, h: Int): ByteArray? {
         if (!store.ensure(Models.SAM)) return null
         val ref = frame() ?: return null
         encode(ref)
-        val e = embedding ?: return null
-        val nw = embedFrame[2]; val nh = embedFrame[3]
+        val emb = embedding ?: return null
+        val e = emb.data
+        val nw = emb.scaledW; val nh = emb.scaledH
         val dec = samDec.value
         val embIn = TfModel.floats(e.size).also { it.asFloatBuffer().put(e) }
         val pts = TfModel.floats(2).also { it.asFloatBuffer().put(floatArrayOf(nx * nw, ny * nh)) }

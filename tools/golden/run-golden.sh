@@ -44,6 +44,7 @@ SCENES=(
   "dehazeneg|dehaze=-60"
   "grade|ghue=0.1667 gsat=1"
   "lenslocal|lens=1 texture=60 clarity=60"
+  "detail|sharpen=60 nrl=30 nrc=40 grain=20"
 )
 # Outside-image check. Scenes with autofit=1 are rendered a second time with mark=1 (outside pixels painted magenta): none may
 # remain, and the crop the harness solved must equal the one Kotlin's Geo.fitCrop computes (tools/golden/fitcrop.expected is read
@@ -107,6 +108,10 @@ numericChecks() {
   lo=$(python3 -c "print(max(0.0, $ld - 0.03))"); hi=$(python3 -c "print(min(1.0, $ld + 0.03))")
   $G "$SAMPLE" "$W/m_lum.ppm" 320 half maskluma=$lo,$hi,0.05 maskexposure=-2 2>/dev/null
   $N pixelmatch "$W/m_lum.ppm" "$W/m_glob.ppm" "$W/base.ppm" $x $y "AE-015 luminance range picks its own luminance" || rc=1
+  # AE-016: manual vignetting correction is centred on the frame, not on the crop (left half of a flat picture: the left edge is the
+  # frame corner and gets the strongest correction, the right edge is the frame centre and gets none)
+  $G "$W/flat.ppm" "$W/flat_crop.ppm" 320 half optvig=0.5 cropw=0.5 2>/dev/null
+  $N edges "$W/flat_crop.ppm" left || rc=1
   # AE-018: the 16 bit path (float32 targets and curve) agrees with the 8 bit path and really has more than 8 bits
   local out
   out=$(GOLDEN_HALF=1 $G "$SAMPLE" "$W/hp.ppm" 320 half exposure=0.3 shadows=40 2>&1 >/dev/null) || { echo "FAIL 16 bit path: $out" | tail -3; rc=1; }
@@ -119,4 +124,6 @@ g++ -O1 -std=c++17 -I"$ROOT/core/native/src/main/cpp" "$ROOT/tools/golden/halfs_
 # Host test for GL robustness: failed upload keeps the old source, context restore, stale errors (AE-006, AE-011, AE-034)
 CE="$ROOT/core/native/src/main/cpp"
 g++ -O1 -std=c++17 -I/tmp/golden -I"$CE" -I"$CE/engine" "$ROOT/tools/golden/engine_test.cpp" "$CE/engine/engine.cpp" -lEGL -lGLESv2 -o /tmp/golden/engine_test && /tmp/golden/engine_test || fail=1
+# Host test for the embedded preview finder (AE-039, AE-053), including the real sample RAW
+g++ -O1 -std=c++17 -I"$CE" "$ROOT/tools/golden/preview_test.cpp" "$CE/rw2_preview.cpp" -o /tmp/golden/preview_test && /tmp/golden/preview_test "$SAMPLE" || fail=1
 exit $fail

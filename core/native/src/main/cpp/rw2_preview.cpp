@@ -36,10 +36,21 @@ struct Entry {
     uint32_t count, value;  // value is the raw 4 bytes interpreted as a number (offset or inline)
 };
 
+// Real embedded previews are 1 to 3 MB (a 45 MP body stays well under 32 MB). A larger claim is a crafted or damaged file, and the
+// caller would allocate that many bytes (twice, with the copy out of the Java array).
+constexpr int64_t kMaxPreviewBytes = int64_t(32) << 20;
+
 void consider(const Reader &r, int64_t off, int64_t len, PreviewInfo &best) {
-    if (len < 1024 || len <= best.length || off <= 0 || len > (int64_t(128) << 20) || off + len > r.size) return;
+    if (len < 1024 || len <= best.length || off <= 0 || len > kMaxPreviewBytes || off + len > r.size) return;
     uint8_t m[2];
     if (!r.read(off, m, 2) || m[0] != 0xFF || m[1] != 0xD8) return;
+    // The range must also end like a JPEG: an end of image marker (FF D9) in its last 1 KB (some writers pad after it).
+    uint8_t tail[1024];
+    size_t tn = size_t(len < int64_t(sizeof(tail)) ? len : int64_t(sizeof(tail)));
+    if (!r.read(off + len - int64_t(tn), tail, tn)) return;
+    bool eoi = false;
+    for (size_t i = 0; i + 1 < tn; i++) if (tail[i] == 0xFF && tail[i + 1] == 0xD9) { eoi = true; break; }
+    if (!eoi) return;
     best.offset = off;
     best.length = len;
 }
@@ -50,8 +61,12 @@ void walkIfd(const Reader &r, int64_t ifdOff, int depth, bool isIfd0, PreviewInf
     if (!r.read(ifdOff, cnt, 2)) return;
     int n = r.u16(cnt);
     if (n <= 0 || n > 512) return;
-    std::vector<uint8_t> buf(n * 12 + 4);
-    if (!r.read(ifdOff + 2, buf.data(), buf.size())) return;
+    std::vector<uint8_t> buf(n * 12 + 4, 0);
+    if (!r.read(ifdOff + 2, buf.data(), size_t(n) * 12)) return;
+    // The offset of the next IFD follows the entries, but an IFD that ends exactly at the end of the file has none: that is "no next
+    // IFD", not an unreadable IFD (reading all of it in one go used to throw the whole IFD, and its preview, away).
+    uint8_t nextBytes[4];
+    if (r.read(ifdOff + 2 + int64_t(n) * 12, nextBytes, 4)) std::memcpy(&buf[size_t(n) * 12], nextBytes, 4);
 
     int64_t jifOff = -1, jifLen = -1, stripOff = -1, stripLen = -1;
     int compression = 0, photometric = 0;
