@@ -241,7 +241,7 @@ After these 25: baseline profile and macrobenchmarks (BK-002, BK-003, after W01 
 | N. Studio | 6 | 32 | 19 | 3 | 60 |
 | **All** | 38 | 203 | 217 | 54 | 512 |
 
-Status of the 512 entries: 25 DONE, 48 PARTLY DONE, 10 MERGED into another entry (dedupe pass, 6 Oct 2026), 19 SPEC COVERS and 2 SPEC WINS (Studio entries settled by docs/STUDIO_SPEC.md), 1 DECLINED and 1 BLOCKED; the rest are open. Merged and done entries are kept for their history and acceptance details.
+Status of the 512 entries: 30 DONE, 48 PARTLY DONE, 10 MERGED into another entry (dedupe pass, 6 Oct 2026), 19 SPEC COVERS and 2 SPEC WINS (Studio entries settled by docs/STUDIO_SPEC.md), 1 DECLINED and 1 BLOCKED; the rest are open. Merged and done entries are kept for their history and acceptance details.
 
 ## Top 30 overall (ranked)
 
@@ -541,8 +541,8 @@ Dependencies: BK-263 and BK-098 before BK-099; BK-096 before BK-112 and BK-256; 
 | BK-338 | P1 | S-M |  | Culling 800 photos: "next undecided" jump, a visible progress count, and resume where I stopped |
 | BK-339 | P1 | S |  | Rejected photos hidden from the grid by default, with a "Rejects (n)" chip to bring them back |
 | BK-350 | P1 | M |  | First-time user friction audit: write the five-minute path and fix every dead end |
-| BK-392 | P1 | S | DESIGNED | First-run onboarding copy deck: exact words for every screen (Australian English, no em dashes) |
-| BK-393 | P1 | S | DESIGNED | In-app help copy for each screen (the text for the "?" sheets, BK-193) |
+| BK-392 | P1 | S | DONE | First-run onboarding copy deck: exact words for every screen (Australian English, no em dashes) |
+| BK-393 | P1 | S | DONE | In-app help copy for each screen (the text for the "?" sheets, BK-193) |
 | BK-447 | P1 | S |  | First-run reviewer scorecard: reproduce what a Lightroom or Snapseed reviewer would do in the first ten minutes and score it each release |
 | BK-450 | P1 | M |  | First launch with a big library: honest progress, a skeleton grid and a "RAW files hidden" hint instead of "Nothing here yet" |
 
@@ -660,6 +660,11 @@ Dependencies: BK-365 first; BK-366 and BK-367 before everything; BK-368 and BK-3
 - BK-467 floatToHalf rounds values near 65520 up to infinity (audit AE-028): DONE
 - BK-142 Automatic backups of the catalogue (edits, meta, presets, snapshots) on every N edits and daily, kept as the last 7 rotating files: DONE
 - BK-303 Restore preview ("dry run") and a backup integrity manifest: DONE
+- BK-392 First-run onboarding copy deck: exact words for every screen (Australian English, no em dashes): DONE
+- BK-393 In-app help copy for each screen (the text for the "?" sheets, BK-193): DONE
+- BK-394 Plain-English tool glossary shown on long press (with a one-line effect and a "try this" tip): DONE
+- BK-395 Error and empty state copy list (the 14 messages Jai will actually see): DONE
+- BK-396 Copy style guide and an automatic check (Australian English, no em dashes, sentence case, short verbs): DONE
 - BK-246 Adopt Android 16 behaviours now: predictive back and edge-to-edge (targetSdk is 37): DONE
 - BK-426 API 37 readiness checklist (edge-to-edge, predictive back, resizability) with tests on the S24 Ultra and a large-screen emulator: DONE
 - BK-120 Persist per-source scroll position, selection and sort across rotation and process death: DONE
@@ -2702,8 +2707,8 @@ Facts: Settings is a single scrolling column (version, built, LibRaw, debug over
 - Acceptance: a written script in docs/ONBOARDING.md of the first 5 minutes (open, allow, see RAW, open one, swipe, edit exposure, undo, export) with each step's expected screen; the fixes land as the entries they reference (BK-191, 192, 194, 285, 073, 349, 204); Jai (or a friend with no briefing) runs the script on the phone and every step is tick-passed or has a new entry; time to first export under 5 minutes is recorded.
 - Size: M. Files: docs, several UI files. Risk: low.
 
-### BK-392 [P1] [DESIGNED] First-run onboarding copy deck: exact words for every screen (Australian English, no em dashes)
-- Status: W27-onboarding-help.md: exact copy plus 32 passing host tests (rules, flow, resources); Compose screens specified, not compiled. Not merged.
+### BK-392 [P1] [DONE] First-run onboarding copy deck: exact words for every screen (Australian English, no em dashes)
+- Status: Done in commits fb5d24f (copy rules test, docs/COPY.md, the copy deck, the flow machine) and 64006fd (welcome screens, help sheets, glossary, Settings > Help). Compiled and host tested; the screens were not run on a phone, so Jai's fresh install tap-through is still the check. BK-397 (tips) and Reset tips are left.
 - Acceptance: these strings (final wording agreed with Jai, kept in `strings.xml`, BK-203) ship with the onboarding flow (BK-191):
   1. Welcome. Title: "Edit your RAW photos on your phone". Body: "Rawline opens your Panasonic RW2 files fast and edits them without ever changing the originals." Button: "Get started".
   2. Photos. Title: "Let Rawline see your photos". Body: "Rawline needs to see your photos to show them. Nothing leaves your phone." Button: "Allow photos". Link: "Why do you need this?" opens: "Android lists JPEG and HEIC photos by itself, but it often hides RAW files. Allow all files access on the next screen to see your RW2 files."
@@ -2714,8 +2719,8 @@ Facts: Settings is a single scrolling column (version, built, LibRaw, debug over
 - Also: every screen has a Skip, no screen needs a network, each screen fits at font scale 1.3 (BK-170), copy checked by the text rules test (BK-203, no em dashes, Australian spellings), and the whole flow is reachable again from Settings > Help.
 - Size: S (copy) with BK-191 for the build. Files: new strings.xml entries, feature/onboarding. Risk: low.
 
-### BK-393 [P1] [DESIGNED] In-app help copy for each screen (the text for the "?" sheets, BK-193)
-- Status: W27-onboarding-help.md: exact copy plus 32 passing host tests (rules, flow, resources); Compose screens specified, not compiled. Not merged.
+### BK-393 [P1] [DONE] In-app help copy for each screen (the text for the "?" sheets, BK-193)
+- Status: Done in commits fb5d24f (copy rules test, docs/COPY.md, the copy deck, the flow machine) and 64006fd (welcome screens, help sheets, glossary, Settings > Help). Compiled and host tested; the screens were not run on a phone, so Jai's fresh install tap-through is still the check. BK-397 (tips) and Reset tips are left.
 - Acceptance: short items, plain words, sentence case, each under 140 characters, shipped as resources:
   - Library: "Touch and hold a photo to select it. Then tap more photos." / "Pinch to change how many photos fit across." / "Use the filter button to show picks, ratings or edited photos." / "Rejected photos are hidden. Tap Rejects to see them." / "Pick or reject while culling: open a photo and use the flag buttons."
   - Viewer: "Swipe left or right to move between photos." / "Double tap to zoom. Pinch for more." / "Swipe up for details about the shot." / "Tap Edit to open the photo in the editor."
@@ -2791,18 +2796,18 @@ Facts: Settings is a single scrolling column (version, built, LibRaw, debug over
 - Acceptance: a small check icon in the editor top bar fades in for 1 s after each autosave and has a long-press note "Saved. Your original is never changed. Export makes a new file in Pictures/Rawline"; first-run flag shows the same note once in the editor.
 - Size: S. Files: EditorHost.kt, EditorScreen.kt. Risk: low.
 
-### BK-394 [P2] [DESIGNED] Plain-English tool glossary shown on long press (with a one-line effect and a "try this" tip)
-- Status: W27-onboarding-help.md: exact copy plus 32 passing host tests (rules, flow, resources); Compose screens specified, not compiled. Not merged.
+### BK-394 [P2] [DONE] Plain-English tool glossary shown on long press (with a one-line effect and a "try this" tip)
+- Status: Done in commits fb5d24f (copy rules test, docs/COPY.md, the copy deck, the flow machine) and 64006fd (welcome screens, help sheets, glossary, Settings > Help). Compiled and host tested; the screens were not run on a phone, so Jai's fresh install tap-through is still the check. BK-397 (tips) and Reset tips are left.
 - Acceptance: each adjustment label has a long-press explanation in the same Lr-style popup as tooltips (BK-195), for example: "Exposure: overall brightness. Move right to brighten." / "Highlights: only the brightest parts. Pull left to bring back sky detail." / "Shadows: only the darkest parts. Move right to lift them." / "Whites and Blacks: set the brightest and darkest points." / "Texture: fine detail such as skin and bark." / "Clarity: contrast in the middle tones. Adds punch." / "Dehaze: cuts through haze and mist, or adds it." / "Vibrance: boosts dull colours and protects strong ones." / "Saturation: all colours at once." / "Grain: film-like noise for a classic look." Texts in resources; a settings switch "Show explanations"; first use shows it once.
 - Size: S-M. Files: core/ui/Controls.kt, strings.xml. Risk: low.
 
-### BK-395 [P2] [DESIGNED] Error and empty state copy list (the 14 messages Jai will actually see)
-- Status: W27-onboarding-help.md: exact copy plus 32 passing host tests (rules, flow, resources); Compose screens specified, not compiled. Not merged.
+### BK-395 [P2] [DONE] Error and empty state copy list (the 14 messages Jai will actually see)
+- Status: Done in commits fb5d24f (copy rules test, docs/COPY.md, the copy deck, the flow machine) and 64006fd (welcome screens, help sheets, glossary, Settings > Help). Compiled and host tested; the screens were not run on a phone, so Jai's fresh install tap-through is still the check. BK-397 (tips) and Reset tips are left.
 - Acceptance: one table in docs/COPY.md and strings.xml, each with what happened, what to try, and a Copy details action (BK-200). Drafts: "No photos yet. Allow access to see your camera roll." / "RAW files are missing. Turn on All files access." / "This photo could not be opened. The file may be damaged." (BK-355) / "Not enough space. Free about 300 MB and try again." (BK-157) / "Export folder not available. Choose another folder or save to Pictures/Rawline." (BK-359) / "This edit was made by a newer version of Rawline, so it was left alone." / "The AI model could not be downloaded. Check your connection and try again." / "AI tools are running slower on your phone's processor right now." (BK-296) / "Your phone is warm. Rawline paused to cool down." (BK-176) / "Battery is low. Export paused until you charge." (BK-354) / "The backup is damaged and was not restored." (BK-303) / "Nothing new to import." / "The card was removed. Put it back to continue." (BK-364) / "This file is very large, so it opened at half size." (BK-324).
 - Size: S. Files: docs/COPY.md, strings.xml. Risk: low.
 
-### BK-396 [P2] [DESIGNED] Copy style guide and an automatic check (Australian English, no em dashes, sentence case, short verbs)
-- Status: W27-onboarding-help.md: exact copy plus 32 passing host tests (rules, flow, resources); Compose screens specified, not compiled. Not merged.
+### BK-396 [P2] [DONE] Copy style guide and an automatic check (Australian English, no em dashes, sentence case, short verbs)
+- Status: Done in commits fb5d24f (copy rules test, docs/COPY.md, the copy deck, the flow machine) and 64006fd (welcome screens, help sheets, glossary, Settings > Help). Compiled and host tested; the screens were not run on a phone, so Jai's fresh install tap-through is still the check. BK-397 (tips) and Reset tips are left.
 - Acceptance: docs/COPY.md states: Australian spelling (colour, grey, centre, organise, favourite, licence as a noun, practise as a verb), no em dashes (use a full stop or a comma), sentence case for titles and buttons, buttons start with a verb ("Allow photos", "Export"), no jargon without a glossary entry (BK-394), numbers with units, no exclamation marks, no model or vendor names except where needed (Panasonic, Samsung); the text rules test (BK-203) enforces the mechanical parts over strings.xml, docs and release notes; a review checklist for new strings in the PR template.
 - Size: S. Files: docs/COPY.md, core/model test. Risk: low.
 
