@@ -60,7 +60,8 @@ class ExportRunner(private val context: Context, private val graph: Graph) {
     suspend fun recoverAfterStart() {
         val dao = graph.db.exports()
         if (!ExportService.isRunning) dao.resetRunning()
-        if (dao.nextWaiting() != null) startService()
+        // a running service already picks up waiting jobs; starting it again would only reset its notification to "Starting"
+        if (dao.nextWaiting() != null && !ExportService.isRunning) startService()
     }
 
     /** Works through waiting jobs one at a time (blocking; runs on the service's thread). Returns how many files were written and how many jobs failed. */

@@ -227,7 +227,7 @@ fun LibraryScreen(
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when {
                 !permissionGranted && selectedSource.startsWith("device:") && photos.isEmpty() -> PermissionPrompt(permissionBlocked, actions.onRequestPermission, actions.onOpenSettings, actions.onImportFiles)
-                photos.isEmpty() && scanning && !filter.isActive -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                photos.isEmpty() && (scanning || progress.listing) && !filter.isActive -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         app.rawline.core.ui.LocalLoader(size = 28.dp, color = Lr.IconSecondary)
                         Text("Reading your photos", style = MaterialTheme.typography.bodyMedium, color = Lr.TextSecondary, modifier = Modifier.padding(top = 12.dp))

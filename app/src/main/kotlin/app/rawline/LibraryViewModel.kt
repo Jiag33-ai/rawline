@@ -120,6 +120,10 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
 
     private var observer: ContentObserver? = null
     private var scanJob: Job? = null
+    private var told = false
+    // These must be declared above init: init starts a device scan, and a property declared below it would still be null then.
+    private val gate = RescanGate()
+    private val scanCount = java.util.concurrent.atomic.AtomicInteger()
 
     init {
         // First run: no saved choice. Show the camera roll (falls back to everything on the phone if there is no "Camera" album).
@@ -164,9 +168,11 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
 
     private fun refreshPermission(rationale: Boolean) {
         val p = MediaAccess.prompt(hasMediaPermission(), hasAllFiles(), mediaAsked, rationale)
+        val wasGranted = permissionGranted.value
         permissionGranted.value = p == MediaPrompt.GRANTED
         permissionBlocked.value = p == MediaPrompt.OPEN_SETTINGS
-        if (p == MediaPrompt.GRANTED) startDeviceWatch()
+        // scan when access has just arrived (a grant in Settings, or the dialog), not on every resume
+        if (p == MediaPrompt.GRANTED && (!wasGranted || observer == null)) startDeviceWatch()
     }
 
     fun appSettingsIntent() = Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${app.packageName}"))
@@ -182,8 +188,6 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
         observer = o
     }
 
-    private val gate = RescanGate()
-    private val scanCount = java.util.concurrent.atomic.AtomicInteger()
 
     /** Keeps [scanning] true while any listing step runs (several can overlap). */
     private suspend fun <T> scanTracked(block: suspend () -> T): T {
@@ -281,7 +285,6 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private var told = false
     /** XMP is on but some photos cannot have a sidecar (camera roll, imported files) or it failed: say so once, never silently. */
     private fun reportSidecars(r: SidecarResult) {
         val text = SidecarNotice.text(r) ?: return

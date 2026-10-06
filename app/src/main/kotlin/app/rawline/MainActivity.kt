@@ -88,7 +88,8 @@ class MainActivity : ComponentActivity() {
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
         )
-        openRoute.value = intent?.getStringExtra(EXTRA_OPEN)
+        // only on a fresh start: after a restore the same intent is replayed and must not jump to the queue again
+        if (savedInstanceState == null) openRoute.value = intent?.getStringExtra(EXTRA_OPEN)
         setContent { RawlineTheme { Surface(color = Lr.Canvas) { RawlineRoot(openRoute.value) { openRoute.value = null } } } }
     }
 
