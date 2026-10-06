@@ -29,6 +29,8 @@ uniform vec3 uLensVig;       // lens vignetting k1 k2 k3
 uniform vec3 uLensFlags;     // tca on, vignetting on
 uniform mat3 uToSrgb;        // working space (ProPhoto, D50) to linear sRGB (colour and luminance range masks compare in display terms)
 uniform sampler2D uBase;     // base tone curve, 256 wide (the same table the output pass uses)
+uniform float uLook;         // look version of the recipe: 1 keeps the original maths, 2 (or more) uses the corrected HSL bands, grading luma and fine texture radius
+uniform float uTexOn;        // 1 when any block has a Texture slider away from zero (the fine detail taps are only made then)
 
 //@include geometry.glsl
 
@@ -91,7 +93,9 @@ vec3 tintColour(float hue) {
 vec3 grade(vec3 g, int block) {
     // g is gamma encoded. Three-way colour grading.
     vec4 sh = B(block, 10), mi = B(block, 11), hi = B(block, 12), gl = B(block, 13), bl = B(block, 14);
-    float l = dot(g, vec3(0.2126, 0.7152, 0.0722));
+    // Look 2: the zone is chosen by the luminance of the working space (Y weights on linear light, then gamma), so a saturated blue is as dark as it is.
+    // Look 1 weighted the gamma values with Rec 709, which treats a deep ProPhoto blue as 0.07 bright.
+    float l = uLook > 1.5 ? pow(max(dot(toLinear(g), Y), 0.0), 1.0 / 2.2) : dot(g, vec3(0.2126, 0.7152, 0.0722));
     float blend = bl.x;          // 0..1 (default 0.5)
     float bal = bl.y;            // -1..1
     float lo = 0.33 + bal * 0.2, hiE = 0.66 + bal * 0.2;
@@ -110,7 +114,7 @@ vec3 grade(vec3 g, int block) {
 }
 
 // Applies one adjustment block. 'bs','bl','bd' are the local analysis samples at this pixel.
-vec3 adjust(vec3 c, int block, float bs, float bl, float bd, out float gainTone) {
+vec3 adjust(vec3 c, int block, float bs, float bf, float bl, float bd, out float gainTone) {
     vec4 b0 = B(block, 0), b1 = B(block, 1), b2 = B(block, 2), b3 = B(block, 3);
     float exposure = b0.x, contrast = b0.y, highlights = b0.z, shadows = b0.w;
     float whites = b1.x, blacks = b1.y, temp = b1.z, tint = b1.w;
@@ -135,10 +139,12 @@ vec3 adjust(vec3 c, int block, float bs, float bl, float bd, out float gainTone)
 
     // Texture (fine) and clarity (broad) local contrast from the blurred layers.
     float Ym = max(luma(c), 1.0e-5);
-    float fine = log2(Ym / max(bs * gain * tone, 1.0e-5));
+    float fine = log2(Ym / max((uLook > 1.5 ? bf : bs) * gain * tone, 1.0e-5));   // look 2: fine detail against a small radius ring, look 1: against the 512 px analysis layer
     float broad = log2(Ym / max(bl * gain * tone, 1.0e-5));
     float mid = max(1.0 - abs(pow(Ym, 1.0 / 2.4) * 2.0 - 1.0), 0.0);   // 0 above white: clarity never reverses sign on super-white pixels
-    c *= exp2(clamp(fine, -2.0, 2.0) * texture * 0.01 * 0.8 + clamp(broad, -2.0, 2.0) * clarity * 0.01 * 0.8 * mid);
+    // Look 2: fine detail is limited to 0.6 stop either side so a hard edge (which the small ring sees as a huge ratio) is not boosted into a halo.
+    float fl = uLook > 1.5 ? 0.6 : 2.0;
+    c *= exp2(clamp(fine, -fl, fl) * texture * 0.01 * 0.8 + clamp(broad, -2.0, 2.0) * clarity * 0.01 * 0.8 * mid);
 
     // Dehaze via dark channel prior.
     if (abs(dehaze) > 0.001) {
@@ -170,8 +176,19 @@ vec3 adjust(vec3 c, int block, float bs, float bl, float bd, out float gainTone)
     // Saturation, vibrance and the HSL colour mixer.
     vec3 hsv = rgb2hsv(clamp(g, 0.0, 1.0));
     float hueShift = 0.0, satMul = 0.0, lumMul = 0.0;
+    // Look 2: the two bands that bracket the hue cross-fade and every other band is 0, so the weights always sum to 1 and an equal
+    // slider value has an equal effect at every hue. Look 1 keeps the old overlapping bands (a pure orange got 1.64 times the slider).
+    int bk = 7, bn = 0; float bt = 0.0;
+    if (uLook > 1.5) {
+        for (int i = 0; i < 8; i++) if (hsv.x >= BAND[i]) bk = i;
+        bn = (bk + 1) & 7;
+        float c1 = BAND[bn] + (bn == 0 ? 1.0 : 0.0);
+        bt = clamp((hsv.x - BAND[bk]) / (c1 - BAND[bk]), 0.0, 1.0);
+        bt = bt * bt * (3.0 - 2.0 * bt);
+    }
     for (int i = 0; i < 8; i++) {
-        float w = bandWeight(hsv.x, i) * smoothstep(0.02, 0.2, hsv.y);
+        float bw = uLook > 1.5 ? (i == bk ? 1.0 - bt : (i == bn ? bt : 0.0)) : bandWeight(hsv.x, i);
+        float w = bw * smoothstep(0.02, 0.2, hsv.y);
         vec4 hv = B(block, 4 + (i >> 2)), sv = B(block, 6 + (i >> 2)), lv = B(block, 8 + (i >> 2));
         int j = i & 3;
         hueShift += w * hv[j];
@@ -248,6 +265,15 @@ float maskAlpha(int m, vec2 p, float asp, vec3 c) {
     return clamp(acc * h.y, 0.0, 1.0);
 }
 
+// One tap of the Texture ring (look 2): the source luminance with the source gain and the heal overlay, exactly as the pixel itself is built,
+// so the inside of a patch is not boosted against the source underneath it.
+float ringTap(vec2 uv) {
+    vec2 u = clamp(uv, 0.0, 1.0);
+    vec3 c = textureLod(uSrc, u, uLod).rgb * uSrcGain;
+    if (uOverlayOn > 0.5) { vec4 o = texture(uOverlay, u); c = c * (1.0 - o.a) + o.rgb; }
+    return luma(c);
+}
+
 void main() {
     vec2 p = uView.xy + vUv * uView.zw;
     vec3 g = srcUv(p);
@@ -292,7 +318,25 @@ void main() {
     // makes them the blur of the corrected picture. Without it a corner of a lens corrected photo reads as detail against a dark base.
     float bs = texture(uBs, p).x * vgain, bl = texture(uBl, p).x * vgain, bd = texture(uBd, p).y * vgain;
     float gt0;
-    c = adjust(c, 0, bs, bl, bd, gt0);
+    // Look 2 Texture: the base for fine detail is the mean luminance of a ring of eight source taps whose radius is about 0.07 percent of the long edge
+    // (4 px on a 6000 px frame, never under 1.5 px), measured in source pixels so a preview and an export see the same detail. Only made when a Texture slider is set.
+    float bf = bs;
+    if (uLook > 1.5 && uTexOn > 0.5) {
+        float rl = max(1.0, max(1.5, 0.0007 * max(uSrcSize.x, uSrcSize.y)) / exp2(uLod));
+        vec2 o = vec2(rl * exp2(uLod)) / uSrcSize;
+        vec2 o2 = o * 0.70710678;
+        float acc = 0.0;
+        acc += ringTap(guv + vec2(o.x, 0.0));
+        acc += ringTap(guv - vec2(o.x, 0.0));
+        acc += ringTap(guv + vec2(0.0, o.y));
+        acc += ringTap(guv - vec2(0.0, o.y));
+        acc += ringTap(guv + o2);
+        acc += ringTap(guv - o2);
+        acc += ringTap(guv + vec2(o2.x, -o2.y));
+        acc += ringTap(guv + vec2(-o2.x, o2.y));
+        bf = max(acc * 0.125, 1.0e-5) * vgain;
+    }
+    c = adjust(c, 0, bs, bf, bl, bd, gt0);
     float asp = bdim.x / bdim.y;
     for (int m = 0; m < 8; m++) {
         if (m >= uNumMasks) break;
@@ -300,7 +344,7 @@ void main() {
         if (a > 0.001) {
             // c already carries the global (and earlier mask) exposure and tone: measure local contrast against the same baseline
             float gtm;
-            vec3 adj = adjust(c, 1 + m, bs * gt0, bl * gt0, bd * gt0, gtm);
+            vec3 adj = adjust(c, 1 + m, bs * gt0, bf * gt0, bl * gt0, bd * gt0, gtm);
             c = mix(c, adj, a);
             gt0 = mix(gt0, gt0 * gtm, a);
         }

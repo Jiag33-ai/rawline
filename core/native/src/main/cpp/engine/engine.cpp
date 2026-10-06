@@ -449,6 +449,12 @@ void Engine::runMain(const float *p, Rect vis, int pw, int ph, Target &e, int ma
     glUniform3fv(pr.u("uLensVig"), 1, p + G_LVIG);
     glUniform3f(pr.u("uLensFlags"), p[G_LTCA_ON], p[G_LVIG_ON], 0.f);
     glUniform1f(pr.u("uOverlayOn"), overlayW_ > 0 ? p[G_OVERLAY] : 0.f);
+    glUniform1f(pr.u("uLook"), p[G_LOOK]);
+    {
+        float texOn = 0.f;
+        for (int b = 0; b < kMaxBlocks; b++) if (std::fabs(p[kOffBlocks + b * kBlockFloats + S_TEXTURE]) > 0.001f) texOn = 1.f;
+        glUniform1f(pr.u("uTexOn"), texOn);
+    }
     glUniformMatrix3fv(pr.u("uToSrgb"), 1, GL_FALSE, colourMats().srgb);   // masks compare in sRGB display terms whatever the export space
     (void)bw;
     setGeometryUniforms(pr, p);

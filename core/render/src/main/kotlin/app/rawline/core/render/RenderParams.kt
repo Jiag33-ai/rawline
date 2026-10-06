@@ -27,6 +27,7 @@ object P {
     const val G_NUM_MASKS = 28
     const val G_OVERLAY = 29
     const val G_SHOWMASK = 30
+    const val G_LOOK = 31
     const val G_LDIST = 32
     const val G_LDIST_ON = 37
     const val G_LTCA = 38
@@ -120,6 +121,7 @@ object RenderParams {
         out[P.G_FX] = e.vignetteAmount; out[P.G_FX + 1] = e.vignetteMidpoint; out[P.G_FX + 2] = e.vignetteRoundness; out[P.G_FX + 3] = e.vignetteFeather
         out[P.G_FX2] = e.grainAmount; out[P.G_FX2 + 1] = e.grainSize; out[P.G_FX2 + 2] = e.grainRoughness
         out[P.G_OVERLAY] = if (overlayOn) 1f else 0f
+        out[P.G_LOOK] = recipe.lookVersion.toFloat()   // the shader maths of the look (HSL bands, fine Texture, grading luma): 2 or later use the corrected versions
         // the shader indexes the visible masks only, so map the selected mask to its place in that list (-1 when hidden)
         out[P.G_SHOWMASK] = (if (showMask in recipe.masks.indices && recipe.masks[showMask].visible) recipe.masks.take(showMask).count { it.visible } else -1).toFloat()
 

@@ -50,6 +50,10 @@ SCENES=(
   "base2|look=2"
   "tone2|look=2 exposure=0.8 shadows=60 highlights=-40 contrast=15"
   "clip2|look=2 exposure=2"
+  # W23 shader maths (HSL partition, fine Texture radius, ProPhoto grading luma) exists only at look 2; refs checked by eye.
+  "hsl2|look=2 hslsat=40 hsllum=-20"
+  "texture2|look=2 texture=60"
+  "grade2|look=2 gshadows=0,1 exposure=0.4"
 )
 # Outside-image check. Scenes with autofit=1 are rendered a second time with mark=1 (outside pixels painted magenta): none may
 # remain, and the crop the harness solved must equal the one Kotlin's Geo.fitCrop computes (tools/golden/fitcrop.expected is read
@@ -124,6 +128,9 @@ numericChecks() {
   return $rc
 }
 numericChecks || fail=1
+# W23: the look 2 shader checks (HSL partition, fine Texture radius) pass at look 2 and must fail at look 1, or they are blind
+python3 "$ROOT/tools/golden/look2_checks.py" /tmp/golden/golden "$W/look2" --look 2 --key look || fail=1
+if python3 "$ROOT/tools/golden/look2_checks.py" /tmp/golden/golden "$W/look2" --look 1 --key look >/dev/null; then echo "FAIL look 2 checks pass on look 1: the checks are blind"; fail=1; else echo "ok   look 2 checks fail on look 1 (the control)"; fi
 # AE-051: Texture and Clarity are measured on the picture with its heal patches (the patch interior is not boosted)
 python3 "$ROOT/tools/golden/overlay_analysis_check.py" /tmp/golden/golden || fail=1
 # AE-041: all eight EXIF orientations through the real shader equal the definition of each orientation

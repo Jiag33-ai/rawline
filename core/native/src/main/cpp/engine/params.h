@@ -28,6 +28,7 @@ enum Global {
     G_NUM_MASKS = 28,  // 1
     G_OVERLAY = 29,    // 1
     G_SHOWMASK = 30,   // 1: mask index to tint red for editing, -1 off
+    G_LOOK = 31,       // 1: look version for shader behaviour (1 = original maths, 2 = HSL partition, fine texture radius, ProPhoto grading luma)
     G_LDIST = 32,      // 5: lens distortion polynomial p0..p4 (r_src = r * (p0 + p1 r + p2 r^2 + p3 r^3 + p4 r^4))
     G_LDIST_ON = 37,   // 1
     G_LTCA = 38,       // 6: red (v, c, b), blue (v, c, b) scale polynomials about the source centre
@@ -63,6 +64,7 @@ inline void initDefaultParams(float *p) {
         for (int i = 0; i < kCurveSize; i++) p[kOffCurves + r * kCurveSize + i] = i / 255.f;
     p[G_DETAIL + 1] = 1.f;
     p[G_SHOWMASK] = -1.f;
+    p[G_LOOK] = 1.f;   // a caller that does not know about looks gets the original maths
 }
 
 }  // namespace rl

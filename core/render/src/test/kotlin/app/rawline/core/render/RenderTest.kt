@@ -34,7 +34,12 @@ class RenderTest {
         assertEquals(const(h, "kMaxLayers"), P.MAX_LAYERS)
         assertEquals(const(h, "kCurveSize"), P.CURVE_SIZE)
         for ((n, v) in listOf("G_CROP" to P.G_CROP, "G_GEO" to P.G_GEO, "G_GEO2" to P.G_GEO2, "G_DETAIL" to P.G_DETAIL, "G_NR" to P.G_NR, "G_FX" to P.G_FX,
-            "G_FX2" to P.G_FX2, "G_NUM_MASKS" to P.G_NUM_MASKS, "G_OVERLAY" to P.G_OVERLAY, "G_SHOWMASK" to P.G_SHOWMASK, "G_COUNT" to P.G_COUNT)) assertEquals(n, const(h, n), v)
+            "G_FX2" to P.G_FX2, "G_NUM_MASKS" to P.G_NUM_MASKS, "G_OVERLAY" to P.G_OVERLAY, "G_SHOWMASK" to P.G_SHOWMASK, "G_LOOK" to P.G_LOOK, "G_COUNT" to P.G_COUNT)) assertEquals(n, const(h, n), v)
+    }
+
+    @Test fun buildWritesTheLookIntoTheParams() {
+        assertEquals(1f, RenderParams.build(EditRecipe(lookVersion = 1), 1)[P.G_LOOK])
+        assertEquals(2f, RenderParams.build(EditRecipe(lookVersion = 2), 1)[P.G_LOOK])
     }
 
     @Test fun maskTintIndexSkipsHiddenMasks() {

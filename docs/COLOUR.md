@@ -40,6 +40,9 @@ An edit carries `lookVersion` in its recipe. A recipe without the key was made u
 | Decode white point | LibRaw rescales when the frame's brightest pixel is between 75 and 100 percent of white (up to +0.4 EV) | never (`adjust_maximum_thr = 0` for every decode) |
 | Source gain (`uSrcGain`, a multiplier on every source texel) | `v1Scale`, the factor LibRaw's rule would have applied (1.0 for most frames, 1.0 for the S5M2X sample) | `wbGain` = max(cam_mul) / min(cam_mul) (2.0117 on the sample): a neutral lands at the level it has at unity white balance |
 | Base curve | `kBaseCurve` / `BaseCurve.TABLE`, never changes | `kBaseCurve2` / `BaseCurve.TABLE2` |
+| HSL bands | overlapping bands: the weights at a hue do not sum to 1 (a pure orange got 1.64 times the slider) | the two bands that bracket the hue cross-fade with a smoothstep, the others are 0, so equal sliders equal global Saturation |
+| Texture | the base for fine detail is the 512 px analysis layer, limited to 2 stops each way | the base is the mean of a ring of eight source taps (radius max(1.5, 0.07 percent of the long edge) source pixels, with the source gain and the heal overlay), limited to 0.6 stop each way |
+| Grading zones | Rec 709 weights on gamma values | the shader's ProPhoto Y weights on linear light, then gamma |
 
 One decode serves both looks (the prefetch and the half size preview never need to know the look): the decoder reports `[v1Scale, wbGain]` and the engine multiplies by the one the edit's look asks for.
 
@@ -62,3 +65,7 @@ The stored table is exactly `y = g x / (1 + (g - 1) x^c)` in linear light, g = 4
 - A DNG with two illuminant matrices (the S24 Ultra Expert RAW) interpolates by white balance inside LibRaw, so `cam_mul` reflects that. Not checked: no sample file.
 - `v1Scale` depends on LibRaw 0.22.2's `maximum` and `data_maximum` (pinned by hash). A LibRaw upgrade must re-run fixture F8 under look 1.
 - `rawFromSrgb8` (finished pictures) still carries its own copy of the matrix, which differs from LibRaw's in the third row by 3 to 5e-4 (BK-437, left as it is: it only touches JPEG, HEIC and PNG).
+
+### Shader maths of look 2 (W23)
+The three rows above ride in the free params slot `G_LOOK` (31), which `RenderParams.build` fills from `recipe.lookVersion`; `initDefaultParams` sets it to 1, so a caller that does not know about looks, and every look 1 golden scene, renders as before (byte for byte, checked). Checks: `tools/golden/look2_checks.py` (HSL sliders at +20 equal global Saturation +20 on 24 hues, the green band stays inside its reach, Texture +50 lifts 6 px stripes, leaves an 80 px wave alone and undershoots at most 10 levels at a 5:1 step) must pass at look 2 and fail at look 1. Golden scenes `hsl2`, `texture2`, `grade2` are look 2 only.
+Not done, logged as BK-485: the HSL hue is taken from ProPhoto gamma values, so the band names do not match what the eye calls those hues (sRGB pure green gets 78 of 129 levels of a full green band). Putting the band centres on sRGB hue would change every HSL edit again, so it is a candidate for look 3.

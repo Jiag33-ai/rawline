@@ -133,6 +133,15 @@ static const std::vector<KeyDef> kColourKeys = {
     {"temp", kOffBlocks + S_TEMP}, {"tint", kOffBlocks + S_TINT}, {"vibrance", kOffBlocks + S_VIBRANCE}, {"saturation", kOffBlocks + S_SATURATION},
     {"ghue", kOffBlocks + S_GRADE_GLOBAL},         // global colour grade hue (0..1)
     {"gsat", kOffBlocks + S_GRADE_GLOBAL + 1},     // global colour grade saturation (0..1)
+    {"gshadows", [](Scene &s, const char *, float, const char *text) {   // shadows grade: hue,saturation
+        float h0 = 0, s0 = 0; sscanf(text, "%f,%f", &h0, &s0);
+        s.p[kOffBlocks + S_GRADE_SHADOWS] = h0; s.p[kOffBlocks + S_GRADE_SHADOWS + 1] = s0;
+    }},
+    {"hslsat", [](Scene &s, const char *, float v, const char *) { for (int b = 0; b < 8; b++) s.p[kOffBlocks + S_MIX_SAT + b] = v; }},   // all eight HSL saturation sliders
+    {"hsllum", [](Scene &s, const char *, float v, const char *) { for (int b = 0; b < 8; b++) s.p[kOffBlocks + S_MIX_LUM + b] = v; }},
+    {"hslband", [](Scene &s, const char *, float v, const char *) {   // band * 1000 + 500 + amount: one HSL saturation slider
+        int b = int(v) / 1000; float amt = float(int(v) % 1000) - 500.f; s.p[kOffBlocks + S_MIX_SAT + b] = amt;
+    }},
 };
 
 // -- local contrast, detail and effects --
@@ -311,6 +320,7 @@ int main(int argc, char **argv) {
     }
     bool autofit = sc.autofit, mark = sc.mark, useMaskExposure = sc.useMaskExposure;
     int look = sc.look;
+    p[G_LOOK] = float(look);   // one key switches the curve, the source gain and the shader maths
     float maskExposure = sc.maskExposure;
     if (useMaskExposure) p[kOffBlocks + kBlockFloats + S_EXPOSURE] = maskExposure;
     eng.setBaseCurve(look == 1 ? kBaseCurve : kBaseCurve2);

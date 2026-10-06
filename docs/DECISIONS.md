@@ -106,3 +106,9 @@
 - AE-051: the local analysis (Texture, Clarity, Dehaze weights) is built from the source with the heal and remove overlay laid over it, after the source gain, as `main.frag` does. The analysis cache is invalidated whenever the overlay changes or is switched on or off. This is a bug fix for every look: an edit with a heal patch and Texture or Clarity renders the patch interior without the spurious boost (a flat patch at Texture and Clarity 80 went from 180 to 242, now 180). Edits without a heal patch render byte for byte as before. Cost: the 512 px analysis and its blurs are rebuilt after each heal stroke.
 - AE-041: the audit's claim that the shader gets mirrored EXIF orientations wrong did not hold. `tools/golden/orient_check.py` renders an asymmetric picture under all eight orientations (golden key `orient=N`, the pairs of `RenderParams.orientationToRotFlip`) and compares with the definition of each. The real gap was in the decoder, which mapped only LibRaw flips 3, 5 and 6; `exifOrientationFromLibrawFlip` (`orient_map.h`, the inverse of dcraw's `"50132467"` table, round trip tested) now covers all eight. Dormant for Panasonic and Samsung files, which are never mirrored.
 - AE-025 stays as decided: the analysis needs the source mips.
+
+## Shader correctness, look 2 (W23, docs/COLOUR.md)
+- HSL band partition (AE-013), the fine Texture radius (AE-020) and grading zone luma (AE-030) are look 2 only, selected by `G_LOOK = 31`; look 1 is untouched. No new JNI call, no change to `kParamFloats`.
+- The Texture ring taps carry the source gain and the heal overlay like the pixel does (the audit's patch omitted both), so a heal patch is not boosted at look 2 either (flat patch at Texture and Clarity 80: 180 and 180).
+- BK-485 (band centres on sRGB hue) is not done: it would be look 3.
+
