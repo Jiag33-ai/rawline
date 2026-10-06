@@ -58,4 +58,36 @@ class EditorTest {
         val (t2, ti2) = AutoTools.autoWb(neutral)
         assertTrue(abs(t2) < 1f && abs(ti2) < 1f)
     }
+
+    // ---------- cancel crop ----------
+
+    private fun rec(w: Float) = EditRecipe(geometry = Geometry(cropW = w))
+
+    @Test fun cancelCropWithNothingChangedAddsNoHistoryEntry() {
+        val h = listOf(rec(1f), rec(0.8f))
+        assertEquals(CropCancelPlan.Nothing, planCropCancel(h, 1, h[1], 1, h[1].geometry))
+    }
+
+    @Test fun cancelCropStepsBackToTheEntryAfterEdits() {
+        val h = listOf(rec(1f), rec(0.8f), rec(0.6f), rec(0.5f))
+        assertEquals(CropCancelPlan.Jump(1), planCropCancel(h, 3, h[3], 1, h[1].geometry))
+    }
+
+    @Test fun cancelCropDropsAnUncommittedLiveChange() {
+        val h = listOf(rec(1f), rec(0.8f))
+        assertEquals(CropCancelPlan.Live(h[1]), planCropCancel(h, 1, rec(0.7f), 1, h[1].geometry))
+    }
+
+    @Test fun cancelCropAfterTheEditorWasRebuiltFallsBackToTheSavedGeometry() {
+        // after a rotation the history restarts: the saved entry geometry is no longer at its old index
+        val h = listOf(rec(0.5f))
+        assertEquals(CropCancelPlan.Edit(Geometry(cropW = 0.9f)), planCropCancel(h, 0, h[0], 3, Geometry(cropW = 0.9f)))
+        assertEquals(CropCancelPlan.Nothing, planCropCancel(h, 0, h[0], 3, h[0].geometry))
+    }
+
+    @Test fun geometrySaverRoundTrips() {
+        val g = Geometry(0.1f, 0.2f, 0.5f, 0.4f, 3.5f, 1, true, false, 10f, -5f, "4:5")
+        val saved = with(GeometrySaver) { androidx.compose.runtime.saveable.SaverScope { true }.save(g)!! }
+        assertEquals(g, GeometrySaver.restore(saved))
+    }
 }

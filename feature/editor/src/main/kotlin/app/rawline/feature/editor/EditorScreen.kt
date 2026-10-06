@@ -100,6 +100,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import app.rawline.core.ui.LrTabs
+import app.rawline.core.ui.tapOrDoubleTapAt
+import app.rawline.core.ui.blockPointerInput
 import app.rawline.core.ui.LrOutlineButton
 import app.rawline.core.ui.Histogram
 import kotlinx.coroutines.launch
@@ -213,9 +215,24 @@ fun EditorScreen(
     val modeNow by androidx.compose.runtime.rememberUpdatedState(mode)
     val zoomNow by androidx.compose.runtime.rememberUpdatedState(zoom)
     val gesturesNow by androidx.compose.runtime.rememberUpdatedState(toolGestures)
+    val swipeNow by androidx.compose.runtime.rememberUpdatedState(onSwipePhoto)
+    // set by the main photo handler when it takes the gesture (tool, zoom pan, colour target); the swipe watcher then stands down
+    val mainClaimed = remember { BooleanArray(1) }
+    // true when the last press on the photo was a hold that showed the original: that release is not a tap
+    val heldForBefore = remember { BooleanArray(1) }
+    // the last tap closed the panel: a double tap that follows reopens it (a double tap zooms, it does not close)
+    val tapClosed = remember { BooleanArray(1) }
     // a tool owns the photo only while its panel is open; closing the panel hands the photo back (tool gestures, handles, hold-for-before, swipe)
     fun activeTabNow() = if (open) tab else ""
-    fun swipeAllowed() = modeNow == PhotoMode.NONE && zoomNow <= 1.01f && !(openNow && tabNow == "geometry") && gesturesNow(activeTabNow(), PhotoMapper(session, viewW, viewH)) == null
+    /**
+     * Decided once, at the first finger down (before any tool's own down handler can clear its state): sideways flicks change photo only
+     * when nothing else owns one finger. Any open tool (crop, masking, remove) keeps the flick, whatever page it is on.
+     */
+    fun swipeAllowedAtDown(): Boolean {
+        if (modeNow != PhotoMode.NONE || zoomNow > 1.01f) return false
+        if (openNow && (tabNow == "geometry" || extraTabsNow.any { it.id == tabNow })) return false
+        return gesturesNow(activeTabNow(), PhotoMapper(session, viewW, viewH)) == null
+    }
 
     val photoArea: @Composable (Modifier) -> Unit = { mod ->
         Box(mod.background(Lr.Black).onSizeChanged { viewW = it.width.toFloat(); viewH = it.height.toFloat() }) {
@@ -235,43 +252,53 @@ fun EditorScreen(
             if (!isCrop) {
                 Box(
                     Modifier.fillMaxSize()
-                        .pointerInput(ow, oh, mode) {
+                        // Hold for the original. Outside the tap handler on purpose: that one sees (and consumes) the lift first.
+                        .pointerInput(Unit) {
                             detectTapGestures(
-                                onDoubleTap = { p ->
-                                    if (zoom > 1.01f) { zoom = 1f; cx = .5f; cy = .5f } else {
-                                        val m = session.mapPoint(p.x, p.y, viewW, viewH)
-                                        val (z, x, y) = clampView(2.5f, m?.get(0) ?: .5f, m?.get(1) ?: .5f)
-                                        zoom = z; cx = x; cy = y
-                                    }
-                                    session.setView(zoom, cx, cy)
-                                },
                                 onPress = {
-                                    if (mode == PhotoMode.NONE && toolGestures(activeTabNow(), PhotoMapper(session, viewW, viewH)) == null) {
+                                    heldForBefore[0] = false
+                                    if (modeNow == PhotoMode.NONE && gesturesNow(activeTabNow(), PhotoMapper(session, viewW, viewH)) == null) {
                                         // hold for a moment to see the original; a quick tap or pinch start does nothing
                                         val released = kotlinx.coroutines.withTimeoutOrNull(350) { tryAwaitRelease() }
-                                        if (released == null) { session.setBefore(true); try { tryAwaitRelease() } finally { session.setBefore(false) } }
-                                    }
-                                },
-                                onTap = { p ->
-                                    if (mode == PhotoMode.NONE && !isCrop && openNow && !(tabNow == "light" && lightSubNow == "curve") && toolGestures(activeTabNow(), PhotoMapper(session, viewW, viewH)) == null) open = false
-                                    if (mode == PhotoMode.PICK_WB) {
-                                        val m = session.mapPoint(p.x, p.y, viewW, viewH) ?: return@detectTapGestures
-                                        scope.launch {
-                                            val rgb = session.sample(m[0], m[1]) ?: return@launch
-                                            val a = state.recipe.adjust
-                                            val (t, ti) = AutoTools.wbFromSample(rgb, a.temp, a.tint)
-                                            state.edit("White balance pick") { it.copy(adjust = it.adjust.copy(temp = t, tint = ti)) }
-                                            mode = PhotoMode.NONE
-                                        }
+                                        if (released == null) { heldForBefore[0] = true; session.setBefore(true); try { tryAwaitRelease() } finally { session.setBefore(false) } }
                                     }
                                 },
                             )
                         }
+                        // Taps fire the moment the finger lifts (no 300 ms wait for a possible second tap); a double tap zooms.
+                        .tapOrDoubleTapAt(
+                            onTap = { p ->
+                                tapClosed[0] = false
+                                if (heldForBefore[0]) return@tapOrDoubleTapAt
+                                if (modeNow == PhotoMode.NONE && !isCrop && openNow && !(tabNow == "light" && lightSubNow == "curve") && gesturesNow(activeTabNow(), PhotoMapper(session, viewW, viewH)) == null) { open = false; tapClosed[0] = true }
+                                if (modeNow == PhotoMode.PICK_WB) {
+                                    val m = session.mapPoint(p.x, p.y, viewW, viewH) ?: return@tapOrDoubleTapAt
+                                    scope.launch {
+                                        val rgb = session.sample(m[0], m[1]) ?: return@launch
+                                        val a = state.recipe.adjust
+                                        val (t, ti) = AutoTools.wbFromSample(rgb, a.temp, a.tint)
+                                        state.edit("White balance pick") { it.copy(adjust = it.adjust.copy(temp = t, tint = ti)) }
+                                        mode = PhotoMode.NONE
+                                    }
+                                }
+                            },
+                            onDoubleTap = { p ->
+                                if (tapClosed[0]) { open = true; tapClosed[0] = false }   // the first tap of this double tap closed the panel
+                                if (zoom > 1.01f) { zoom = 1f; cx = .5f; cy = .5f } else {
+                                    val m = session.mapPoint(p.x, p.y, viewW, viewH)
+                                    val (z, x, y) = clampView(2.5f, m?.get(0) ?: .5f, m?.get(1) ?: .5f)
+                                    zoom = z; cx = x; cy = y
+                                }
+                                session.setView(zoom, cx, cy)
+                            },
+                        )
                         // One finger swipe sideways = next / previous photo. Watches the raw events first and never consumes them,
                         // so nothing else on the photo can swallow it.
                         .pointerInput(Unit) {
                             awaitEachGesture {
                                 awaitFirstDown(requireUnconsumed = false, pass = androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                                val allowed = swipeAllowedAtDown()
+                                mainClaimed[0] = false
                                 var dx = 0f; var dy = 0f; var multi = false
                                 do {
                                     val ev = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
@@ -279,16 +306,16 @@ fun EditorScreen(
                                     ev.changes.firstOrNull()?.let { dx += it.position.x - it.previousPosition.x; dy += it.position.y - it.previousPosition.y }
                                 } while (ev.changes.any { it.pressed })
                                 val far = kotlin.math.abs(dx) > 90.dp.toPx() && kotlin.math.abs(dx) > 1.6f * kotlin.math.abs(dy)
-                                if (far && !multi && swipeAllowed()) onSwipePhoto(if (dx < 0) 1 else -1)
+                                if (far && !multi && allowed && !mainClaimed[0]) swipeNow(if (dx < 0) 1 else -1)
                             }
                         }
                         .pointerInput(ow, oh, mode) {
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false)
                                 var targetBand = -1
-                                val tool = toolGestures(activeTabNow(), PhotoMapper(session, viewW, viewH))
+                                val tool = gesturesNow(activeTabNow(), PhotoMapper(session, viewW, viewH))
                                 var toolClaimed = tool != null && mode == PhotoMode.NONE && tool.onDown(down.position)
-                                if (toolClaimed) down.consume()
+                                if (toolClaimed) { down.consume(); mainClaimed[0] = true }
                                 try {
                                 var swipeDx = 0f; var swipeDy = 0f; var multiSeen = false
                                 if (mode == PhotoMode.TARGET_MIXER) {
@@ -319,6 +346,7 @@ fun EditorScreen(
                                                 fun upd(l: List<Float>) = l.toMutableList().also { it[band] = (it[band] + delta).coerceIn(-100f, 100f) }
                                                 r.copy(adjust = when (mixMode) { 0 -> a.copy(mixHue = upd(a.mixHue)); 1 -> a.copy(mixSat = upd(a.mixSat)); else -> a.copy(mixLum = upd(a.mixLum)) })
                                             }
+                                            mainClaimed[0] = true
                                             ev.changes.forEach { it.consume() }
                                         }
                                     } else if (multi || zoom > 1.01f) {
@@ -329,6 +357,7 @@ fun EditorScreen(
                                         val (zz, x, y) = clampView(nz, cx - pan.x / (ow * s), cy - pan.y / (oh * s))
                                         zoom = zz; cx = x; cy = y
                                         session.setView(zoom, cx, cy)
+                                        mainClaimed[0] = true
                                         ev.changes.forEach { if (it.positionChanged()) it.consume() }
                                     }
                                 } while (ev.changes.any { it.pressed })
@@ -368,7 +397,7 @@ fun EditorScreen(
     var colourSub by rememberSaveable { mutableStateOf("basic") }
     var menu by remember { mutableStateOf(false) }
 
-    val autoLevel: (() -> Unit)? = placeholder?.let { b -> { val a = AutoTools.autoLevel(b); state.edit("Auto level") { it.withStraighten(a, session.baseAspect()) } } }
+    val autoLevel: (() -> Unit)? = placeholder?.let { b -> { val a = AutoTools.autoLevel(b); state.edit("Auto level") { it.withStraighten(a, session.baseAspect(), lens = session.cropLens(it)) } } }
     val autoPerspective: (() -> Unit)? = placeholder?.let { b -> { val (v, h) = AutoTools.autoPerspective(b); state.edit("Auto perspective") { it.copy(geometry = it.geometry.copy(keystoneV = v, keystoneH = h)) } } }
 
     val panelBody: @Composable (String) -> Unit = { tab ->
@@ -415,12 +444,13 @@ fun EditorScreen(
     // Landscape: the tool controls sit in a side column so the photo keeps the full height; portrait stacks them under the photo.
     val landscape = config.screenWidthDp > config.screenHeightDp
     // A portrait photo would shrink to a sliver above a full-height tray, so there the edit tray floats over the photo, see-through.
-    val overlayTray = inEdit && oh > ow && !landscape
+    // The tone curve graph is drawn over the photo, so it never sits under the floating tray: there the photo shrinks above a stacked tray.
+    val overlayTray = inEdit && oh > ow && !landscape && !(tab == "light" && lightSub == "curve")
     // never let the tray take more than about 40 percent of the screen height
     val trayCap = (config.screenHeightDp * 0.40f).dp
     val tray: @Composable (Float) -> Unit = { alpha ->
         Box(
-            Modifier.fillMaxWidth().background(Lr.Surface2.copy(alpha = alpha)).then(
+            Modifier.fillMaxWidth().background(Lr.Surface2.copy(alpha = alpha)).blockPointerInput().then(
                 if (landscape) Modifier.fillMaxHeight()
                 else if (inEdit) Modifier.heightIn(max = minOf(if (alpha < 1f) 250.dp else 270.dp, trayCap))
                 else Modifier.height(minOf(300.dp, trayCap)),
@@ -438,11 +468,35 @@ fun EditorScreen(
             ) { t -> panelBody(t) }
         }
     }
-    var entryGeo by remember { mutableStateOf(state.recipe.geometry) }
-    LaunchedEffect(isCrop) { if (isCrop) entryGeo = state.recipe.geometry }
-    val cancelCrop = { state.edit("Cancel crop") { it.copy(geometry = entryGeo) }; open = false }
+    // What the crop tool started from. Saved across a rotation; cancelling steps back to that history entry (no new entry when unchanged).
+    var entryGeo by rememberSaveable(stateSaver = GeometrySaver) { mutableStateOf(state.recipe.geometry) }
+    var entryIndex by rememberSaveable { mutableIntStateOf(state.historyIndex) }
+    var cropEntered by rememberSaveable { mutableStateOf(false) }
+    val cropCancelled = remember { BooleanArray(1) }
+    LaunchedEffect(isCrop) {
+        if (isCrop) {
+            if (!cropEntered) { entryGeo = state.recipe.geometry; entryIndex = state.historyIndex; cropEntered = true; cropCancelled[0] = false }
+        } else if (cropEntered) {
+            cropEntered = false
+            // leaving by Done (or any tool switch): store the crop that is actually rendered, so a later reader of the recipe sees the same box
+            if (!cropCancelled[0] && ss.stage == Stage.READY) {
+                fun fitted(r: EditRecipe) = fitStoredCrop(r.geometry, r.optics, session.orientationValue, session.sourceWidth, session.sourceHeight, session.cropLens(r))
+                if (fitted(state.recipe) !== state.recipe.geometry) state.edit("Fit crop") { it.copy(geometry = fitted(it)) }
+            }
+            cropCancelled[0] = false
+        }
+    }
+    val cancelCrop = {
+        cropCancelled[0] = true
+        state.apply(planCropCancel(state.history.map { it.recipe }, state.historyIndex, state.recipe, entryIndex, entryGeo))
+        open = false
+    }
+    // closing a panel puts its sub views back to their first page
+    LaunchedEffect(open) { if (!open) { lightSub = "basic"; cropSub = "crop" } }
     androidx.activity.compose.BackHandler(enabled = open) {
-        if (isCrop) cancelCrop() else open = false
+        if (isCrop) cancelCrop()
+        else if (tab == "light" && lightSub == "curve") lightSub = "basic"
+        else open = false
     }
     fun selectMode(t: Tool) {
         mode = PhotoMode.NONE
@@ -530,7 +584,7 @@ fun EditorScreen(
             ) { tray(0.8f) }
             // ---- idle dock ----
             FlatVisibility(
-                !open, Modifier.align(Alignment.BottomCenter).padding(bottom = 8.dp),
+                !open, Modifier.align(Alignment.BottomCenter).padding(bottom = 8.dp).blockPointerInput(),
                 enter = fadeIn(tween(LrMotion.normal, easing = LrMotion.enter)), exit = fadeOut(tween(LrMotion.instant)),
             ) { FloatingMasterDock(modes, { selectMode(it) }) }
     }
@@ -579,7 +633,7 @@ private fun AutoPanel(state: EditorState, session: app.rawline.core.render.Edito
         scope.launch { session.baseStats()?.let { s -> val (t, ti) = AutoTools.autoWb(s); state.edit("Auto white balance") { r -> r.copy(adjust = r.adjust.copy(temp = t, tint = ti)) } } }
     }
     Action(LrIcon.CROP, "Auto level", "Straighten the horizon") {
-        placeholder?.let { b -> val a = AutoTools.autoLevel(b); state.edit("Auto level") { it.withStraighten(a, session.baseAspect()) } }
+        placeholder?.let { b -> val a = AutoTools.autoLevel(b); state.edit("Auto level") { it.withStraighten(a, session.baseAspect(), lens = session.cropLens(it)) } }
     }
     Action(LrIcon.GEOMETRY, "Auto perspective", "Correct converging lines") {
         placeholder?.let { b -> val (v, h) = AutoTools.autoPerspective(b); state.edit("Auto perspective") { it.copy(geometry = it.geometry.copy(keystoneV = v, keystoneH = h)) } }

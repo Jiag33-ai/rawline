@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateListOf
 import app.rawline.core.model.EditRecipe
+import app.rawline.core.model.Geometry
 import app.rawline.core.render.EditorSession
 
 data class HistoryEntry(val label: String, val recipe: EditRecipe)
@@ -58,8 +59,50 @@ class EditorState(
         onSave(recipe)
     }
 
+    /** Carries out a [planCropCancel] result. */
+    fun apply(plan: CropCancelPlan) {
+        when (plan) {
+            CropCancelPlan.Nothing -> {}
+            is CropCancelPlan.Jump -> jump(plan.index)
+            is CropCancelPlan.Live -> live { plan.recipe }
+            is CropCancelPlan.Edit -> edit("Cancel crop") { it.copy(geometry = plan.geometry) }
+        }
+    }
+
     fun reset() { edit("Reset") { EditRecipe() } }
 
     fun addSnapshot(id: Long, name: String) { snapshots.add(0, Snapshot(id, name, recipe)) }
     fun applySnapshot(s: Snapshot) { edit("Snapshot ${s.name}") { s.recipe } }
 }
+
+/** What cancelling the crop tool has to do to put the picture back as it was on entry. */
+sealed interface CropCancelPlan {
+    object Nothing : CropCancelPlan
+    /** Step back along the history to the entry (later steps stay as redo). Adds no entry. */
+    data class Jump(val index: Int) : CropCancelPlan
+    /** Uncommitted live change only: restore the recipe without a history entry. */
+    data class Live(val recipe: EditRecipe) : CropCancelPlan
+    /** The entry is no longer in the history (the editor was rebuilt, for instance by a rotation): write the saved geometry back. */
+    data class Edit(val geometry: Geometry) : CropCancelPlan
+}
+
+/**
+ * Cancel crop: back to the history entry that was current on entry ([entryIndex], checked against [entryGeo] because the history can
+ * be rebuilt or trimmed), and never a new history entry when nothing changed.
+ */
+fun planCropCancel(history: List<EditRecipe>, historyIndex: Int, recipe: EditRecipe, entryIndex: Int, entryGeo: Geometry): CropCancelPlan {
+    if (entryIndex in history.indices && history[entryIndex].geometry == entryGeo) {
+        return when {
+            historyIndex != entryIndex -> CropCancelPlan.Jump(entryIndex)
+            recipe != history[entryIndex] -> CropCancelPlan.Live(history[entryIndex])
+            else -> CropCancelPlan.Nothing
+        }
+    }
+    return if (recipe.geometry == entryGeo) CropCancelPlan.Nothing else CropCancelPlan.Edit(entryGeo)
+}
+
+/** Saves a [Geometry] across a rotation (the activity is recreated). */
+val GeometrySaver = androidx.compose.runtime.saveable.Saver<Geometry, List<Any>>(
+    save = { g -> listOf(g.cropX, g.cropY, g.cropW, g.cropH, g.angle, g.rotate90, g.flipH, g.flipV, g.keystoneV, g.keystoneH, g.aspect) },
+    restore = { l -> Geometry(l[0] as Float, l[1] as Float, l[2] as Float, l[3] as Float, l[4] as Float, l[5] as Int, l[6] as Boolean, l[7] as Boolean, l[8] as Float, l[9] as Float, l[10] as String) },
+)
