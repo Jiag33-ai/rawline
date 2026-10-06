@@ -9,7 +9,11 @@ android {
     namespace = "app.rawline.core.data"
     compileSdk = 37
     defaultConfig { minSdk = 31 }
-    testOptions { unitTests.isReturnDefaultValues = true }
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+        // the DNG probe tests read the 8 KB heads of synthetic DNGs (W15)
+        unitTests.all { it.systemProperty("imp.dir", file("src/test/resources/dng").path) }
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

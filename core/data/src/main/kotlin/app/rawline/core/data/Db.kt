@@ -111,6 +111,9 @@ interface PhotoDao {
         COALESCE(SUM(CASE WHEN indexed = 1 AND width = 0 THEN 1 ELSE 0 END), 0) AS noPreview, COALESCE(SUM(edited), 0) AS edited FROM photos""")
     suspend fun counts(): LibraryCounts
 
+    /** The newest DNG files in the library, for the Copy report's compression probe (W15). */
+    @Query("SELECT * FROM photos WHERE name LIKE '%.dng' ORDER BY modified DESC, id DESC LIMIT :n") suspend fun newestDng(n: Int): List<PhotoEntity>
+
     /** BK-498: how many RAW photos the library holds, as a live count and as a one off read. */
     @Query("SELECT COUNT(*) FROM photos WHERE isRaw = 1") fun rawCount(): Flow<Int>
     @Query("SELECT COUNT(*) FROM photos WHERE isRaw = 1") suspend fun rawCountNow(): Int
