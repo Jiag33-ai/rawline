@@ -40,7 +40,8 @@ LAYERS = [  # name, builder, x, y, scale, opacity, mode
     ("screen", screen_layer, 90, 50, 1.5, 0.6, 2),
     ("normal", normal_layer, 10, 120, 1.0, 1.0, 0),
 ]
-VIEWS = {"a": (0.0, 0.0, 1.0, 256, 192), "b": (64.0, 48.0, 2.0, 256, 192), "c": (-20.0, -10.0, 1.0, 200, 150)}
+VIEWS = {"a": (0.0, 0.0, 1.0, 256, 192), "b": (64.0, 48.0, 2.0, 256, 192), "c": (-20.0, -10.0, 1.0, 200, 150),
+         "band1": (0.0, 0.0, 1.0, 256, 96), "band2": (0.0, 96.0, 1.0, 256, 96)}   # band1 and band2 are the strips of a flatten export: stitched they must equal view a EXACTLY
 
 def make(d):
     os.makedirs(d, exist_ok=True)
@@ -67,6 +68,11 @@ def compare(d, tol=1):
         ok = worst <= tol
         print("%s  studio_blend3 view %s (zoom %g): worst %d level(s), %d of %d values differ  (tolerance %d)" % ("PASS" if ok else "FAIL", key, z, worst, off, len(exp), tol))
         fails += 0 if ok else 1
+    a = open(os.path.join(d, "out_a.rgba"), "rb").read()
+    stitched = open(os.path.join(d, "out_band1.rgba"), "rb").read() + open(os.path.join(d, "out_band2.rgba"), "rb").read()
+    same = stitched == a
+    print("%s  studio_blend3 flatten strips stitched equal the whole render byte for byte" % ("PASS" if same else "FAIL"))
+    fails += 0 if same else 1
     return fails
 
 def small(path):

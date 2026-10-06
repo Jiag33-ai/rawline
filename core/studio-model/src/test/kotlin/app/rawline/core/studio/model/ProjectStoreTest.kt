@@ -19,6 +19,9 @@ open class MemFs : Fs {
     override fun rename(from: String, to: String) { files[to] = files.remove(from) ?: throw IllegalStateException("no $from") }
     override fun delete(path: String) { files.remove(path) }
     override fun list(dir: String) = files.keys.filter { it.startsWith("$dir/") && !it.substring(dir.length + 1).contains('/') }.map { it.substring(dir.length + 1) }
+    override fun dirs(dir: String) = files.keys.filter { it.startsWith("$dir/") && it.substring(dir.length + 1).contains('/') }.map { it.substring(dir.length + 1).substringBefore('/') }.distinct()
+    override fun size(path: String) = files[path]?.size?.toLong() ?: 0L
+    override fun deleteTree(path: String) { files.keys.removeAll { it == path || it.startsWith("$path/") } }
 }
 
 class Crash : RuntimeException("simulated kill")

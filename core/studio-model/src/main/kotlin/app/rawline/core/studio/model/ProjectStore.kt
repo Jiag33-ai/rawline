@@ -16,6 +16,12 @@ interface Fs {
     fun delete(path: String)
     /** File names (not paths) directly inside [dir]. */
     fun list(dir: String): List<String>
+    /** Names of the sub directories directly inside [dir]. */
+    fun dirs(dir: String): List<String>
+    /** Size in bytes, 0 when missing. */
+    fun size(path: String): Long
+    /** Deletes [path] and everything under it. */
+    fun deleteTree(path: String)
 }
 
 /** Straight RGBA8 pixels of one layer. */

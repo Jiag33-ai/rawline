@@ -9,7 +9,7 @@ mkdir -p "$W"
 cmake -DSHADER_DIR="$C/shaders" -DOUT="$W/shader_sources.h" -P "$C/gen_shaders.cmake"
 g++ -O1 -std=c++17 -I"$W" -I"$C" "$ROOT/tools/golden/studio_golden.cpp" "$C/studio/studio_compositor.cpp" -lEGL -lGLESv2 -o "$W/studio_golden"
 python3 "$ROOT/tools/studio/studio_scene.py" make "$W"
-for k in a b c; do "$W/studio_golden" "$W/scene_$k.txt" "$W/out_$k.rgba"; done
+for k in a b c band1 band2; do "$W/studio_golden" "$W/scene_$k.txt" "$W/out_$k.rgba"; done
 python3 "$ROOT/tools/studio/studio_scene.py" compare "$W"
 
 # S1b: the live stroke (stamps into the R16F stroke buffer, shown through the compositor) against the Python reference that bakes the stroke

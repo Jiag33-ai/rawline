@@ -23,5 +23,8 @@ class JavaFs(private val base: File) : Fs {
     }
 
     override fun delete(path: String) { f(path).delete() }
-    override fun list(dir: String): List<String> = f(dir).list()?.toList() ?: emptyList()
+    override fun list(dir: String): List<String> = f(dir).listFiles()?.filter { it.isFile }?.map { it.name } ?: emptyList()
+    override fun dirs(dir: String): List<String> = f(dir).listFiles()?.filter { it.isDirectory }?.map { it.name } ?: emptyList()
+    override fun size(path: String): Long = f(path).takeIf { it.isFile }?.length() ?: 0L
+    override fun deleteTree(path: String) { f(path).deleteRecursively() }
 }
