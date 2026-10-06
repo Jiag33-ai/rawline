@@ -36,7 +36,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${SHADER_FILES})
 execute_process(COMMAND ${CMAKE_COMMAND} -DSHADER_DIR=${CMAKE_CURRENT_SOURCE_DIR}/shaders -DOUT=${SHADER_HEADER}
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/gen_shaders.cmake)
 
-add_library(rawline_jni SHARED jni_bridge.cpp jni_engine.cpp rw2_preview.cpp raw_decode.cpp engine/engine.cpp)
+add_library(rawline_jni SHARED jni_bridge.cpp jni_engine.cpp jni_studio.cpp rw2_preview.cpp raw_decode.cpp engine/engine.cpp studio/studio_compositor.cpp)
 target_include_directories(rawline_jni PRIVATE ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_options(rawline_jni PRIVATE -O2)
 target_link_libraries(rawline_jni PRIVATE raw GLESv3 EGL android log jnigraphics)

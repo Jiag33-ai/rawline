@@ -126,4 +126,6 @@ CE="$ROOT/core/native/src/main/cpp"
 g++ -O1 -std=c++17 -I/tmp/golden -I"$CE" -I"$CE/engine" "$ROOT/tools/golden/engine_test.cpp" "$CE/engine/engine.cpp" -lEGL -lGLESv2 -o /tmp/golden/engine_test && /tmp/golden/engine_test || fail=1
 # Host test for the embedded preview finder (AE-039, AE-053), including the real sample RAW
 g++ -O1 -std=c++17 -I"$CE" "$ROOT/tools/golden/preview_test.cpp" "$CE/rw2_preview.cpp" -o /tmp/golden/preview_test && /tmp/golden/preview_test "$SAMPLE" || fail=1
+# Studio compositor golden (studio_blend3): the real Studio shader on Mesa against the independent Python reference
+"$ROOT/tools/golden/studio-golden.sh" || fail=1
 exit $fail
