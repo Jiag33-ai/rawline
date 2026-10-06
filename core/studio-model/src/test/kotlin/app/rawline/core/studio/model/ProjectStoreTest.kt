@@ -97,7 +97,7 @@ class ProjectStoreTest {
     @Test fun aNewerSchemaIsNeverOpenedAsAFallback() {
         val fs = MemFs(); val store = ProjectStore(fs, root)
         store.save(doc("a"), { px(1) }, setOf("a"))
-        fs.files["$root/project.json"] = String(fs.files["$root/project.json"]!!).replace("\"schemaVersion\": 1", "\"schemaVersion\": 9").toByteArray()
+        fs.files["$root/project.json"] = String(fs.files["$root/project.json"]!!).replace("\"schemaVersion\": 2", "\"schemaVersion\": 9").toByteArray()
         try { ProjectStore(fs, root).open(); fail() } catch (e: NewerSchemaException) { assertEquals(9, e.version) }
     }
 

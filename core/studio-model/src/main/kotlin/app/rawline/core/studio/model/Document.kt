@@ -5,6 +5,12 @@ enum class ColourSpace(val key: String) { SRGB("srgb"), DISPLAY_P3("display-p3")
 /** GAMMA runs the blend formulas on sRGB encoded values (what Photoshop users expect); LINEAR runs them on linear light. */
 enum class BlendSpace(val key: String) { GAMMA("gamma"), LINEAR("linear") }
 
+/** A layer mask (schema v2): 8 bit tiles in [dir] (`mask/<layerId>`, absent tile = 0 = hidden), in the layer's own coordinates. White reveals, black hides. [inverted] and [enabled] are flags, never a rewrite of tiles. */
+data class MaskRef(val dir: String, val enabled: Boolean = true, val inverted: Boolean = false, val linked: Boolean = true)
+
+/** The saved selection (schema v2): 8 bit tiles in [dir], full canvas. Absent from the document means no selection. */
+data class SelectionRef(val dir: String = "sel")
+
 /**
  * What every layer has (spec 2.1, the S1 subset). Pixels live outside the model: [pixelsFile] names the lossless pixel container file (PixelContainer, decision D1 of S1b) of a pixel
  * layer inside the project directory, or is null for a layer that is still fully transparent. Position and size on the canvas
@@ -22,6 +28,10 @@ data class LayerCommon(
     val x: Int = 0,
     val y: Int = 0,
     val scale: Float = 1f,
+    /** Schema v2: the layer mask, or null. */
+    val mask: MaskRef? = null,
+    /** Schema v2: where the layer came from ("develop" for Open in Studio), kept in the JSON only. Null for a layer made in Studio. */
+    val origin: String? = null,
 )
 
 /** Layer kinds. S1 has pixel layers only; the sealed type is here so S3 onward adds kinds without touching callers that `when` over it. */
@@ -48,6 +58,8 @@ data class Document(
     val layers: List<Layer> = emptyList(),
     val created: Long = 0L,
     val modified: Long = 0L,
+    /** Schema v2: the saved selection, or null for none. */
+    val selection: SelectionRef? = null,
 ) {
     init {
         require(width in 1..MAX_EDGE && height in 1..MAX_EDGE) { "canvas ${width}x$height is outside 1..$MAX_EDGE" }
@@ -92,7 +104,8 @@ object LayerOps {
         val i = d.indexOf(id)
         require(i >= 0) { "no layer $id" }
         val src = d.layers[i]
-        val copy = src.with(src.common.copy(id = newId, name = src.common.name + " copy"))
+        // a mask is edited in place, so the copy gets its own directory (the caller copies the tiles, ProjectStore.copyTiles)
+        val copy = src.with(src.common.copy(id = newId, name = src.common.name + " copy", mask = src.common.mask?.copy(dir = maskDir(newId))))
         return add(d, copy, i + 1)
     }
 
@@ -105,6 +118,18 @@ object LayerOps {
         list.add(to.coerceIn(0, list.size), l)
         return d.copy(layers = list)
     }
+
+    fun maskDir(layerId: String) = "mask/$layerId"
+    /** Adds a mask to a layer that has none (its tiles are written by the caller). */
+    fun addMask(d: Document, id: String): Document {
+        require(d.layer(id)?.common?.mask == null) { "That layer already has a mask." }
+        return edit(d, id) { it.copy(mask = MaskRef(maskDir(id))) }
+    }
+    fun deleteMask(d: Document, id: String) = edit(d, id) { it.copy(mask = null) }
+    fun setMaskEnabled(d: Document, id: String, enabled: Boolean) = editMask(d, id) { it.copy(enabled = enabled) }
+    fun setMaskInverted(d: Document, id: String, inverted: Boolean) = editMask(d, id) { it.copy(inverted = inverted) }
+    private fun editMask(d: Document, id: String, f: (MaskRef) -> MaskRef) = edit(d, id) { c -> c.copy(mask = f(requireNotNull(c.mask) { "That layer has no mask." })) }
+    fun setSelection(d: Document, sel: SelectionRef?) = d.copy(selection = sel)
 
     fun setVisible(d: Document, id: String, visible: Boolean) = edit(d, id) { it.copy(visible = visible) }
     fun setLocked(d: Document, id: String, locked: Boolean) = edit(d, id) { it.copy(locked = locked) }

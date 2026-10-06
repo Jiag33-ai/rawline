@@ -139,6 +139,42 @@ class ProjectStore(private val fs: Fs, private val root: String, private val app
         throw firstError ?: ProjectFormatException("There is no project here.")
     }
 
+    /**
+     * Schema v2 tile directories (`mask/<layerId>`, `sel`), tiles named `t_<tx>_<ty>`. [tiles] holds raw bytes per touched tile; null (or all zero) deletes the file,
+     * because an absent tile is zero. Each tile is written `.part` then renamed, so a tile file is never torn. Tiles are rewritten in place before the JSON that
+     * names them is committed: a kill between the two can leave some tiles of the last edit applied and some not, never a damaged tile and never an unopenable project.
+     */
+    fun saveTiles(dir: String, tiles: Map<TileKey, ByteArray?>) {
+        for ((k, raw) in tiles) {
+            val path = "$root/$dir/${TileGrid.name(k)}"
+            if (raw == null || raw.all { it == 0.toByte() }) { if (fs.exists(path)) fs.delete(path); continue }
+            fs.write("$path.part", TileCodec.encode(raw))
+            fs.rename("$path.part", path)
+        }
+    }
+
+    /** Reads a whole tile directory into an in memory plane. A tile that is damaged or the wrong size is skipped (it reads as zero) and counted in [damaged]. */
+    fun loadPlane(dir: String, w: Int, h: Int, damaged: IntArray? = null): TilePlane {
+        val p = TilePlane(w, h)
+        for (n in fs.list("$root/$dir")) {
+            val m = TILE_NAME.matchEntire(n) ?: continue
+            val k = TileKey(m.groupValues[1].toInt(), m.groupValues[2].toInt())
+            val r = TileGrid.rectOf(k, w, h)
+            if (r.empty) continue
+            try { p.putTile(k, TileCodec.decode(fs.read("$root/$dir/$n") ?: continue, r.w * r.h)) } catch (e: Exception) { if (damaged != null) damaged[0]++ }
+        }
+        return p
+    }
+
+    /** Copies every tile file of [from] into [to] (duplicate layer). */
+    fun copyTiles(from: String, to: String) {
+        for (n in fs.list("$root/$from")) {
+            if (!TILE_NAME.matches(n)) continue
+            val b = fs.read("$root/$from/$n") ?: continue
+            fs.write("$root/$to/$n.part", b); fs.rename("$root/$to/$n.part", "$root/$to/$n")
+        }
+    }
+
     /** The pixels of a layer, or null for a layer that is still transparent. */
     fun load(layer: Layer.Pixel): RawPixels? {
         val f = layer.pixelsFile ?: return null
@@ -157,7 +193,25 @@ class ProjectStore(private val fs: Fs, private val root: String, private val app
         fs.read(jsonBak)?.let { b -> try { ProjectJson.read(String(b, Charsets.UTF_8)).layers.forEach { l -> (l as? Layer.Pixel)?.pixelsFile?.let { keep += it.substringAfter("layers/") } } } catch (e: Exception) { /* an unreadable .bak refers to nothing */ } }
         for (n in fs.list("$root/layers")) if (n !in keep) fs.delete("$root/layers/$n")
         if (fs.exists("$json.tmp")) fs.delete("$json.tmp")
+        collectTiles(current)
     }
+
+    /** Tile directories neither generation names are deleted, after the JSON that dropped them is committed (the same rule as hashed layer files). `.part` files are always stray. */
+    private fun collectTiles(current: Document) {
+        val keep = HashSet<String>()
+        fun note(d: Document) { d.layers.forEach { l -> l.common.mask?.let { keep += it.dir } }; d.selection?.let { keep += it.dir } }
+        note(current)
+        fs.read(jsonBak)?.let { b -> try { note(ProjectJson.read(String(b, Charsets.UTF_8))) } catch (e: Exception) { /* an unreadable .bak refers to nothing */ } }
+        val dirs = ArrayList<String>()
+        for (n in fs.dirs("$root/mask")) dirs += "mask/$n"
+        if (fs.list("$root/sel").isNotEmpty()) dirs += "sel"
+        for (d in dirs) {
+            if (d in keep) { for (n in fs.list("$root/$d")) if (n.endsWith(".part")) fs.delete("$root/$d/$n") }
+            else { for (n in fs.list("$root/$d")) fs.delete("$root/$d/$n"); fs.deleteTree("$root/$d") }
+        }
+    }
+
+    private companion object { val TILE_NAME = Regex("t_(\\d+)_(\\d+)") }
 
     private fun hash12(b: ByteArray): String = MessageDigest.getInstance("SHA-1").digest(b).joinToString("") { "%02x".format(it) }.take(12)
 }

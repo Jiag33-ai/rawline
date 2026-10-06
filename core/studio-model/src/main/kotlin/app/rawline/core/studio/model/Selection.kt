@@ -62,7 +62,7 @@ object TileCodec {
 /** Tiles of one 8-bit plane (mask or selection), write-through to a directory with .part then rename. Sparse: missing = 0. */
 class TilePlane(val w: Int, val h: Int, private val dir: File? = null, private val cacheTiles: Int = 64) {
     private val cache = object : LinkedHashMap<TileKey, ByteArray>(16, 0.75f, true) {
-        override fun removeEldestEntry(e: MutableMap.MutableEntry<TileKey, ByteArray>) = size > cacheTiles && !dirty.contains(e.key)
+        override fun removeEldestEntry(e: MutableMap.MutableEntry<TileKey, ByteArray>) = dir != null && size > cacheTiles && !dirty.contains(e.key)
     }
     private val dirty = HashSet<TileKey>()
     val cached get() = cache.size
@@ -98,6 +98,19 @@ class TilePlane(val w: Int, val h: Int, private val dir: File? = null, private v
         dirty.clear()
         while (cache.size > cacheTiles) { val it = cache.keys.iterator(); it.next(); it.remove() }
     }
+    /** Puts a decoded tile in without marking it dirty (loading from a store that is not a [File] directory). Edge tiles are stored at their clipped size. */
+    fun putTile(k: TileKey, raw: ByteArray) { val r = TileGrid.rectOf(k, w, h); require(raw.size == r.w * r.h) { "tile ${TileGrid.name(k)} is ${raw.size} bytes, expected ${r.w * r.h}" }; cache[k] = raw }
+
+    /** For a plane with no directory: the tiles changed since the last call, raw bytes (a copy), or null for a tile that became all zero. Clears the dirty set. */
+    fun takeDirty(): Map<TileKey, ByteArray?> {
+        val out = LinkedHashMap<TileKey, ByteArray?>()
+        for (k in dirty.toList().sortedWith(compareBy({ it.ty }, { it.tx }))) { val t = cache[k]; out[k] = if (t == null || t.all { it == 0.toByte() }) null else t.copyOf() }
+        dirty.clear(); return out
+    }
+
+    /** Raw bytes of every non-zero tile held in memory (a plane with no directory holds all of them). */
+    fun allTiles(): Map<TileKey, ByteArray> = cache.filterValues { t -> t.any { it != 0.toByte() } }.mapValues { it.value.copyOf() }
+
     fun toBytes(): ByteArray { val o = ByteArray(w * h); for (y in 0 until h) for (x in 0 until w) o[y * w + x] = get(x, y).toByte(); return o }
 }
 

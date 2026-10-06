@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 2,
+  "appVersion": "0.1.140",
+  "id": "p2",
+  "name": "Sample v2",
+  "created": 1759800000000,
+  "modified": 1759800100000,
+  "canvas": {"width": 1200, "height": 800},
+  "colourSpace": "srgb",
+  "blendSpace": "gamma",
+  "selection": {"dir": "sel"},
+  "layers": [
+    {"kind": "pixel", "id": "bg", "name": "Photo", "visible": true, "locked": false, "opacity": 100, "blend": "normal", "x": 0, "y": 0, "scale": 1.0, "width": 1200, "height": 800, "pixels": "layers/bg-0123456789ab.rlpx", "origin": "develop"},
+    {"kind": "pixel", "id": "paint", "name": "Paint", "visible": true, "locked": false, "opacity": 80, "blend": "multiply", "x": 0, "y": 0, "scale": 1.0, "width": 1200, "height": 800, "pixels": null, "mask": {"dir": "mask/paint", "enabled": false, "inverted": true, "linked": true}, "alsoIgnored": 3}
+  ]
+}

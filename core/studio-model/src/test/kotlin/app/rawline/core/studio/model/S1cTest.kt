@@ -67,7 +67,7 @@ class CatalogTest {
     @Test fun aDamagedOrNewerProjectIsReportedAndTheRestStillList() {
         val fs = MemFs(); make(fs, "a", "Good", 10); make(fs, "bad", "Bad", 5); make(fs, "newer", "Newer", 6)
         fs.files.keys.filter { it.startsWith("$root/bad/") }.forEach { fs.files[it] = "x".toByteArray() }
-        fs.files["$root/newer/project.json"] = String(fs.files["$root/newer/project.json"]!!).replace("\"schemaVersion\": 1", "\"schemaVersion\": 3").toByteArray()
+        fs.files["$root/newer/project.json"] = String(fs.files["$root/newer/project.json"]!!).replace("\"schemaVersion\": 2", "\"schemaVersion\": 3").toByteArray()
         val r = ProjectCatalog.scan(fs)
         assertEquals(listOf("a"), r.rows.map { it.id }); assertEquals(setOf("bad", "newer"), r.damaged.toSet())
     }

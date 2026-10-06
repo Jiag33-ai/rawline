@@ -11,14 +11,14 @@ class ProjectFormatException(message: String, cause: Throwable? = null) : Except
 class NewerSchemaException(val version: Int) : Exception("This project was made by a newer version of Rawline (format $version).")
 
 /**
- * project.json, schema version 1 (spec 2.15, S1 subset: one lossless pixel container file per pixel layer instead of tiles).
+ * project.json, schema version 2 (spec 2.15, S1 subset: one lossless pixel container file per pixel layer instead of tiles).
  *
  * Rules that keep old files readable: readers ignore unknown keys; writers always write `schemaVersion`; a changed meaning needs a
  * new version and a migration `v(n) -> v(n+1)` in [Migrations] with a test over a stored sample file. The writer is hand rolled so
  * the key order is stable (a diff of two saves shows only what changed) and the output does not depend on the JSON library.
  */
 object ProjectJson {
-    const val SCHEMA_VERSION = 1
+    const val SCHEMA_VERSION = 2
 
     fun write(d: Document, appVersion: String): String {
         val sb = StringBuilder(512 + d.layers.size * 256)
@@ -32,6 +32,7 @@ object ProjectJson {
         sb.append("  \"canvas\": {\"width\": ").append(d.width).append(", \"height\": ").append(d.height).append("},\n")
         sb.append("  \"colourSpace\": ").append(q(d.colourSpace.key)).append(",\n")
         sb.append("  \"blendSpace\": ").append(q(d.blendSpace.key)).append(",\n")
+        d.selection?.let { sb.append("  \"selection\": {\"dir\": ").append(q(it.dir)).append("},\n") }
         sb.append("  \"layers\": [")
         d.layers.forEachIndexed { i, l ->
             sb.append(if (i == 0) "\n" else ",\n")
@@ -43,7 +44,10 @@ object ProjectJson {
                     sb.append(", \"opacity\": ").append(c.opacity).append(", \"blend\": ").append(q(c.blend.key))
                     sb.append(", \"x\": ").append(c.x).append(", \"y\": ").append(c.y).append(", \"scale\": ").append(c.scale)
                     sb.append(", \"width\": ").append(l.width).append(", \"height\": ").append(l.height)
-                    sb.append(", \"pixels\": ").append(if (l.pixelsFile == null) "null" else q(l.pixelsFile)).append("}")
+                    sb.append(", \"pixels\": ").append(if (l.pixelsFile == null) "null" else q(l.pixelsFile))
+                    c.mask?.let { sb.append(", \"mask\": {\"dir\": ").append(q(it.dir)).append(", \"enabled\": ").append(it.enabled).append(", \"inverted\": ").append(it.inverted).append(", \"linked\": ").append(it.linked).append("}") }
+                    c.origin?.let { sb.append(", \"origin\": ").append(q(it)) }
+                    sb.append("}")
                 }
             }
         }
@@ -65,6 +69,7 @@ object ProjectJson {
                 colourSpace = ColourSpace.entries.firstOrNull { it.key == root.optString("colourSpace") } ?: throw ProjectFormatException("unknown colour space"),
                 blendSpace = BlendSpace.entries.firstOrNull { it.key == root.optString("blendSpace") } ?: throw ProjectFormatException("unknown blend space"),
                 layers = list, created = root.optLong("created", 0L), modified = root.optLong("modified", 0L),
+                selection = root.optJSONObject("selection")?.let { SelectionRef(safeDir(it.getString("dir"))) },
             )
         } catch (e: JSONException) {
             throw ProjectFormatException("The project file is damaged (${e.message}).", e)
@@ -82,8 +87,16 @@ object ProjectJson {
             opacity = o.optInt("opacity", 100).coerceIn(0, 100),
             blend = BlendMode.fromKey(o.optString("blend", "normal")) ?: throw ProjectFormatException("unknown blend mode \"${o.optString("blend")}\""),
             x = o.optInt("x", 0), y = o.optInt("y", 0), scale = o.optDouble("scale", 1.0).toFloat().coerceIn(0.25f, 4f),
+            mask = o.optJSONObject("mask")?.let { MaskRef(safeDir(it.getString("dir")), it.optBoolean("enabled", true), it.optBoolean("inverted", false), it.optBoolean("linked", true)) },
+            origin = if (o.isNull("origin")) null else o.optString("origin").ifEmpty { null },
         )
         return Layer.Pixel(common, o.getInt("width"), o.getInt("height"), if (o.isNull("pixels")) null else o.getString("pixels"))
+    }
+
+    /** A tile directory is a relative path under the project folder; anything that could leave it is refused. */
+    private fun safeDir(d: String): String {
+        if (d.isEmpty() || d.startsWith("/") || d.split('/').any { it == ".." || it.isEmpty() }) throw ProjectFormatException("unsafe tile directory \"$d\"")
+        return d
     }
 
     private fun q(s: String) = JSONObject.quote(s)
@@ -100,6 +113,9 @@ object Migrations {
         return cur
     }
 
-    /** Index n holds the step from version n to n+1. Empty while version 1 is current. */
-    private val steps: Map<Int, (JSONObject) -> JSONObject> = emptyMap()
+    /** Version 1 to 2: masks, the saved selection and `origin` are new optional keys, so only the number changes (v1 files have none of them). */
+    fun v1ToV2(root: JSONObject): JSONObject = root.put("schemaVersion", 2)
+
+    /** Index n holds the step from version n to n+1. */
+    private val steps: Map<Int, (JSONObject) -> JSONObject> = mapOf(1 to ::v1ToV2)
 }
