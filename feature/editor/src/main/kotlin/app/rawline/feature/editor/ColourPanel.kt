@@ -68,7 +68,7 @@ fun bandForHue(hue01: Float): Int {
 @Composable
 fun MixerPanel(state: EditorState, target: AdjustTarget, activeBand: Int, onBand: (Int) -> Unit, mode: Int, onMode: (Int) -> Unit, onTarget: (() -> Unit)?) = PanelColumn {
     val feedback = LocalValueFeedback.current
-    PanelHeader("Mix", Resets.mixerModified(target.get(state.recipe)), { editAdjust(state, target, "Reset color mix") { Resets.mixer(it) } })
+    PanelHeader("Mix", Resets.mixerModified(target.get(state.recipe)), { editAdjust(state, target, "Reset colour mix") { Resets.mixer(it) } })
     Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp), horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
         listOf("Hue", "Saturation", "Luminance").forEachIndexed { i, n -> TouchChip(n, mode == i, { onMode(i) }) }
         if (onTarget != null) TouchChip("Target on photo", false, onTarget)
@@ -95,7 +95,7 @@ fun MixerPanel(state: EditorState, target: AdjustTarget, activeBand: Int, onBand
         1 -> AdjSlider(state, target, "$name saturation", -100f..100f, { it.mixSat[i] }, { a, v -> a.copy(mixSat = a.mixSat.toMutableList().also { l -> l[i] = v }) }, trackColors = tc)
         else -> AdjSlider(state, target, "$name luminance", -100f..100f, { it.mixLum[i] }, { a, v -> a.copy(mixLum = a.mixLum.toMutableList().also { l -> l[i] = v }) }, trackColors = tc)
     }
-    SectionTitle("All colours: " + listOf("Hue", "Saturation", "Luminance")[mode]) { editAdjust(state, target, "Reset color mix") { a -> when (mode) { 0 -> a.copy(mixHue = List(8) { 0f }); 1 -> a.copy(mixSat = List(8) { 0f }); else -> a.copy(mixLum = List(8) { 0f }) } } }
+    SectionTitle("All colours: " + listOf("Hue", "Saturation", "Luminance")[mode]) { editAdjust(state, target, "Reset colour mix") { a -> when (mode) { 0 -> a.copy(mixHue = List(8) { 0f }); 1 -> a.copy(mixSat = List(8) { 0f }); else -> a.copy(mixLum = List(8) { 0f }) } } }
     Column {
         for (k in 0 until 8) {
             val label = BandNames[k]

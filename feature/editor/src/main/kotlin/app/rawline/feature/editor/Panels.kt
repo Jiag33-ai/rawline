@@ -162,8 +162,8 @@ fun DetailPanel(state: EditorState, onAiDenoiseChanged: (Boolean) -> Unit = {}) 
     val dd = state.recipe.detail
     val subModified = when (sub) { "sharpen" -> Resets.sharpenModified(dd); "noise" -> Resets.noiseModified(dd); else -> Resets.colourNoiseModified(dd) }
     Column {
-        LrTabs(listOf("sharpen" to "Sharpening", "noise" to "Noise", "colour" to "Color noise"), sub, { sub = it },
-            onDoubleTap = { id -> sub = id; resetSub(id) }, trailing = { TabReset(when (sub) { "sharpen" -> "Sharpening"; "noise" -> "Noise"; else -> "Color noise" }, subModified) { resetSub(sub) } })
+        LrTabs(listOf("sharpen" to "Sharpening", "noise" to "Noise", "colour" to "Colour noise"), sub, { sub = it },
+            onDoubleTap = { id -> sub = id; resetSub(id) }, trailing = { TabReset(when (sub) { "sharpen" -> "Sharpening"; "noise" -> "Noise"; else -> "Colour noise" }, subModified) { resetSub(sub) } })
         PanelColumn {
             when (sub) {
                 "sharpen" -> {
@@ -181,7 +181,7 @@ fun DetailPanel(state: EditorState, onAiDenoiseChanged: (Boolean) -> Unit = {}) 
                     if (state.recipe.detail.aiDenoise)
                         DetailSlider(state, "AI amount", 0f..100f, 50f, { it.aiDenoiseAmount }, { d, v -> d.copy(aiDenoiseAmount = v) })
                 }
-                else -> DetailSlider(state, "Color", 0f..100f, 0f, { it.nrColor }, { d, v -> d.copy(nrColor = v) })
+                else -> DetailSlider(state, "Colour", 0f..100f, 0f, { it.nrColor }, { d, v -> d.copy(nrColor = v) })
             }
         }
     }
@@ -225,7 +225,7 @@ fun kelvinToTemp(k: Float): Float = 50f * log2(k / 5500f)
 
 @Composable
 fun ColourBasicsPanel(state: EditorState, target: AdjustTarget, onAutoWb: (() -> Unit)?, onPickWb: (() -> Unit)?, header: Boolean = target.isMask) {
-    if (header) PanelHeader("Color", Resets.colourBasicsModified(target.get(state.recipe)), { editAdjust(state, target, "Reset color") { Resets.colourBasics(it) } })
+    if (header) PanelHeader("Colour", Resets.colourBasicsModified(target.get(state.recipe)), { editAdjust(state, target, "Reset colour") { Resets.colourBasics(it) } })
     if (!target.isMask) {
         var wbName by remember { mutableStateOf("As Shot") }
         var open by remember { mutableStateOf(false) }

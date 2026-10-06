@@ -391,7 +391,7 @@ fun EditorScreen(
             extraTabs.forEach { add(Tool(it.id, it.title, if (it.id == "remove") LrIcon.HEALING else LrIcon.MASKING)) }
         }
     }
-    val sections = listOf(Tool("light", "Light", LrIcon.LIGHT), Tool("colour", "Color", LrIcon.COLOR), Tool("effects", "Effects", LrIcon.EFFECTS), Tool("detail", "Detail", LrIcon.DETAIL), Tool("optics", "Optics", LrIcon.OPTICS))
+    val sections = listOf(Tool("light", "Light", LrIcon.LIGHT), Tool("colour", "Colour", LrIcon.COLOR), Tool("effects", "Effects", LrIcon.EFFECTS), Tool("detail", "Detail", LrIcon.DETAIL), Tool("optics", "Optics", LrIcon.OPTICS))
     val sectionIds = sections.map { it.id }
     var curveChannel by rememberSaveable { mutableIntStateOf(0) }
     var colourSub by rememberSaveable { mutableStateOf("basic") }
@@ -419,7 +419,7 @@ fun EditorScreen(
                     "mix" -> MixerPanel(state, AdjustTarget.Global, mixBand, { mixBand = it }, mixMode, { mixMode = it }, { mode = PhotoMode.TARGET_MIXER })
                     "grade" -> GradingPanel(state, AdjustTarget.Global)
                     else -> PanelColumn {
-                        app.rawline.core.ui.PanelHeader("Color", Resets.colourBasicsModified(state.recipe.adjust), { editAdjust(state, AdjustTarget.Global, "Reset color") { Resets.colourBasics(it) } })
+                        app.rawline.core.ui.PanelHeader("Colour", Resets.colourBasicsModified(state.recipe.adjust), { editAdjust(state, AdjustTarget.Global, "Reset colour") { Resets.colourBasics(it) } })
                         ColourBasicsPanel(state, AdjustTarget.Global, header = false,
                             onAutoWb = { scope.launch { session.baseStats()?.let { s -> val (t, ti) = AutoTools.autoWb(s); state.edit("Auto white balance") { r -> r.copy(adjust = r.adjust.copy(temp = t, tint = ti)) } } } },
                             onPickWb = { mode = PhotoMode.PICK_WB })
