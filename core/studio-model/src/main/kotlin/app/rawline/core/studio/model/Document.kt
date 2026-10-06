@@ -6,7 +6,7 @@ enum class ColourSpace(val key: String) { SRGB("srgb"), DISPLAY_P3("display-p3")
 enum class BlendSpace(val key: String) { GAMMA("gamma"), LINEAR("linear") }
 
 /**
- * What every layer has (spec 2.1, the S1 subset). Pixels live outside the model: [pixelsFile] names the lossless WebP of a pixel
+ * What every layer has (spec 2.1, the S1 subset). Pixels live outside the model: [pixelsFile] names the lossless pixel container file (PixelContainer, decision D1 of S1b) of a pixel
  * layer inside the project directory, or is null for a layer that is still fully transparent. Position and size on the canvas
  * are [x], [y] (document pixels of the top left corner) and [scale] (1 = one layer pixel per document pixel); S2 replaces
  * these three by the 3x3 matrix of the spec without changing the file's meaning.

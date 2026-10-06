@@ -11,7 +11,7 @@ class ProjectFormatException(message: String, cause: Throwable? = null) : Except
 class NewerSchemaException(val version: Int) : Exception("This project was made by a newer version of Rawline (format $version).")
 
 /**
- * project.json, schema version 1 (spec 2.15, S1 subset: one lossless WebP per pixel layer instead of tiles).
+ * project.json, schema version 1 (spec 2.15, S1 subset: one lossless pixel container file per pixel layer instead of tiles).
  *
  * Rules that keep old files readable: readers ignore unknown keys; writers always write `schemaVersion`; a changed meaning needs a
  * new version and a migration `v(n) -> v(n+1)` in [Migrations] with a test over a stored sample file. The writer is hand rolled so
