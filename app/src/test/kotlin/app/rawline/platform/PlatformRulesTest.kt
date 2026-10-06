@@ -42,6 +42,15 @@ class PlatformRulesTest {
         assertTrue(ManifestRules.problems(good.replace("<activity", """<activity android:maxAspectRatio="1.8" """)).any { it.contains("aspect") })
         assertTrue(ManifestRules.problems(good.replace("true", "false")).any { it.contains("switched off") })
     }
+    @Test fun serviceRulesCatchEachProblem() {
+        val perms = """<uses-permission android:name="android.permission.FOREGROUND_SERVICE"/><uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/><uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROCESSING"/>"""
+        val ok = perms + """<service android:name=".S" android:exported="false" android:foregroundServiceType="dataSync|mediaProcessing"/><service android:name=".b.XJobService" android:exported="false" android:permission="android.permission.BIND_JOB_SERVICE"/>"""
+        assertEquals(emptyList<String>(), ManifestRules.serviceProblems(ok))
+        assertTrue(ManifestRules.serviceProblems(ok.replace("""android:name=".S" android:exported="false"""", """android:name=".S"""")).any { it.contains("exported") })
+        assertTrue(ManifestRules.serviceProblems(ok.replace(" android:permission=\"android.permission.BIND_JOB_SERVICE\"", "")).any { it.contains("BIND_JOB_SERVICE") })
+        assertTrue(ManifestRules.serviceProblems(ok.replace("""<uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROCESSING"/>""", "")).any { it.contains("FOREGROUND_SERVICE_MEDIA_PROCESSING") })
+        assertTrue(ManifestRules.serviceProblems(ok.replace("""<uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>""", "")).any { it.contains("foreground service") })
+    }
     @Test fun backInventoryCountsCallsNotImportsOrComments() {
         val src = mapOf("A.kt" to "import androidx.activity.compose.BackHandler\n// BackHandler(x) {}\nBackHandler(enabled = a) { x() }\nandroidx.activity.compose.BackHandler { leave() }\n",
             "B.kt" to "val x = 1\n", "C.kt" to " * BackHandler { }\n")

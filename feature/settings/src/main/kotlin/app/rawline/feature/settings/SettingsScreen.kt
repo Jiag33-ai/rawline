@@ -41,8 +41,8 @@ fun SettingsScreen(
     lastCrash: String?,
     xmpOn: Boolean,
     onXmpChange: (Boolean) -> Unit,
-    onBackup: () -> Unit,
-    onRestore: () -> Unit,
+    backup: BackupUiState,
+    backupActions: BackupActions,
     message: String?,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
@@ -55,7 +55,6 @@ fun SettingsScreen(
     /** About text for Studio, shown only in builds that contain it. */
     studioNote: String? = null,
 ) {
-    var confirmRestore by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     val libraw = runCatching { Native.librawVersion() }.getOrElse { "failed: ${it.message}" }
     // the tab bar below already pads the navigation bar and the screen above the status bar, so only the sides are inset here
     Column(modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)).padding(16.dp).verticalScroll(rememberScrollState())) {
@@ -81,10 +80,25 @@ fun SettingsScreen(
             }
             Switch(xmpOn, onXmpChange)
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = onBackup) { Text("Back up edits") }
-            Button(onClick = { confirmRestore = true }) { Text("Restore backup") }
+        Spacer(Modifier.height(8.dp))
+        Text("Backups", style = MaterialTheme.typography.titleSmall)
+        Text("Backing up to ${backup.where}", style = MaterialTheme.typography.bodyMedium)
+        Text(backup.last + (backup.lastWhere?.let { ", in $it" } ?: ""), style = MaterialTheme.typography.bodyMedium)
+        if (backup.error != null) Text("Last backup failed: ${backup.error}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        Row(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(Modifier.weight(1f)) {
+                Text("Back up automatically", style = MaterialTheme.typography.bodyLarge)
+                Text("Once a day when something changed, and after about 25 changes.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Switch(backup.auto, backupActions.onAutoChange)
         }
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Button(onClick = backupActions.onBackupNow, enabled = !backup.running) { Text(if (backup.running) "Backing up..." else "Back up now") }
+            Button(onClick = backupActions.onOpenRestore) { Text("Restore from a backup...") }
+            Button(onClick = backupActions.onSaveCopy) { Text("Save a copy to...") }
+            if (backup.canChooseFolder) Button(onClick = backupActions.onChooseFolder) { Text("Choose backup folder...") }
+        }
+        Text("Keeps the last 7. Only your edits, ratings and presets are saved, not the photos.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
         if (message != null) Text(message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 4.dp))
         Spacer(Modifier.height(12.dp))
         Item("Thumbnail cache", "${cacheBytes / 1024 / 1024} MB on this phone (capped at 300 MB)")
@@ -112,12 +126,26 @@ fun SettingsScreen(
             TextButton(onClick = onClearCrash) { Text("Clear crash reports") }
         }
     }
-    if (confirmRestore) androidx.compose.material3.AlertDialog(
-        onDismissRequest = { confirmRestore = false },
-        title = { Text("Restore a backup?") },
-        text = { Text("Edits, ratings, presets and snapshots in the backup are added. Anything you changed more recently on this phone is kept.") },
-        confirmButton = { TextButton(onClick = { confirmRestore = false; onRestore() }) { Text("Choose a backup") } },
-        dismissButton = { TextButton(onClick = { confirmRestore = false }) { Text("Cancel") } },
+    val list = backup.list
+    val offer = backup.offer
+    if (list != null && offer == null) androidx.compose.material3.AlertDialog(
+        onDismissRequest = backupActions.onCloseRestore,
+        title = { Text("Restore from a backup") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                if (list.isEmpty()) Text("No backups were found in ${backup.where}.", style = MaterialTheme.typography.bodyMedium)
+                list.forEach { b -> TextButton(onClick = { backupActions.onPickBackup(b.name) }) { Text(b.line) } }
+            }
+        },
+        confirmButton = { TextButton(onClick = backupActions.onChooseFile) { Text("Choose a file...") } },
+        dismissButton = { TextButton(onClick = backupActions.onCloseRestore) { Text("Cancel") } },
+    )
+    if (offer != null) androidx.compose.material3.AlertDialog(
+        onDismissRequest = backupActions.onCancelRestore,
+        title = { Text(if (offer.canRestore) "Restore this backup?" else "Backup not restored") },
+        text = { Text(offer.text) },
+        confirmButton = { if (offer.canRestore) TextButton(onClick = backupActions.onConfirmRestore) { Text("Restore") } else TextButton(onClick = backupActions.onCancelRestore) { Text("OK") } },
+        dismissButton = { if (offer.canRestore) TextButton(onClick = backupActions.onCancelRestore) { Text("Cancel") } },
     )
 }
 

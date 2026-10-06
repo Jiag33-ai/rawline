@@ -46,6 +46,14 @@ object ReportBuilder {
         }.getOrElse { "unavailable (${it.javaClass.simpleName})" }
         sections += "Settings" to "XMP sidecars ${if (graph.prefs.getBoolean("xmp", false)) "on" else "off"}, overlay ${if (graph.prefs.getBoolean("overlay", false)) "on" else "off"}, " +
             "LibRaw ${runCatching { app.rawline.core.nativelib.Native.librawVersion() }.getOrElse { "failed: ${it.javaClass.simpleName}" }}"
+        sections += "Backups" to run {
+            val p = graph.prefs
+            val last = app.rawline.core.data.RestoreText.lastLine(p.getLong(app.rawline.backup.BackupPrefs.LAST, 0), p.getLong(app.rawline.backup.BackupPrefs.LAST_BYTES, 0), now)
+            val kind = runCatching { app.rawline.backup.BackupTargets.choose(context, p).kind.name.lowercase() }.getOrElse { "unknown" }
+            "automatic ${if (p.getBoolean(app.rawline.backup.BackupPrefs.AUTO, true)) "on" else "off"}, target $kind, all files access ${if (android.os.Environment.isExternalStorageManager()) "yes" else "no"}\n$last" +
+                (p.getString(app.rawline.backup.BackupPrefs.LAST_WHERE, null)?.let { " (in $it)" } ?: "") +
+                (p.getString(app.rawline.backup.BackupPrefs.ERROR, null)?.let { "\nLast failure: $it" } ?: "") + "\nchanges since install: ${graph.catalog.changeCount()}"
+        }
         StudioEntry.reportSection(context, graph.prefs)?.let { sections += it }   // null when this build has no Studio
         return PerfLog.report(context, version, sections, now)
     }

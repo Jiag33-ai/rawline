@@ -10,6 +10,7 @@ Re-run this list whenever Android publishes behaviour changes for the next API l
 | Large screens | no crash, nothing unusable at 600 dp and wider (letterboxed is fine) | one run on a tablet emulator profile per API level |
 | Notifications | asked once at the first export, Android 13 and later | NotificationRule test, phone |
 | Photo access | the media permission is asked once at first launch; All files access is a separate, explained step | MediaAccess tests, phone |
+| Scheduled backup | a `JobService` bound by the system (`BIND_JOB_SERVICE`), not exported, no foreground service; the daily job is re-armed at every start (jobs are not persisted across a reboot) | PlatformRulesTest (service rules), phone |
 | Foreground service | types dataSync and mediaProcessing declared; the app keeps working when the notification is hidden | phone |
 
 ## Back order (innermost first)

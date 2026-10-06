@@ -241,7 +241,7 @@ After these 25: baseline profile and macrobenchmarks (BK-002, BK-003, after W01 
 | N. Studio | 6 | 32 | 19 | 3 | 60 |
 | **All** | 38 | 203 | 217 | 54 | 512 |
 
-Status of the 512 entries: 23 DONE, 46 PARTLY DONE, 10 MERGED into another entry (dedupe pass, 6 Oct 2026), 19 SPEC COVERS and 2 SPEC WINS (Studio entries settled by docs/STUDIO_SPEC.md), 1 DECLINED and 1 BLOCKED; the rest are open. Merged and done entries are kept for their history and acceptance details.
+Status of the 512 entries: 25 DONE, 47 PARTLY DONE, 10 MERGED into another entry (dedupe pass, 6 Oct 2026), 19 SPEC COVERS and 2 SPEC WINS (Studio entries settled by docs/STUDIO_SPEC.md), 1 DECLINED and 1 BLOCKED; the rest are open. Merged and done entries are kept for their history and acceptance details.
 
 ## Top 30 overall (ranked)
 
@@ -249,7 +249,7 @@ Order weighs risk of losing Jai's work first, then measurement, then speed and l
 
 | # | ID | Area | Title | Why now |
 | --- | --- | --- | --- | --- |
-| 1 | BK-142 | G | [DESIGNED] Automatic backups of the catalogue (edits, meta, presets, snapshots) on every N edits and daily, kept as the last 7 rotating files | Automatic rotating catalogue backups outside the app: uninstall or a key change still wipes everything. |
+| 1 | BK-142 | G | [DONE] Automatic backups of the catalogue (edits, meta, presets, snapshots) on every N edits and daily, kept as the last 7 rotating files | Automatic rotating catalogue backups outside the app: uninstall or a key change still wipes everything. |
 | 2 | BK-226 | L | Move release signing to a private key held only in Actions secrets (and plan the one-time reinstall safely) | Private release signing key via Actions secrets with key rotation: the public key lets anyone forge an update. |
 | 3 | BK-001 | A | Get the first real phone timings and gate CI on a budget file | First real phone timings and a one-tap speed test: all speed work is guesswork until measured. |
 | 4 | BK-096 | E | [PARTLY DESIGNED] Import from SD card or USB-C reader: copy RW2/JPG into a dated folder with a progress queue, skip duplicates, verify, then eject prompt | Import from the SD card or camera over USB: the first step of every shoot, missing today. |
@@ -276,7 +276,7 @@ Order weighs risk of losing Jai's work first, then measurement, then speed and l
 | 25 | BK-323 | M | [PARTLY DONE] The release APK carries three unused ABIs: about 22.7 MB of native code, so every sideload update is a third bigger than needed | Drop the three unused ABIs: about 22.7 MB less in every sideload update, one line in app/build.gradle.kts. |
 | 26 | BK-227 | L | Stop committing release APKs to git | Stop committing the 61 MB APK to git; Releases are the channel. |
 | 27 | BK-240 | L | [PARTLY DONE] In-app update check and install (sideload update flow with SHA-256 verification) | In-app update check and one-tap install with SHA-256 verification. |
-| 28 | BK-303 | G | Restore preview ("dry run") and a backup integrity manifest | Restore preview (dry run) and backup integrity manifest. |
+| 28 | BK-303 | G | [DONE] Restore preview ("dry run") and a backup integrity manifest | Restore preview (dry run) and backup integrity manifest. |
 | 29 | BK-355 | G | Corrupt, truncated or unsupported RW2: partial decode, preview-only editing and clear states | Corrupt or truncated RW2: partial decode and preview-only editing instead of a dead end. |
 | 30 | BK-338 | E | Culling 800 photos: "next undecided" jump, a visible progress count, and resume where I stopped | Culling 800 photos: next undecided, progress count and resume. |
 
@@ -344,8 +344,8 @@ Dependencies: BK-142 and BK-143 before BK-226 (key rotation needs a safe backup 
 | BK-002 | P0 | M |  | Macrobenchmark module for cold start, grid scroll and open-from-grid |
 | BK-071 | P0 | S | PARTLY DONE | Phone timings for every AI step with a pass/fail table (mask ready under 2 s, tap-select under 300 ms, remove under 10 s) |
 | BK-072 | P0 | S |  | Model integrity: pin the People model by hash and by version |
-| BK-142 | P0 | M | DESIGNED | Automatic backups of the catalogue (edits, meta, presets, snapshots) on every N edits and daily, kept as the last 7 rotating files |
-| BK-143 | P0 | S-M |  | Survive uninstall: keep a copy of the catalogue outside the app's private storage |
+| BK-142 | P0 | M | DONE | Automatic backups of the catalogue (edits, meta, presets, snapshots) on every N edits and daily, kept as the last 7 rotating files |
+| BK-143 | P0 | S-M | PARTLY DONE | Survive uninstall: keep a copy of the catalogue outside the app's private storage |
 | BK-145 | P0 | M | DONE | DeviceScanner/Indexer must never prune on a partial listing (AUDIT open item 3), and add a downgrade/rollback path for Room |
 | BK-147 | P0 | M | PARTLY DONE | Migration and backup round-trip test harness that runs on the JVM (Robolectric) in CI |
 | BK-152 | P1 | S | PARTLY DONE | Atomic writes for mask layers, heal patches and thumbnails (write temp, fsync, rename) |
@@ -359,7 +359,7 @@ Dependencies: BK-142 and BK-143 before BK-226 (key rotation needs a safe backup 
 | BK-261 | P1 | S-M |  | Catalog.reapply loads the whole photos table and runs one SELECT per photo on every device scan |
 | BK-264 | P1 | S |  | Make Application.onCreate cheap: lazy Graph members and no I/O on the main thread before first frame |
 | BK-291 | P1 | M |  | Lighter identity fix after the BK-141 decision: content fingerprint as a secondary lookup, never replacing the legacy key |
-| BK-303 | P1 | M |  | Restore preview ("dry run") and a backup integrity manifest |
+| BK-303 | P1 | M | DONE | Restore preview ("dry run") and a backup integrity manifest |
 | BK-308 | P1 | S-M | PARTLY DONE | Catalogue work runs on the main dispatcher: XMP writes, edit pastes and ratings can block the UI |
 | BK-206 | P1 | S-M | PARTLY DONE | Add Android lint and Kotlin static analysis (detekt or ktlint) to CI (AUDIT item 5) |
 | BK-207 | P1 | S | PARTLY DONE | Pin GitHub Actions to commit SHAs and enable Dependabot for actions and Gradle (AUDIT item 5) |
@@ -658,6 +658,8 @@ Dependencies: BK-365 first; BK-366 and BK-367 before everything; BK-368 and BK-3
 - BK-444 The "16 bit" TIFF must carry 16 bits: a ramp test and the linear readback contract (audit AE-018): DONE
 - BK-461 Colour range and luminance range masks compare in a different domain from the picker (audit AE-015): DONE
 - BK-467 floatToHalf rounds values near 65520 up to infinity (audit AE-028): DONE
+- BK-142 Automatic backups of the catalogue (edits, meta, presets, snapshots) on every N edits and daily, kept as the last 7 rotating files: DONE
+- BK-303 Restore preview ("dry run") and a backup integrity manifest: DONE
 - BK-246 Adopt Android 16 behaviours now: predictive back and edge-to-edge (targetSdk is 37): DONE
 - BK-426 API 37 readiness checklist (edge-to-edge, predictive back, resizability) with tests on the S24 Ultra and a large-screen emulator: DONE
 - BK-120 Persist per-source scroll position, selection and sort across rotation and process death: DONE
@@ -2273,13 +2275,14 @@ Facts: Room db version 3, `exportSchema = false`, one explicit migration 2 to 3,
 - Acceptance: new `contentId` column computed from the first 64 KB hash + size + EXIF DateTimeOriginal/SubSec + body serial where available; edits/meta/snapshots re-keyed in a migration with a pre-migration backup written to `filesDir/backups/`; fallback "relink" screen for orphaned edits ("12 edits not matched; match by name?"); identical files in two folders get separate keys by path+contentId; unit tests with a fake DB for rename, copy, duplicate, touched mtime.
 - Size: L. Files: Photo.kt, Db.kt, Catalog.kt, Indexer.kt, DeviceScanner.kt, ThumbStore.kt, backup format. Risk: high. Depends on BK-147 migration tests first.
 
-### BK-142 [P0] [DESIGNED] Automatic backups of the catalogue (edits, meta, presets, snapshots) on every N edits and daily, kept as the last 7 rotating files
-- Status: Task file W06-auto-backups.md: 29 host tests pass (run order, rotation, policy, zip verify); Android targets and WorkManager are skeletons. Not merged.
+### BK-142 [P0] [DONE] Automatic backups of the catalogue (edits, meta, presets, snapshots) on every N edits and daily, kept as the last 7 rotating files
+- Status: Done on main (AutoBackup.kt, app/backup/): three targets, verified run order, rotation to 7, daily and after-25-changes triggers on JobScheduler instead of WorkManager (decision in docs/DECISIONS.md), Settings section. SAF, MediaStore and the job are only statically verified; the reinstall check is Jai's. The first launch offer waits for W05.
 - Problem: backup is a manual button (`Back up edits`); a crash or reinstall without a manual backup loses everything (also `allowBackup=false` so Android's own backup does not run). Since this is a sideload that gets reinstalled often (every release), a stale install with a wrong signing key means uninstall, which deletes the whole catalogue (see BK-143).
 - Acceptance: a `WorkManager` periodic job (plus after 25 saved edits) writes `Documents/Rawline/backups/rawline-YYYYMMDD.zip` through a SAF folder chosen once (or MediaStore Documents collection with no permission) with a 7-file rotation; Settings shows last backup time and size; restore tested from the zip (BK-144).
 - Size: M. Files: Catalog.kt writeBackup, new BackupWorker.kt, app/build.gradle.kts (work-runtime), Settings. Risk: low-medium (a new dependency; keep the tiny `androidx.work`).
 
-### BK-143 [P0] Survive uninstall: keep a copy of the catalogue outside the app's private storage
+### BK-143 [P0] [PARTLY DONE] Survive uninstall: keep a copy of the catalogue outside the app's private storage
+- Status: Backups sit in Documents/Rawline/backups with All files access, or in a chosen folder, and Restore from a backup lists them; the first launch offer waits for W05; MediaStore survival after a reinstall is open (phone check).
 - Problem: Room db and mask/heal PNGs live in app-private storage; uninstall or "Clear data" deletes them. The README says build flow may need the signing key to match; with debug-signed fallback, updates may not install over the top, which forces an uninstall.
 - Acceptance: BK-142 backup target is outside app data by default (MediaStore `Documents/Rawline`), restore offered automatically on first launch if a backup is found, with a count and date.
 - Size: S-M (on top of BK-142). Files: RawlineApplication.kt, Settings. Risk: low.
@@ -2379,7 +2382,8 @@ Facts: Room db version 3, `exportSchema = false`, one explicit migration 2 to 3,
 - Acceptance: unit test: edit a photo, change its modified time in the fake scanner, rescan: the edit is found; two identical files in different folders keep separate edits after the first is edited (alias stored with path hash); backup/restore unchanged (aliases optional in the zip); one extra 128 KB read on first open only (measure under `fingerprint_ms`).
 - Size: M. Files: Db.kt (+migration, schema JSON), Catalog.kt, Photo.kt, EditorHost.kt. Risk: low-medium. Supersedes the plan in BK-141 (which stays DECLINED unless Jai overrides the decision).
 
-### BK-303 [P1] Restore preview ("dry run") and a backup integrity manifest
+### BK-303 [P1] [DONE] Restore preview ("dry run") and a backup integrity manifest
+- Status: Manifest with SHA-256 per entry (format 2), verify before publish and before restore, restore preview, damaged file refused, format 1 still restores.
 - Problem: after the audit hardening, restore is transactional and newer-wins, but it still runs straight after picking the file with the message "Restored N edits". `version.json` is written but not checked against a supported range, and entries have no checksums, so a damaged zip may be partly read before a JSON error is hit (JSON is validated; PNG bodies are only header-checked).
 - Acceptance: the zip gains `manifest.json` (counts per table, per-entry SHA-256, app version, creation time); restore first shows "This backup has 312 edits, 1 204 ratings, 18 presets, from 4 Oct. 41 edits and 230 ratings are newer on this phone and will be kept. Restore the rest?" with Cancel; checksum mismatch aborts before any write; older backups without a manifest still restore with the existing rules; tests in BackupReaderTest.
 - Size: M. Files: core/data/BackupFormat.kt, Catalog.kt, LibraryViewModel.kt, MainActivity.kt. Risk: low.

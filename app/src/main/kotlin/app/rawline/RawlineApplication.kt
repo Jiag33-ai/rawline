@@ -13,6 +13,7 @@ import app.rawline.core.data.DeviceScanner
 import app.rawline.core.data.Indexer
 import app.rawline.core.data.RawlineDb
 import app.rawline.core.render.RawPrefetch
+import kotlinx.coroutines.launch
 
 /** Plain constructor wiring, no DI framework. */
 class Graph(context: Context) {
@@ -54,5 +55,12 @@ class RawlineApplication : Application() {
         super.onCreate()
         CrashStore.install(this, ReportBuilder.buildLabel)
         graph = Graph(this)
+        // automatic backups: every 25th change (and the first one ever) asks for a run in about 2 minutes; the policy decides whether one is due
+        graph.catalog.onChange = { before, after ->
+            val never = graph.prefs.getLong(app.rawline.backup.BackupPrefs.LAST, 0L) <= 0L
+            if ((never || app.rawline.core.data.ChangeCounter.crossedThreshold(before, after)) && graph.prefs.getBoolean(app.rawline.backup.BackupPrefs.AUTO, true)) app.rawline.backup.BackupScheduler.afterEdits(this)
+        }
+        // the daily job is put in place a few seconds after start, not before the first frame
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ graph.appScope.launch { app.rawline.backup.BackupScheduler.ensure(this@RawlineApplication, graph.prefs.getBoolean(app.rawline.backup.BackupPrefs.AUTO, true)) } }, 5_000)
     }
 }

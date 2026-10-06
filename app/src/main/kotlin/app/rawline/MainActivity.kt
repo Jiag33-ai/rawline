@@ -195,7 +195,8 @@ private fun RawlineRoot(openRoute: String?, modeSwitch: (@Composable () -> Unit)
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> if (uri != null) vm.addFolder(uri) }
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> if (uris.isNotEmpty()) vm.importFiles(uris) }
     val backupOut = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri -> if (uri != null) vm.backupTo(uri) }
-    val backupIn = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.restoreFrom(uri) }
+    val backupIn = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.prepareRestoreFromFile(uri) }
+    val backupFolderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> if (uri != null) vm.setBackupFolder(uri) }
 
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -366,6 +367,16 @@ private fun RawlineRoot(openRoute: String?, modeSwitch: (@Composable () -> Unit)
                     var cacheBytes by remember { mutableStateOf(0L) }
                     LaunchedEffect(Unit) { cacheBytes = withContext(Dispatchers.IO) { graph.thumbs.diskBytes() } }
                     var lastCrash by remember { mutableStateOf(CrashStore.lastForBuild(context, ReportBuilder.buildLabel)) }
+                    val backupState by vm.backupUi.collectAsStateWithLifecycle()
+                    LaunchedEffect(Unit) { vm.refreshBackup() }
+                    val backupActions = remember {
+                        app.rawline.feature.settings.BackupActions(
+                            onBackupNow = vm::backupNow, onSaveCopy = { backupOut.launch("rawline-backup.zip") }, onAutoChange = vm::setAutoBackup,
+                            onChooseFolder = { backupFolderPicker.launch(null) }, onOpenRestore = vm::openRestoreList, onCloseRestore = vm::closeRestoreList,
+                            onPickBackup = vm::prepareRestoreFromTarget, onChooseFile = { backupIn.launch(arrayOf("application/zip", "application/octet-stream")) },
+                            onConfirmRestore = vm::confirmRestore, onCancelRestore = vm::cancelRestore,
+                        )
+                    }
                     Box(Modifier.statusBarsPadding()) {
                         SettingsScreen(
                             versionName = BuildConfig.VERSION_NAME, buildNumber = BuildConfig.BUILD_NUMBER, buildDate = BuildConfig.BUILD_DATE,
@@ -383,7 +394,8 @@ private fun RawlineRoot(openRoute: String?, modeSwitch: (@Composable () -> Unit)
                             cacheBytes = cacheBytes,
                             onClearThumbnails = { scope.launch { withContext(Dispatchers.IO) { graph.thumbs.clearDisk() }; cacheBytes = 0L; showToast("Thumbnails cleared") } },
                             xmpOn = xmp, onXmpChange = vm::setXmp,
-                            onBackup = { backupOut.launch("rawline-backup.zip") }, onRestore = { backupIn.launch(arrayOf("application/zip", "application/octet-stream")) },
+                            backup = backupState,
+                            backupActions = backupActions,
                             message = message,
                             onVersionLongPress = StudioEntry.debugLongPress(context),
                             studioNote = StudioEntry.settingsNote(),

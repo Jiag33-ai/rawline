@@ -9,6 +9,26 @@ object ManifestRules {
         if (Regex("""android:(minAspectRatio|maxAspectRatio)\s*=""").containsMatchIn(xml)) out += "an aspect ratio limit is set: not allowed"
         if (!Regex("""android:enableOnBackInvokedCallback\s*=\s*"true"""").containsMatchIn(xml)) out += "android:enableOnBackInvokedCallback=\"true\" is missing: say it explicitly so predictive back never depends on a default"
         if (Regex("""android:enableOnBackInvokedCallback\s*=\s*"false"""").containsMatchIn(xml)) out += "predictive back is switched off"
+        out += serviceProblems(xml)
+        return out
+    }
+
+    private val SERVICE = Regex("""<service\b[^>]*>""", RegexOption.DOT_MATCHES_ALL)
+    private fun attr(tag: String, name: String) = Regex("""android:$name\s*=\s*"([^"]*)"""").find(tag)?.groupValues?.get(1)
+    private fun permissionFor(type: String) = "android.permission.FOREGROUND_SERVICE_" + type.replace(Regex("([a-z])([A-Z])"), "$1_$2").uppercase()
+
+    /** Services: none exported, a job service is bound only by the system, and a foreground service type needs its own permission (Android 14 and later). */
+    fun serviceProblems(xml: String): List<String> {
+        val out = ArrayList<String>()
+        val perms = Regex("""<uses-permission\s+android:name\s*=\s*"([^"]+)"""").findAll(xml).map { it.groupValues[1] }.toSet()
+        for (m in SERVICE.findAll(xml)) {
+            val tag = m.value; val name = attr(tag, "name") ?: "?"
+            if (attr(tag, "exported") != "false") out += "service $name must say android:exported=\"false\""
+            if (name.endsWith("JobService") && attr(tag, "permission") != "android.permission.BIND_JOB_SERVICE") out += "job service $name must require android.permission.BIND_JOB_SERVICE"
+            val types = attr(tag, "foregroundServiceType")?.split('|')?.filter { it.isNotBlank() }.orEmpty()
+            if (types.isNotEmpty() && "android.permission.FOREGROUND_SERVICE" !in perms) out += "service $name is a foreground service but android.permission.FOREGROUND_SERVICE is not declared"
+            for (t in types) if (permissionFor(t) !in perms) out += "service $name has foregroundServiceType $t but ${permissionFor(t)} is not declared"
+        }
         return out
     }
 }

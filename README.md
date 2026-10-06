@@ -13,6 +13,9 @@ Release signing uses Actions secrets `RAWLINE_KEYSTORE_B64`, `RAWLINE_KEYSTORE_P
 ## What is in it
 Library (grid, filters, ratings, flags, labels, copy/paste/sync edits, backup), viewer (fast embedded preview, prefetch, zoom, info), RAW editor (light, curves, colour, mixer, grading, effects, detail, optics with lens profiles, geometry, masks, AI masks, remove/heal/clone, AI denoise, presets, history, snapshots) and export (JPEG, PNG, 16-bit TIFF, sizes, sharpening, Display P3, metadata, batch service, share).
 
+## Backups
+Rawline backs up your edits, ratings, flags, labels, presets, snapshots and AI mask or repair images (not the photos) by itself: daily when something changed, and after about 25 changes. The last 7 are kept as `rawline-backup-YYYYMMDD-HHmm.zip`. They go to `Documents/Rawline/backups` when All files access is on (Settings links to it), else to a folder you choose in Settings, else to the same path through MediaStore (the weakest: a reinstall may not find them). To get edits back after a reinstall: turn on All files access or choose the same folder, then Settings, Restore from a backup. Restore adds what is in the backup and keeps anything changed more recently on the phone. Back up now and Save a copy to are in Settings.
+
 ## Tests
 `./gradlew testDebugUnitTest` (JVM unit tests), `./tools/golden/run-golden.sh` (shaders on Mesa vs reference images; needs `libgles2-mesa-dev libegl1-mesa-dev` and Pillow), `./tools/test-preview-parser.sh` (embedded preview parser on `testdata/*.RW2`), `./tools/models/fetch.sh` (model URLs still live).
 

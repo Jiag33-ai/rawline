@@ -14,6 +14,17 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.rawline.core.cache.PerfLog
+import app.rawline.backup.BackupCoordinator
+import app.rawline.backup.BackupPrefs
+import app.rawline.backup.BackupScheduler
+import app.rawline.backup.BackupTargets
+import app.rawline.backup.TargetKind
+import app.rawline.core.data.RestoreCheck
+import app.rawline.core.data.RestoreStaging
+import app.rawline.core.data.RestoreText
+import app.rawline.feature.settings.BackupItem
+import app.rawline.feature.settings.BackupUiState
+import app.rawline.feature.settings.RestoreOffer
 import app.rawline.core.data.IndexProgress
 import app.rawline.core.data.SidecarResult
 import app.rawline.core.data.RecipeRead
@@ -282,7 +293,7 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
         }
     }
 
-    override fun onCleared() { observer?.let { app.contentResolver.unregisterContentObserver(it) } }
+    override fun onCleared() { staged?.discard(); observer?.let { app.contentResolver.unregisterContentObserver(it) } }
 
     fun selectSource(key: String) {
         graph.prefs.edit().putString("source", key).apply(); source.value = key
@@ -423,13 +434,88 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
     }
 
     // ---- backup ----
+    /** What the Backups section of Settings shows; rebuilt from the preferences by [refreshBackup]. */
+    val backupUi = MutableStateFlow(BackupUiState())
+    private var staged: RestoreStaging.Staged? = null
+
+    private fun buildBackupUi(prev: BackupUiState): BackupUiState {
+        val p = graph.prefs; val chosen = BackupTargets.choose(app, p)
+        return BackupUiState(
+            where = chosen.label,
+            last = RestoreText.lastLine(p.getLong(BackupPrefs.LAST, 0), p.getLong(BackupPrefs.LAST_BYTES, 0), System.currentTimeMillis()),
+            lastWhere = p.getString(BackupPrefs.LAST_WHERE, null),
+            error = p.getString(BackupPrefs.ERROR, null),
+            auto = p.getBoolean(BackupPrefs.AUTO, true),
+            canChooseFolder = chosen.kind != TargetKind.FILES,
+            running = prev.running, list = prev.list, offer = prev.offer,
+        )
+    }
+
+    fun refreshBackup() = viewModelScope.launch(Dispatchers.IO) { backupUi.value = buildBackupUi(backupUi.value) }
+
+    /** Back up now: the same runner as the scheduled backups, whatever the policy says. */
+    fun backupNow() = viewModelScope.launch(Dispatchers.IO) {
+        backupUi.value = buildBackupUi(backupUi.value).copy(running = true)
+        val run = BackupCoordinator.run(app, graph, manual = true)
+        message.value = if (run?.ok == true) "Backup saved (${RestoreText.size(run.bytes)})" else "Backup failed: ${run?.message ?: "nothing was written"}"
+        backupUi.value = buildBackupUi(backupUi.value).copy(running = false)
+    }
+
+    fun setAutoBackup(on: Boolean) {
+        graph.prefs.edit().putBoolean(BackupPrefs.AUTO, on).apply()
+        BackupScheduler.ensure(app, on)
+        refreshBackup()
+    }
+
+    /** The folder picker's answer: keep the permission across restarts and an uninstall, and remember the folder. */
+    fun setBackupFolder(uri: Uri) {
+        runCatching { app.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }
+            .onSuccess { graph.prefs.edit().putString(BackupTargets.PREF_TREE, uri.toString()).apply(); message.value = "Backups will go to the folder you chose" }
+            .onFailure { message.value = "That folder cannot be used: ${it.message}" }
+        refreshBackup()
+    }
+
+    /** "Save a copy to...": the old save-as path, for moving a backup somewhere else. */
     fun backupTo(uri: Uri) = viewModelScope.launch(Dispatchers.IO) {
-        runCatching { (app.contentResolver.openOutputStream(uri) ?: throw java.io.IOException("could not open the file")).use { catalog.writeBackup(it) } }
+        runCatching { (app.contentResolver.openOutputStream(uri) ?: throw java.io.IOException("could not open the file")).use { catalog.writeBackup(it, BuildConfig.VERSION_NAME) } }
             .onSuccess { message.value = "Backup saved" }.onFailure { message.value = "Backup failed: ${it.message}" }
     }
 
-    fun restoreFrom(uri: Uri) = viewModelScope.launch(Dispatchers.IO) {
-        runCatching { (app.contentResolver.openInputStream(uri) ?: throw java.io.IOException("could not open the file")).use { catalog.readBackup(it) } }
-            .onSuccess { message.value = "Restored ${Plurals.edits(it)}" }.onFailure { message.value = "Restore failed: ${it.message}" }
+    fun openRestoreList() = viewModelScope.launch(Dispatchers.IO) {
+        BackupCoordinator.cleanStaging(app)
+        val items = runCatching { BackupCoordinator.list(app, graph).map { BackupItem(it.name, it.line) } }
+            .getOrElse { message.value = "Could not read the backups: ${it.message}"; emptyList() }
+        backupUi.value = buildBackupUi(backupUi.value).copy(list = items, offer = null)
     }
+
+    fun closeRestoreList() { backupUi.value = buildBackupUi(backupUi.value).copy(list = null, offer = null) }
+
+    /** Copy the chosen backup to the cache, check it, and show what is in it. Nothing is restored until [confirmRestore]. */
+    fun prepareRestoreFromTarget(name: String) = prepare { BackupCoordinator.stage(app, graph, name) }
+
+    fun prepareRestoreFromFile(uri: Uri) = prepare {
+        withContext(Dispatchers.IO) { RestoreStaging.stage(app.contentResolver.openInputStream(uri) ?: throw java.io.IOException("could not open the file"), java.io.File(app.cacheDir, "restore")) }
+    }
+
+    private fun prepare(stage: suspend () -> RestoreStaging.Staged) = viewModelScope.launch(Dispatchers.IO) {
+        staged?.discard(); staged = null
+        runCatching { stage() }.onSuccess { s ->
+            staged = s
+            val offer = RestoreOffer(RestoreText.preview(s.check), s.check !is RestoreCheck.Damaged)
+            if (!offer.canRestore) { s.discard(); staged = null }
+            backupUi.value = buildBackupUi(backupUi.value).let { it.copy(list = it.list ?: emptyList(), offer = offer) }
+        }.onFailure { message.value = "Could not read the backup: ${it.message}" }
+    }
+
+    /** The existing hardened, newer wins restore ([BackupReader] through Catalog.readBackup), on the file that was checked. */
+    fun confirmRestore() = viewModelScope.launch(Dispatchers.IO) {
+        val s = staged ?: return@launch
+        staged = null
+        runCatching { s.file.inputStream().use { catalog.readBackup(it) } }
+            .onSuccess { message.value = "Restored ${Plurals.edits(it)}" }.onFailure { message.value = "Restore failed: ${it.message}" }
+        s.discard()
+        closeRestoreList()
+    }
+
+    fun cancelRestore() { staged?.discard(); staged = null; closeRestoreList() }
 }
