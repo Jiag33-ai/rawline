@@ -423,6 +423,7 @@ bool Engine::renderRegion(const float *p, int pw, int ph, Rect vis, uint8_t *rgb
     int ow, oh;
     outputSize(p, ow, oh);
     setOutUniforms(out_.id, p, pw, ph, vis, float(ow) / oh, 0.f, linearHalfOut ? 1.f : 0.f, kMargin, outputSpace_);
+    glUniform1f(glGetUniformLocation(out_.id, "uMark"), debugOutside_ ? 1.f : 0.f);
     draw();
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     if (linearHalfOut) {

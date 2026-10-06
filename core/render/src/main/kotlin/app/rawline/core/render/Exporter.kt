@@ -105,7 +105,7 @@ class Exporter(
                 overlayOn = true
             }
             val lens = LensProfiles.get(context).find(photo.lens, photo.focal.toFloat(), photo.aperture.toFloat())
-            val params = RenderParams.build(recipe, info[2], layers, overlayOn = overlayOn, lens = lens, useBaseline = photo.kind == Kind.RAW)
+            val params = RenderParams.build(recipe, info[2], layers, overlayOn = overlayOn, lens = lens, useBaseline = photo.kind == Kind.RAW, srcW = info[0], srcH = info[1])
             params[P.G_DETAIL] += outputSharpening(s)
             val size = Native.engineOutputSize(engine, params)
             var tw = size[0]; var th = size[1]

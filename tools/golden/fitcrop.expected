@@ -1,0 +1,8 @@
+# Constrain-to-image fixtures shared by tools/golden/run-golden.sh (C++ solver in golden.cpp) and core/render GeoFitTest (Kotlin Geo.fitCrop).
+# name srcW srcH orientation angleRad ksV ksH manualDist lens cropW -> x y w h
+# ksV and ksH are the shader slots (slider / 100 * 0.5). lens: none | synth (Lumix style ptlens a b c) | fill (poly3 k1 = 0.06). Crop starts at x 0, y 0, h 1.
+rotcrop 3004 2004 1 0.1 0 0 0 none 1 -> 0.06450 0.06450 0.87100 0.87100
+cropmove 3004 2004 1 0.05 0 0 0 none 0.6 -> 0.21342 0.02237 0.57315 0.95525
+lensfit 3004 2004 1 0 0 0 0 synth 1 -> 0.00166 0.00166 0.99668 0.99668
+lensfill 3004 2004 1 0 0 0 0 fill 1 -> 0.04683 0.04683 0.90634 0.90634
+warpfit 3004 2004 1 -0.04 0.3 0.1 0 synth 1 -> 0.04902 0.04902 0.90197 0.90197
