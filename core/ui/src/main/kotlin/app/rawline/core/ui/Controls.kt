@@ -96,6 +96,8 @@ class ValueFeedback {
     fun release() { held = false }
     /** A short note with nothing held, for a reset: "Shadows: 0 (reset)". Stays about a second, then fades. */
     fun flash(label: String, value: String) { text = "$label: $value"; held = false; holdMs = 1000L; stamp++ }
+    /** A short sentence with nothing held, shown for [ms] (a result the person should be able to read, such as what Undo will do). */
+    fun note(sentence: String, ms: Long = 2500L) { text = sentence; held = false; holdMs = ms; stamp++ }
 }
 
 val LocalValueFeedback = compositionLocalOf { ValueFeedback() }

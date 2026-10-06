@@ -31,6 +31,7 @@ class Healer(
 ) {
     private var overlay: HealOverlay? = null
     private var applied: List<String?> = emptyList()
+    private var appliedLook = -1
     private val lama = lazy { TfModel(context, models.file("lama_dilated.tflite"), "lama") }
     val busy = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
 
@@ -40,14 +41,19 @@ class Healer(
 
     private fun ensureOverlay(): HealOverlay {
         overlay?.let { return it }
-        return HealOverlay(session, session.sourceWidth, session.sourceHeight, useBase = session.usesBaseCurve).also { overlay = it; session.setOverlayActive(true) }
+        return HealOverlay(session, session.sourceWidth, session.sourceHeight, session.currentRecipe.lookVersion, useBase = session.usesBaseCurve).also { overlay = it; session.setOverlayActive(true) }
     }
 
-    /** Rebuilds the overlay when the list of repairs changed (undo, redo, snapshot, opening a photo). */
-    fun sync(heals: List<HealOp>) {
+    /**
+     * Rebuilds the overlay when the list of repairs changed (undo, redo, snapshot, opening a photo) or when the edit moved to another look
+     * version (Update look and its undo): the patches are stored as display values, and the overlay holds them converted with the look's
+     * base curve, so it is made again from the stored patches under the new look.
+     */
+    fun sync(heals: List<HealOp>, look: Int) {
         val keys = heals.map { it.patchKey }
-        if (keys == applied) return
-        applied = keys
+        if (keys == applied && look == appliedLook) return
+        if (look != appliedLook) overlay = null
+        applied = keys; appliedLook = look
         if (heals.isEmpty()) { overlay?.clear(); session.setOverlayActive(false); return }
         val o = ensureOverlay()
         o.clear()

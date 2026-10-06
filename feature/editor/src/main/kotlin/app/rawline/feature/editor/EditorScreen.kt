@@ -569,6 +569,12 @@ fun EditorScreen(
                             LrMenuItem("Versions and history", { menu = false; tab = "history"; open = true }, LrIcon.VERSIONS)
                             LrMenuItem("Export settings", { menu = false; onExportSettings() }, LrIcon.DOWNLOAD)
                             Box(Modifier.fillMaxWidth().height(1.dp).background(Lr.Divider))
+                            // Look version: an edit made before the look update keeps its old rendering until the person moves it (one undoable step)
+                            if (state.canUpdateLook) {
+                                LrMenuItem("Look: earlier (made before the look update)", {}, LrIcon.INFO, enabled = false)
+                                LrMenuItem("Update look", { menu = false; state.updateLook(); feedback.note("Look updated. Undo to go back.") }, LrIcon.REFRESH)
+                            } else LrMenuItem("Look: current", {}, LrIcon.INFO, enabled = false)
+                            Box(Modifier.fillMaxWidth().height(1.dp).background(Lr.Divider))
                             LrMenuItem("Reset all edits", { menu = false; state.reset() }, LrIcon.RESET)
                         }
                     }

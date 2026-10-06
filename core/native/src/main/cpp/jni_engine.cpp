@@ -209,21 +209,41 @@ JNIEXPORT void JNICALL Java_app_rawline_core_nativelib_Native_engineUpdateOverla
     });
 }
 
-// Raw files get the camera-look base tone curve; finished pictures (JPEG, HEIC, PNG) must not, or they come out far too bright.
-JNIEXPORT void JNICALL Java_app_rawline_core_nativelib_Native_engineSetBaseCurve(JNIEnv *, jobject, jlong h, jboolean enabled) {
+// Raw files get the camera-look base tone curve of the edit's look version (1 or 2, see docs/COLOUR.md); finished pictures (JPEG, HEIC, PNG)
+// must not, or they come out far too bright. An unknown look reads as the newest the engine knows.
+static const float *baseCurveFor(jint look) { return look <= 1 ? kBaseCurve : kBaseCurve2; }
+
+JNIEXPORT void JNICALL Java_app_rawline_core_nativelib_Native_engineSetBaseCurve(JNIEnv *, jobject, jlong h, jboolean enabled, jint look) {
     guardedV("engineSetBaseCurve", [&]() {
-        if (enabled) { eng(h)->setBaseCurve(kBaseCurve); return; }
+        if (enabled) { eng(h)->setBaseCurve(baseCurveFor(look)); return; }
         float identity[256];
         for (int i = 0; i < 256; i++) identity[i] = i / 255.0f;
         eng(h)->setBaseCurve(identity);
     });
 }
 
-JNIEXPORT jfloatArray JNICALL Java_app_rawline_core_nativelib_Native_baseCurve(JNIEnv *env, jobject) {
+// Multiplier on every source texel: look 1 LibRaw's old white point factor, look 2 the white balance neutral gain (1 for finished pictures).
+JNIEXPORT void JNICALL Java_app_rawline_core_nativelib_Native_engineSetSrcGain(JNIEnv *, jobject, jlong h, jfloat gain) {
+    guardedV("engineSetSrcGain", [&]() { eng(h)->setSrcGain(gain); });
+}
+
+// [v1Scale, wbGain] of a decoded image (both 1 for a finished picture), read before engineSetSource consumes the handle.
+JNIEXPORT jfloatArray JNICALL Java_app_rawline_core_nativelib_Native_rawGains(JNIEnv *env, jobject, jlong h) {
+    return guarded<jfloatArray>("rawGains", nullptr, [&]() -> jfloatArray {
+        auto *img = rawh(h);
+        jfloat v[2] = {img->v1Scale, img->wbGain};
+        jfloatArray a = env->NewFloatArray(2);
+        if (!a) return nullptr;
+        env->SetFloatArrayRegion(a, 0, 2, v);
+        return a;
+    });
+}
+
+JNIEXPORT jfloatArray JNICALL Java_app_rawline_core_nativelib_Native_baseCurve(JNIEnv *env, jobject, jint look) {
     return guarded<jfloatArray>("baseCurve", nullptr, [&]() -> jfloatArray {
         jfloatArray a = env->NewFloatArray(256);
         if (!a) return nullptr;
-        env->SetFloatArrayRegion(a, 0, 256, kBaseCurve);
+        env->SetFloatArrayRegion(a, 0, 256, baseCurveFor(look));
         return a;
     });
 }

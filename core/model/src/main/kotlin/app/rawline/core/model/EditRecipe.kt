@@ -80,8 +80,24 @@ data class Mask(
 /** [region] is x, y, w, h of the patch in the source image, normalised. Strokes are in the masks' frame. */
 data class HealOp(val kind: String, val stroke: BrushStroke, val sourceX: Float = 0f, val sourceY: Float = 0f, val patchKey: String? = null, val region: List<Float> = emptyList())
 
+/**
+ * Look versions. V1 is the rendering every edit made before this field existed was judged under: LibRaw lowers its white point to the frame's
+ * brightest pixel when that pixel is between 75 and 100 percent of white (up to +0.4 EV), white balance dims the picture by min(AsShotNeutral), and the
+ * base curve has no shoulder at white. V2 removes those three effects (see docs/COLOUR.md). A saved edit keeps its version; only an explicit
+ * "Update look" (or a reset, which is a new edit) moves it.
+ */
+object Look {
+    const val V1 = 1
+    const val V2 = 2
+    const val CURRENT = V2
+    /** A version this build cannot render (written by a newer build) is shown with the newest look it knows rather than refused. */
+    fun supported(v: Int) = v.coerceIn(V1, CURRENT)
+}
+
 data class EditRecipe(
     val schemaVersion: Int = 1,
+    /** Which tone and white point behaviour renders this edit (see Look). Edits saved before the field existed read as [Look.V1] and keep their exact old rendering until the user updates them. */
+    val lookVersion: Int = Look.CURRENT,
     val adjust: Adjust = Adjust(),
     val detail: Detail = Detail(),
     val effects: Effects = Effects(),
@@ -91,6 +107,9 @@ data class EditRecipe(
     val heals: List<HealOp> = emptyList(),
 ) {
     val isDefault get() = this == EditRecipe()
+
+    /** The same edit under the current look (what "Update look" does). Not a default recipe's concern: only recipes that were saved under an older look differ. */
+    fun withCurrentLook() = if (lookVersion == Look.CURRENT) this else copy(lookVersion = Look.CURRENT)
 
     fun toJson(): String = RecipeJson.write(this)
 
@@ -156,6 +175,7 @@ object RecipeJson {
 
     fun write(r: EditRecipe): String = JSONObject().apply {
         put("schemaVersion", r.schemaVersion)
+        put("lookVersion", r.lookVersion)
         put("adjust", adjustToJson(r.adjust))
         put("detail", JSONObject().apply {
             put("sharpen", r.detail.sharpen.toDouble()); put("radius", r.detail.radius.toDouble()); put("detail", r.detail.detail.toDouble())
@@ -212,6 +232,7 @@ object RecipeJson {
         val heals = o.optJSONArray("heals")
         return EditRecipe(
             o.optInt("schemaVersion", 1),
+            Look.supported(o.optInt("lookVersion", Look.V1)),   // a recipe without the key was made under the first look
             o.optJSONObject("adjust")?.let(::adjustFromJson) ?: Adjust(),
             if (d == null) Detail() else Detail(
                 d.optDouble("sharpen", 0.0).toFloat(), d.optDouble("radius", 1.0).toFloat(), d.optDouble("detail", 25.0).toFloat(),

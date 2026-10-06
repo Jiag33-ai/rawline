@@ -3,6 +3,7 @@ package app.rawline.feature.editor
 import app.rawline.core.model.Adjust
 import app.rawline.core.model.EditRecipe
 import app.rawline.core.model.Geometry
+import app.rawline.core.model.Look
 import app.rawline.core.render.EditorSession
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -20,6 +21,47 @@ class EditorTest {
         val full = Presets.apply(base, preset, 1f)
         assertEquals(30f, full.adjust.contrast, 1e-4f)
         assertEquals(0.5f, full.geometry.cropW)   // crop is never touched by a look
+    }
+
+    @Test fun applyPresetKeepsTheTargetsLook() {
+        val old = EditRecipe(lookVersion = Look.V1, adjust = Adjust(contrast = 10f))
+        val preset = EditRecipe(adjust = Adjust(contrast = 30f, saturation = 20f))   // a preset saved from a new edit (look 2)
+        for (t in listOf(0f, 0.5f, 1f)) assertEquals(Look.V1, Presets.apply(old, preset, t).lookVersion)
+        assertEquals(Look.CURRENT, Presets.apply(EditRecipe(), EditRecipe(lookVersion = Look.V1, adjust = Adjust(contrast = 30f)), 1f).lookVersion)
+        for (p in Presets.builtIn) assertEquals(p.name, Look.V1, Presets.apply(old, p.recipe, 1f).lookVersion)
+    }
+
+    // EditorSession only queues work until a GL view exists, so a session built on a stub context is enough to drive the history.
+    private fun stateOf(r: EditRecipe) = EditorState(r, EditorSession(android.content.ContextWrapper(null)))
+
+    @Test fun updateLookIsOneUndoableStepAndChangesNothingElse() {
+        val old = EditRecipe(lookVersion = Look.V1, adjust = Adjust(exposure = 0.3f, contrast = 12f))
+        val st = stateOf(old)
+        assertTrue(st.canUpdateLook)
+        st.updateLook()
+        assertEquals(Look.CURRENT, st.recipe.lookVersion)
+        assertEquals(old.copy(lookVersion = Look.CURRENT), st.recipe)
+        assertEquals(2, st.history.size); assertEquals("Update look", st.history.last().label)
+        assertEquals(Look.CURRENT, st.session.currentRecipe.lookVersion)   // the session (and so the engine) follows
+        st.undo()
+        assertEquals(old, st.recipe); assertEquals(Look.V1, st.session.currentRecipe.lookVersion)
+        st.redo()
+        assertEquals(Look.CURRENT, st.recipe.lookVersion)
+    }
+
+    @Test fun updateLookDoesNothingOnACurrentEdit() {
+        val st = stateOf(EditRecipe(adjust = Adjust(exposure = 0.3f)))
+        assertEquals(false, st.canUpdateLook)
+        st.updateLook()
+        assertEquals(1, st.history.size)
+    }
+
+    @Test fun resetMovesAnOldEditToTheCurrentLook() {
+        val st = stateOf(EditRecipe(lookVersion = Look.V1, adjust = Adjust(exposure = 0.3f)))
+        st.reset()
+        assertTrue(st.recipe.isDefault); assertEquals(Look.CURRENT, st.recipe.lookVersion)
+        st.undo()
+        assertEquals(Look.V1, st.recipe.lookVersion)
     }
 
     @Test fun builtInPresetsHaveUniqueNames() {

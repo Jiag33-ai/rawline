@@ -128,11 +128,11 @@ object RenderParams {
             texture = recipe.adjust.texture + Baseline.TEXTURE,
             clarity = recipe.adjust.clarity + Baseline.CLARITY,
         ) else recipe.adjust
-        writeBlock(out, 0, base, written, useBaseline)
+        writeBlock(out, 0, base, written, useBaseline, recipe.lookVersion)
         val masks = recipe.masks.filter { it.visible }.take(P.MAX_MASKS)
         out[P.G_NUM_MASKS] = masks.size.toFloat()
         masks.forEachIndexed { i, m ->
-            writeBlock(out, 1 + i, m.adjust, written, useBaseline)
+            writeBlock(out, 1 + i, m.adjust, written, useBaseline, recipe.lookVersion)
             writeMask(out, i, m, layers)
         }
         // identity curves for rows nobody wrote (a real inverted curve ends at 0, so test what was written, not the values)
@@ -140,7 +140,7 @@ object RenderParams {
         return out
     }
 
-    private fun writeBlock(out: FloatArray, block: Int, a: Adjust, written: BooleanArray, useBaseline: Boolean) {
+    private fun writeBlock(out: FloatArray, block: Int, a: Adjust, written: BooleanArray, useBaseline: Boolean, look: Int) {
         val o = P.OFF_BLOCKS + block * P.BLOCK_FLOATS
         out[o] = a.exposure; out[o + 1] = a.contrast; out[o + 2] = a.highlights; out[o + 3] = a.shadows
         out[o + 4] = a.whites; out[o + 5] = a.blacks; out[o + 6] = a.temp; out[o + 7] = a.tint
@@ -158,10 +158,10 @@ object RenderParams {
         out[o + 62] = if (c.green.size >= 2) 1f else 0f
         out[o + 63] = if (c.blue.size >= 2) 1f else 0f
         fun put(row: Int, lut: FloatArray) { written[block * 4 + row] = true; System.arraycopy(lut, 0, out, P.OFF_CURVES + (block * 4 + row) * 256, 256) }
-        if (master) put(0, BaseCurve.toWorking(CurveMath.lut(c.master, c.parametric), useBaseline))
-        if (c.red.size >= 2) put(1, BaseCurve.toWorking(CurveMath.lut(c.red), useBaseline))
-        if (c.green.size >= 2) put(2, BaseCurve.toWorking(CurveMath.lut(c.green), useBaseline))
-        if (c.blue.size >= 2) put(3, BaseCurve.toWorking(CurveMath.lut(c.blue), useBaseline))
+        if (master) put(0, BaseCurve.toWorking(CurveMath.lut(c.master, c.parametric), useBaseline, look))
+        if (c.red.size >= 2) put(1, BaseCurve.toWorking(CurveMath.lut(c.red), useBaseline, look))
+        if (c.green.size >= 2) put(2, BaseCurve.toWorking(CurveMath.lut(c.green), useBaseline, look))
+        if (c.blue.size >= 2) put(3, BaseCurve.toWorking(CurveMath.lut(c.blue), useBaseline, look))
     }
 
     private fun writeMask(out: FloatArray, index: Int, m: Mask, layers: Map<String, Int>) {

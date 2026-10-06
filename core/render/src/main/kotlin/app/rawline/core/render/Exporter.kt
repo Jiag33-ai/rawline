@@ -79,13 +79,17 @@ class Exporter(
             if (handle == 0L) throw IllegalStateException("Could not decode ${photo.name}")
             val info = Native.rawInfo(handle)
             if (recipe.detail.aiDenoise && denoise != null) {
-                kotlinx.coroutines.runBlocking { denoise.invoke(handle, recipe.detail.aiDenoiseAmount) { onProgress(it * 0.4f) } }
+                kotlinx.coroutines.runBlocking { denoise.invoke(handle, recipe.detail.aiDenoiseAmount, recipe.lookVersion) { onProgress(it * 0.4f) } }
             }
             // engineSetSource frees the CPU image whether or not the upload worked, so drop our handle before checking.
+            val gains = Native.rawGains(handle)   // read before the upload consumes the handle
             val uploaded = Native.engineSetSource(engine, handle)
             handle = 0L
             if (!uploaded) throw IllegalStateException("GPU upload failed")
-            Native.engineSetBaseCurve(engine, photo.kind == Kind.RAW)
+            // The edit's own look, as in the editor: an old edit exports the pixels it always did, a new one the current look.
+            val isRaw = photo.kind == Kind.RAW
+            Native.engineSetBaseCurve(engine, isRaw, recipe.lookVersion)
+            Native.engineSetSrcGain(engine, LookGains.srcGain(recipe.lookVersion, gains, !isRaw))
 
             // Mask layers (brush and AI) and heal overlay
             val layers = HashMap<String, Int>()
@@ -99,7 +103,7 @@ class Exporter(
                     override fun setOverlay(rgbaHalf: ShortArray?, w: Int, h: Int) = Native.engineSetOverlay(engine, rgbaHalf, w, h)
                     override fun updateOverlay(x: Int, y: Int, w: Int, h: Int, rgbaHalf: ShortArray) = Native.engineUpdateOverlay(engine, x, y, w, h, rgbaHalf)
                 }
-                val ov = HealOverlay(sink, info[0], info[1], useBase = photo.kind == Kind.RAW)
+                val ov = HealOverlay(sink, info[0], info[1], recipe.lookVersion, useBase = photo.kind == Kind.RAW)
                 recipe.heals.forEach { op ->
                     val key = op.patchKey ?: return@forEach
                     patches.load(key)?.let { (px, w, h) -> if (op.region.size == 4) ov.apply(op.region, px, w, h) }

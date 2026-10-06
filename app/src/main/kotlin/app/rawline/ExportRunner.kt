@@ -35,7 +35,7 @@ class ExportRunner(private val context: Context, private val graph: Graph) {
     /** Set when the service is being stopped (time limit or destroyed): the running job goes back to waiting instead of being cancelled. */
     @Volatile var stopRequested = false
 
-    private val exporter = Exporter(context, graph.maskStore, graph.patchStore) { h, a, p -> Denoiser(context, graph.modelStore).let { d -> try { d.run(h, a, p) } finally { d.release() } } }
+    private val exporter = Exporter(context, graph.maskStore, graph.patchStore) { h, a, l, p -> Denoiser(context, graph.modelStore).let { d -> try { d.run(h, a, l, p) } finally { d.release() } } }
 
     /** Adds photos to the export queue (kept in the database) and makes sure the service is working through it. */
     suspend fun enqueue(photos: List<Photo>, settings: ExportSettings) {

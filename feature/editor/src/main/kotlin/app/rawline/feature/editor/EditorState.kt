@@ -7,6 +7,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateListOf
 import app.rawline.core.model.EditRecipe
 import app.rawline.core.model.Geometry
+import app.rawline.core.model.Look
 import app.rawline.core.render.EditorSession
 
 data class HistoryEntry(val label: String, val recipe: EditRecipe)
@@ -69,7 +70,14 @@ class EditorState(
         }
     }
 
+    /** Reset builds a new edit, so the photo moves to the current look (as an unedited photo does). */
     fun reset() { edit("Reset") { EditRecipe() } }
+
+    /** True for an edit saved under an earlier look version (the editor then offers "Update look"). */
+    val canUpdateLook get() = recipe.lookVersion != Look.CURRENT
+
+    /** Moves the edit to the current look. One history step, so Undo goes back to the earlier look; nothing else in the recipe changes. */
+    fun updateLook() { if (canUpdateLook) edit("Update look") { it.withCurrentLook() } }
 
     fun addSnapshot(id: Long, name: String) { snapshots.add(0, Snapshot(id, name, recipe)) }
     fun applySnapshot(s: Snapshot) { edit("Snapshot ${s.name}") { s.recipe } }

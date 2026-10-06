@@ -13,6 +13,7 @@
 #include <map>
 #include <string>
 
+#include "engine/base_curve.h"
 #include "engine/engine.h"
 #include "engine/halfs.h"
 #include "engine/params.h"
@@ -137,6 +138,7 @@ int main(int argc, char **argv) {
         {"whites", S_WHITES}, {"blacks", S_BLACKS}, {"temp", S_TEMP}, {"tint", S_TINT}, {"vibrance", S_VIBRANCE},
         {"saturation", S_SATURATION}, {"texture", S_TEXTURE}, {"clarity", S_CLARITY}, {"dehaze", S_DEHAZE}};
     bool autofit = false, mark = false, useMaskExposure = false;
+    int look = 2;
     float maskExposure = 0.f;
     for (int i = 5; i < argc; i++) {
         std::string a = argv[i];
@@ -145,6 +147,7 @@ int main(int argc, char **argv) {
         std::string k = a.substr(0, eq);
         float v = float(atof(a.c_str() + eq + 1));
         if (blockSlots.count(k)) p[kOffBlocks + blockSlots[k]] = v;
+        else if (k == "look") look = int(v);
         else if (k == "sharpen") p[G_DETAIL] = v;
         else if (k == "nrl") p[G_NR] = v;
         else if (k == "nrc") p[G_NR + 1] = v;
@@ -237,7 +240,10 @@ int main(int argc, char **argv) {
         }
     }
     if (useMaskExposure) p[kOffBlocks + kBlockFloats + S_EXPOSURE] = maskExposure;
-    fprintf(stderr, "SRC %d %d %d\n", img.width, img.height, ori);
+    eng.setBaseCurve(look == 1 ? kBaseCurve : kBaseCurve2);
+    eng.setSrcGain(look == 1 ? img.v1Scale : img.wbGain);
+    fprintf(stderr, "SRC %d %d %d\n", img.width, img.height, ori);   // read by run-golden.sh and fitcheck.py: keep this line as it is
+    fprintf(stderr, "LOOK %d gain %.4f\n", look, look == 1 ? img.v1Scale : img.wbGain);
     if (autofit) {
         fitCrop(p.data(), float(img.width), float(img.height));
         fprintf(stderr, "FITCROP %.5f %.5f %.5f %.5f\n", p[G_CROP], p[G_CROP + 1], p[G_CROP + 2], p[G_CROP + 3]);

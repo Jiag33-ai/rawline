@@ -47,6 +47,8 @@ struct RawImage {
     HalfBuffer half;              // RGBA half float, linear ProPhoto, row 0 = top
     std::string camera;
     float wbMul[4] = {1, 1, 1, 1};
+    float v1Scale = 1.f;   // factor LibRaw's default white point rule would have applied (look version 1)
+    float wbGain = 1.f;    // brings a neutral back to the level it has at unity white balance (look version 2)
 };
 
 /**

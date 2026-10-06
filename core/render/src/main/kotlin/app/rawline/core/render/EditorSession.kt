@@ -38,7 +38,8 @@ data class SessionState(
  * everything that touches the engine runs on the GL thread via queueEvent.
  */
 /** Optional heavy step run on a decoded raw before it is uploaded (AI denoise). Returns false if it could not run. */
-typealias SourceHook = suspend (handle: Long, amountPercent: Float, onProgress: (Float) -> Unit) -> Boolean
+/** [look] is the edit's look version, so the step sees the picture as the edit's tone curve and source gain will draw it. */
+typealias SourceHook = suspend (handle: Long, amountPercent: Float, look: Int, onProgress: (Float) -> Unit) -> Boolean
 
 class EditorSession(
     private val context: Context,
@@ -130,7 +131,7 @@ class EditorSession(
                 post(onDrop = { Native.freeRaw(handle) }) {
                     if (gen != generation.get() || engine == 0L) { Native.freeRaw(handle); return@post }
                     val u0 = System.nanoTime()
-                    val ok = Native.engineSetSource(engine, handle).also { Native.engineSetBaseCurve(engine, !finishedPicture) }
+                    val ok = adoptSource(handle)
                     val upMs = (System.nanoTime() - u0) / 1_000_000
                     onTiming("edit_upload_ms", upMs)
                     if (!ok) { _state.value = SessionState(Stage.ERROR, "GPU upload failed"); return@post }
@@ -146,7 +147,16 @@ class EditorSession(
         }
     }
 
-    fun setRecipe(r: EditRecipe) { recipe = r; post { rebuild(); requestRender() }; wantHistogram = true }
+    /**
+     * Sets the edit. A change of look version (Update look and its undo, opening a stored edit) switches the engine's base curve and source gain
+     * as well, on the GL thread, before the next frame.
+     */
+    fun setRecipe(r: EditRecipe) {
+        val lookChanged = r.lookVersion != recipe.lookVersion
+        recipe = r
+        post { if (lookChanged) applyLook(); rebuild(); requestRender() }
+        wantHistogram = true
+    }
     fun setBefore(b: Boolean) { before = b; post { rebuild(); requestRender() } }
     /** While cropping, the full uncropped frame is shown so the crop rectangle can be edited against it. */
     fun setCropMode(on: Boolean) { cropMode = on; post { rebuild(); requestRender() } }
@@ -227,14 +237,13 @@ class EditorSession(
             try { maybeDenoise(handle) } catch (e: Throwable) { Native.freeRaw(handle); throw e }
             post(onDrop = { Native.freeRaw(handle) }) {
                 if (gen != generation.get() || engine == 0L) { Native.freeRaw(handle); return@post }
-                if (!Native.engineSetSource(engine, handle)) {
+                if (!adoptSource(handle)) {
                     // The engine builds the new texture first and only swaps it in when it is complete, so the preview source is still
                     // in place and the picture keeps drawing. The upload failed for size (GPU memory), so asking again would fail the
                     // same way: stay on the preview resolution for this photo and say so.
                     notice("Not enough GPU memory for full resolution. Zoom stays at preview detail.")
                     return@post
                 }
-                Native.engineSetBaseCurve(engine, !finishedPicture)
                 rebuild()
                 _state.value = _state.value.copy(usingFull = true, outW = geometryOutSize[0], outH = geometryOutSize[1])
                 requestRender()
@@ -248,7 +257,7 @@ class EditorSession(
     suspend fun baseStats(): ImageStats? {
         val d = CompletableDeferred<ImageStats?>()
         post(onDrop = { d.complete(null) }) {
-            val arr = RenderParams.build(EditRecipe(geometry = recipe.geometry.copy(cropX = 0f, cropY = 0f, cropW = 1f, cropH = 1f, angle = 0f)), orientation, emptyMap(), useBaseline = !finishedPicture)
+            val arr = RenderParams.build(EditRecipe(lookVersion = recipe.lookVersion, geometry = recipe.geometry.copy(cropX = 0f, cropY = 0f, cropW = 1f, cropH = 1f, angle = 0f)), orientation, emptyMap(), useBaseline = !finishedPicture)
             val w = 160
             val ow = Native.engineOutputSize(engine, arr)
             val h = (w * ow[1].toFloat() / ow[0]).toInt().coerceIn(16, 400)
@@ -295,7 +304,7 @@ class EditorSession(
             val g = recipe.geometry.copy(cropX = 0f, cropY = 0f, cropW = 1f, cropH = 1f, keystoneV = recipe.geometry.keystoneV, keystoneH = recipe.geometry.keystoneH)
             // The picture on screen has the lens profile and the manual distortion applied between the frame and the source; the AI
             // must see the same picture or its mask edges land displaced (about 150 px at 24 MP in the corners of a 20 mm shot).
-            val arr = RenderParams.build(EditRecipe(geometry = g, optics = recipe.optics), orientation, emptyMap(), useBaseline = !finishedPicture, lens = lens)
+            val arr = RenderParams.build(EditRecipe(lookVersion = recipe.lookVersion, geometry = g, optics = recipe.optics), orientation, emptyMap(), useBaseline = !finishedPicture, lens = lens)
             val ow = Native.engineOutputSize(engine, arr)
             val s = maxEdge.toFloat() / maxOf(ow[0], ow[1])
             val w = (ow[0] * s).toInt().coerceAtLeast(8); val h = (ow[1] * s).toInt().coerceAtLeast(8)
@@ -357,12 +366,33 @@ class EditorSession(
         val hook = denoise ?: return
         if (!d.aiDenoise) return
         val ok = try {
-            hook(handle, d.aiDenoiseAmount) { _status.value = "AI denoise ${(it * 100).toInt()}%" }
+            hook(handle, d.aiDenoiseAmount, recipe.lookVersion) { _status.value = "AI denoise ${(it * 100).toInt()}%" }
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Throwable) { false }
         _status.value = if (ok) null else "AI denoise could not run"
         if (ok) appliedDenoise = d.aiDenoiseAmount
     }
     private var appliedDenoise = -1f
+
+    /** [look 1 white point factor, look 2 white balance gain] of the source on the GPU (both 1 for a finished picture). GL thread. */
+    private var gains = floatArrayOf(1f, 1f)
+
+    /**
+     * Uploads a decoded image (which frees it, so its gains are read first) and, when that worked, applies the edit's look to it. GL thread.
+     * When the upload fails the old source stays in place with its own gains.
+     */
+    private fun adoptSource(handle: Long): Boolean {
+        val g = Native.rawGains(handle)
+        val ok = Native.engineSetSource(engine, handle)
+        if (ok) { if (g.size == 2) gains = g; applyLook() }
+        return ok
+    }
+
+    /** Base curve and source gain for the edit's look version (docs/COLOUR.md). GL thread. */
+    private fun applyLook() {
+        val look = recipe.lookVersion
+        Native.engineSetBaseCurve(engine, !finishedPicture, look)
+        Native.engineSetSrcGain(engine, LookGains.srcGain(look, gains, finishedPicture))
+    }
 
     /** Call after the AI denoise setting was committed: decodes again with the new setting and swaps the source. */
     fun reloadSource() {
@@ -384,8 +414,7 @@ class EditorSession(
                 if (!d.aiDenoise) { _status.value = null }
                 post(onDrop = { Native.freeRaw(handle) }) {
                     if (gen != generation.get() || engine == 0L) { Native.freeRaw(handle); return@post }
-                    if (!Native.engineSetSource(engine, handle)) { _status.value = "Update failed"; return@post }   // the previous source stays in place
-                    Native.engineSetBaseCurve(engine, !finishedPicture)
+                    if (!adoptSource(handle)) { _status.value = "Update failed"; return@post }   // the previous source stays in place
                     srcW = info[0]; srcH = info[1]
                     rebuild(); requestRender()
                 }
@@ -468,7 +497,7 @@ class EditorSession(
 
     private fun rebuild() {
         if (engine == 0L) return
-        var r = if (before) EditRecipe() else recipe
+        var r = if (before) EditRecipe(lookVersion = recipe.lookVersion) else recipe
         if (cropMode && !before) r = r.copy(geometry = r.geometry.copy(cropX = 0f, cropY = 0f, cropW = 1f, cropH = 1f))
         val arr = RenderParams.build(r, orientation, layerIndex, showMask = if (before) -1 else showMask, overlayOn = overlayOn && !before, lens = if (before) null else lens, useBaseline = !finishedPicture,
             out = paramsBuf, srcW = if (cropMode || before) 0 else srcW, srcH = if (cropMode || before) 0 else srcH)

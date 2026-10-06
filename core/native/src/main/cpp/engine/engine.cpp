@@ -374,6 +374,7 @@ void Engine::runAnalysis(const float *p) {
     glUniform1f(lowres_.u("uFlipY"), 0.f);
     setGeometryUniforms(lowres_, p);
     float ratio = std::max(float(ow) / lw, float(oh) / lh);
+    glUniform1f(lowres_.u("uSrcGain"), srcGain_);
     glUniform1f(lowres_.u("uLod"), std::clamp(std::log2(std::max(1.f, ratio)), 0.f, float(srcLevels_ - 1)));
     glBindFramebuffer(GL_FRAMEBUFFER, l0_.fbo);
     draw();
@@ -430,6 +431,7 @@ void Engine::runMain(const float *p, Rect vis, int pw, int ph, Target &e, int ma
     float bw = std::max(float(srcW_), 1.f);
     // How many source pixels land on one output pixel (oriented crop size is in source pixels already).
     float lod = std::log2(std::max(1.f, std::max(hx, hy)));
+    glUniform1f(pr.u("uSrcGain"), srcGain_);
     glUniform1f(pr.u("uLod"), std::clamp(lod, 0.f, float(srcLevels_ - 1)));
     glUniform1i(pr.u("uNumMasks"), int(p[G_NUM_MASKS] + 0.5f));
     glUniform1i(pr.u("uShowMask"), int(std::lround(p[G_SHOWMASK])));

@@ -28,6 +28,8 @@ public:
     void setOverlay(const uint8_t *rgbaHalf, int w, int h);   // whole overlay, null clears
     void updateOverlayRegion(int x, int y, int w, int h, const uint8_t *rgbaHalf);   // premultiplied RGBA half float
     void setBaseCurve(const float *lut256);
+    /** Multiplier applied to every source texel (look version: 1 = LibRaw's old white point rule, 2 = white balance neutral gain). */
+    void setSrcGain(float g) { if (g != srcGain_) { srcGain_ = g; invalidateAnalysis(); } }
 
     /** Size in pixels of the final image for these params at full source resolution. */
     void outputSize(const float *params, int &w, int &h) const;
@@ -90,6 +92,7 @@ private:
     GLuint srcTex_ = 0, blocksTex_ = 0, masksTex_ = 0, curvesTex_ = 0, layersTex_ = 0, overlayTex_ = 0, baseTex_ = 0, baseTex32_ = 0;
     Target l0_, bs_, bl_, bd_, tmp_, e_, outT_, eS_, outS_;   // eS_ and outS_: small renders (see drawOutput)
     int srcW_ = 0, srcH_ = 0, srcLevels_ = 1;
+    float srcGain_ = 1.f;
     int overlayW_ = 0;
     uint64_t analysisKey_ = ~0ull;
     std::vector<float> lastCurves_;

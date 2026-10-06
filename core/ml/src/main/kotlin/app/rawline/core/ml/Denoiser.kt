@@ -4,6 +4,7 @@ import android.content.Context
 import app.rawline.core.cache.PerfLog
 import app.rawline.core.nativelib.Native
 import app.rawline.core.render.ColorSpaces
+import app.rawline.core.render.LookGains
 import kotlinx.coroutines.ensureActive
 import kotlin.coroutines.coroutineContext
 import kotlin.math.min
@@ -19,7 +20,11 @@ class Denoiser(private val context: Context, private val store: ModelStore) {
     /** Frees the model's interpreter and GPU delegate (only if it was ever started). */
     fun release() { if (model.isInitialized()) model.value.release() }
 
-    suspend fun run(handle: Long, amountPercent: Float, onProgress: (Float) -> Unit): Boolean {
+    /**
+     * [look] is the edit's look version. The model sees the picture the way that look draws it: the decoded values times the look's source
+     * gain, through the look's base curve. The result is converted back the same way, so tone and colour round trip.
+     */
+    suspend fun run(handle: Long, amountPercent: Float, look: Int, onProgress: (Float) -> Unit): Boolean {
         if (!store.ensure(Models.DENOISE)) return false
         val info = Native.rawInfo(handle)
         val w = info[0]; val h = info[1]
@@ -33,9 +38,10 @@ class Denoiser(private val context: Context, private val store: ModelStore) {
         val den = FloatArray(tile * tile * 3)
         val chan = Array(3) { FloatArray(tile * tile) }
         val tmp = FloatArray(3)
+        val gain = LookGains.srcGain(look, Native.rawGains(handle))
         denoiseTiles(w, h, tile, overlap, read = { x0, y0 -> Native.rawRead(handle, x0, y0, tile, tile) }, process = { lin, cw, ch ->
             for (i in 0 until tile * tile) {
-                ColorSpaces.workingToDisplay(lin[i * 3], lin[i * 3 + 1], lin[i * 3 + 2], tmp)
+                ColorSpaces.workingToDisplay(lin[i * 3] * gain, lin[i * 3 + 1] * gain, lin[i * 3 + 2] * gain, tmp, look)
                 disp[i * 3] = tmp[0]; disp[i * 3 + 1] = tmp[1]; disp[i * 3 + 2] = tmp[2]
             }
             inBuf.rewind(); inBuf.asFloatBuffer().put(disp)
@@ -52,7 +58,8 @@ class Denoiser(private val context: Context, private val store: ModelStore) {
                 val r = (disp[i * 3] + amount * (chan[0][i] - low[0][i])).coerceIn(0f, 1f)
                 val g = (disp[i * 3 + 1] + amount * (chan[1][i] - low[1][i])).coerceIn(0f, 1f)
                 val b = (disp[i * 3 + 2] + amount * (chan[2][i] - low[2][i])).coerceIn(0f, 1f)
-                ColorSpaces.displayToWorking(r, g, b, tmp)
+                ColorSpaces.displayToWorking(r, g, b, tmp, look)
+                tmp[0] /= gain; tmp[1] /= gain; tmp[2] /= gain
                 // Keep the original where nothing changed, to avoid rounding drift through the curve
                 val o = (y * cw + x) * 3
                 val changed = kotlin.math.abs(chan[0][i] - low[0][i]) + kotlin.math.abs(chan[1][i] - low[1][i]) + kotlin.math.abs(chan[2][i] - low[2][i])

@@ -5,11 +5,13 @@ import app.rawline.core.model.CurvePoint
 import app.rawline.core.model.Curves
 import app.rawline.core.model.EditRecipe
 import app.rawline.core.model.Geometry
+import app.rawline.core.model.Look
 import app.rawline.core.model.Mask
 import app.rawline.core.model.MaskComponent
 import app.rawline.core.model.MaskType
 import app.rawline.core.model.Optics
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayOutputStream
@@ -44,21 +46,57 @@ class RenderTest {
     }
 
     @Test fun baseCurveTableMatchesTheEngineHeader() {
-        val text = listOf("../core/native/src/main/cpp/engine/base_curve.h", "../native/src/main/cpp/engine/base_curve.h", "core/native/src/main/cpp/engine/base_curve.h").map(::File).first { it.exists() }.readText().substringAfter('{')
-        val nums = Regex("""\d\.\d+""").findAll(text).map { it.value.toFloat() }.toList()
+        val nums = headerTable("kBaseCurve")
         assertEquals(256, nums.size)
         for (i in 0 until 256) assertEquals(nums[i], BaseCurve.TABLE[i], 1e-6f)
     }
 
+    private fun headerText() = listOf("../core/native/src/main/cpp/engine/base_curve.h", "../native/src/main/cpp/engine/base_curve.h", "core/native/src/main/cpp/engine/base_curve.h").map(::File).first { it.exists() }.readText()
+    /** The numbers of one table of base_curve.h (the comments between the tables are skipped). */
+    private fun headerTable(name: String): List<Float> {
+        val from = headerText().substringAfter("static const float $name[256] = {").substringBefore("};")
+        return Regex("""\d\.\d+""").findAll(from).map { it.value.toFloat() }.toList()
+    }
+
+    @Test fun lookTwoCurveTableMatchesTheEngineHeader() {
+        val nums = headerTable("kBaseCurve2")
+        assertEquals(256, nums.size)
+        for (i in 0 until 256) assertEquals(nums[i], BaseCurve.TABLE2[i], 1e-6f)
+    }
+
+    @Test fun lookOneCurveInTheHeaderNeverChanges() {
+        // Every edit saved before looks existed is drawn through this table. A later look adds a table of its own; this one stays byte for byte.
+        val h = headerText()
+        val start = h.indexOf("static const float kBaseCurve[256]")
+        val block = h.substring(start, h.indexOf("};", start) + 2)
+        val sha = java.security.MessageDigest.getInstance("SHA-256").digest(block.toByteArray()).joinToString("") { "%02x".format(it) }
+        assertEquals("a6486cc09851dfc632c179df414b2e234b09619738ae1961094e561e7ac9486d", sha)
+    }
+
+    @Test fun lookTwoCurveHasTheProperties() {
+        val t = BaseCurve.TABLE2
+        assertEquals(0f, t[0], 0f); assertEquals(1f, t[255], 0f)
+        for (i in 1 until 256) assertTrue("monotonic at $i", t[i] >= t[i - 1])
+        assertTrue("shoulder: the last step is under half a mid step", t[255] - t[254] < 0.5f * (t[200] - t[199]))
+        // below the knee (neutral level 0.55 of white) look 2 is look 1 for a neutral that look 1 sees at 0.4971 of that level: spot check mid tones
+        fun oetf(l: Double) = if (l <= 0.0031308) 12.92 * l else 1.055 * Math.pow(l, 1 / 2.4) - 0.055
+        fun lookup(tab: FloatArray, s: Double): Double { val p = s * 255; val i = p.toInt().coerceAtMost(254); return tab[i] + (tab[i + 1] - tab[i]) * (p - i) }
+        for (lin in listOf(0.02, 0.05, 0.1, 0.18, 0.3, 0.5)) {
+            val two = lookup(BaseCurve.TABLE2, oetf(lin)); val one = lookup(BaseCurve.TABLE, oetf(0.4971 * lin))
+            assertEquals("linear $lin", one, two, 0.003)
+        }
+        assertSame(BaseCurve.TABLE, BaseCurve.table(Look.V1)); assertSame(BaseCurve.TABLE2, BaseCurve.table(Look.V2))
+    }
+
     @Test fun curveActsOnTheDisplayValueNotTheLinearOne() {
         val id = FloatArray(256) { it / 255f }
-        for (withBase in listOf(true, false)) {
-            val w = BaseCurve.toWorking(id, withBase)
+        for (look in listOf(Look.V1, Look.V2)) for (withBase in listOf(true, false)) {
+            val w = BaseCurve.toWorking(id, withBase, look)
             for (k in 0 until 256) assertEquals("identity curve must not move $k (base=$withBase)", k / 255f, w[k], 0.012f)
         }
         // a curve that halves display brightness: after the engine's own base curve the shown value must be half of what it was
         val half = FloatArray(256) { it / 255f * 0.5f }
-        val w = BaseCurve.toWorking(half, true)
+        val w = BaseCurve.toWorking(half, true, Look.V1)
         fun enc(l: Double) = if (l <= 0.0031308) 12.92 * l else 1.055 * Math.pow(l, 1 / 2.4) - 0.055
         fun base(s: Double): Double { val p = s * 255; val i = p.toInt().coerceAtMost(254); return BaseCurve.TABLE[i] + (BaseCurve.TABLE[i + 1] - BaseCurve.TABLE[i]) * (p - i) }
         for (k in 40..230 step 10) {

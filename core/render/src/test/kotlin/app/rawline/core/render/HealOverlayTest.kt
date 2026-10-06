@@ -1,6 +1,8 @@
 package app.rawline.core.render
 
+import app.rawline.core.model.Look
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -16,7 +18,7 @@ class HealOverlayTest {
 
     @Test fun anOpaquePatchIsStoredPremultipliedAndOutsideItNothingChanges() {
         val sink = Sink()
-        val o = HealOverlay(sink, 1000, 500)   // 1000 x 500 stays at that size (under 3072)
+        val o = HealOverlay(sink, 1000, 500, Look.V2)   // 1000 x 500 stays at that size (under 3072)
         assertEquals(1000, sink.fw); assertEquals(500, sink.fh)
         val pw = 16; val ph = 16
         val patch = IntArray(pw * ph) { (255 shl 24) or (128 shl 16) or (128 shl 8) or 128 }   // opaque mid grey
@@ -32,14 +34,14 @@ class HealOverlayTest {
 
     @Test fun aTransparentPatchLeavesTheOverlayAlone() {
         val sink = Sink()
-        val o = HealOverlay(sink, 400, 300)
+        val o = HealOverlay(sink, 400, 300, Look.V2)
         o.apply(listOf(0f, 0f, 0.5f, 0.5f), IntArray(64) { 0 }, 8, 8)
         assertTrue(sink.full!!.all { it == 0.toShort() })
     }
 
-    private fun neutralAfterPatch(useBase: Boolean): Float {
+    private fun neutralAfterPatch(useBase: Boolean, look: Int = Look.V2): Float {
         val sink = Sink()
-        val o = HealOverlay(sink, 200, 200, useBase)
+        val o = HealOverlay(sink, 200, 200, look, useBase)
         o.apply(listOf(0.1f, 0.1f, 0.5f, 0.5f), IntArray(16 * 16) { (255 shl 24) or (128 shl 16) or (128 shl 8) or 128 }, 16, 16)
         return Halfs.toFloat(sink.full!![(60 * sink.fw + 60) * 4])
     }
@@ -55,10 +57,25 @@ class HealOverlayTest {
 
     @Test fun displayAndWorkingRoundTripThroughBothCurves() {
         val t = FloatArray(3); val back = FloatArray(3)
-        for (useBase in listOf(true, false)) for (v in listOf(0.1f, 0.3f, 0.5f, 0.8f)) {
-            ColorSpaces.displayToWorking(v, v, v, t, useBase = useBase)
-            ColorSpaces.workingToDisplay(t[0], t[1], t[2], back, useBase = useBase)
-            assertEquals("display $v (base=$useBase)", v, back[0], 0.01f)
+        for (look in listOf(Look.V1, Look.V2)) for (useBase in listOf(true, false)) for (v in listOf(0.1f, 0.3f, 0.5f, 0.8f)) {
+            ColorSpaces.displayToWorking(v, v, v, t, look, useBase = useBase)
+            ColorSpaces.workingToDisplay(t[0], t[1], t[2], back, look, useBase = useBase)
+            assertEquals("display $v (look $look, base=$useBase)", v, back[0], 0.01f)
         }
+    }
+
+    @Test fun aPatchIsConvertedWithTheCurveOfTheEditsLook() {
+        // the same display grey needs a different working value under look 1 and look 2 (look 2 adds the white balance gain in front of its curve)
+        val one = neutralAfterPatch(useBase = true, look = Look.V1)
+        val two = neutralAfterPatch(useBase = true, look = Look.V2)
+        assertNotEquals(one, two)
+        // the finished picture path has no base curve, so the look makes no difference there
+        assertEquals(neutralAfterPatch(useBase = false, look = Look.V1), neutralAfterPatch(useBase = false, look = Look.V2), 1e-6f)
+        // what the engine draws is table(look)(oetf(working x gain)): a look 1 patch (gain 1) and a look 2 patch (gain K) land on the same display grey
+        fun oetf(l: Double) = if (l <= 0.0031308) 12.92 * l else 1.055 * Math.pow(l, 1 / 2.4) - 0.055
+        fun lookup(tab: FloatArray, s: Double): Double { val p = s * 255; val i = p.toInt().coerceAtMost(254); return tab[i] + (tab[i + 1] - tab[i]) * (p - i) }
+        val shownOne = lookup(BaseCurve.table(Look.V1), oetf(one.toDouble()))
+        val shownTwo = lookup(BaseCurve.table(Look.V2), oetf(two.toDouble()))
+        assertEquals(128 / 255.0, shownOne, 0.01); assertEquals(128 / 255.0, shownTwo, 0.01)
     }
 }

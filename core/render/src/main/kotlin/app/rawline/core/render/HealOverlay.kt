@@ -7,9 +7,11 @@ import kotlin.math.min
 /**
  * Healed and removed areas, stored as premultiplied linear working-space pixels in source space at up to 3072 px on the
  * long edge. The shader lays this over the raw before any adjustment, so edits apply on top of the repair.
- * A CPU copy is kept so later patches can be composited over earlier ones.
+ * A CPU copy is kept so later patches can be composited over earlier ones. [look] is the edit's look version: the patch pixels are display values
+ * and are converted to working space with that look's base curve (the engine applies the same look's source gain before the overlay), so when
+ * an edit moves to another look the overlay is built again from the stored patches (Healer.sync).
  */
-class HealOverlay(private val session: OverlaySink, srcW: Int, srcH: Int, private val useBase: Boolean = true) {
+class HealOverlay(private val session: OverlaySink, srcW: Int, srcH: Int, private val look: Int, private val useBase: Boolean = true) {
     val w: Int
     val h: Int
     private val buf: ShortArray
@@ -51,7 +53,7 @@ class HealOverlay(private val session: OverlaySink, srcW: Int, srcH: Int, privat
                     // keep what was there
                     out[o] = buf[di]; out[o + 1] = buf[di + 1]; out[o + 2] = buf[di + 2]; out[o + 3] = buf[di + 3]; continue
                 }
-                ColorSpaces.displayToWorking(r / a, g / a, b / a, tmp, useBase = useBase)
+                ColorSpaces.displayToWorking(r / a, g / a, b / a, tmp, look, useBase = useBase)
                 val na = a.coerceIn(0f, 1f)
                 val oldA = Halfs.toFloat(buf[di + 3])
                 val keep = 1f - na

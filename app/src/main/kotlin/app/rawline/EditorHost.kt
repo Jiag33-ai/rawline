@@ -47,7 +47,7 @@ fun EditorHost(photo: Photo, graph: Graph, neighbors: List<Photo>, copied: EditR
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val denoiser = remember(photo.id) { app.rawline.core.ml.Denoiser(context, graph.modelStore) }
-    val session = remember(photo.id) { EditorSession(context, graph.rawPrefetch, PerfLog::record) { h, a, p -> denoiser.run(h, a, p) } }
+    val session = remember(photo.id) { EditorSession(context, graph.rawPrefetch, PerfLog::record) { h, a, l, p -> denoiser.run(h, a, l, p) } }
     var state by remember(photo.id) { mutableStateOf<EditorState?>(null) }
     var placeholder by remember(photo.id) { mutableStateOf<Bitmap?>(graph.previews.peek(photo.id)?.let { toSoftware(it) }) }
     val userPresets = remember { mutableStateListOf<Preset>() }
@@ -118,7 +118,7 @@ fun EditorHost(photo: Photo, graph: Graph, neighbors: List<Photo>, copied: EditR
     // Keep the repair overlay in step with the recipe (open, undo, redo, snapshots) once the source is on the GPU.
     // Once this photo is on screen, decode its neighbours quietly so swiping to them opens fast.
     LaunchedEffect(ss.stage, neighbors) { if (ss.stage == app.rawline.core.render.Stage.READY) neighbors.forEach { graph.rawPrefetch.prefetch(it) } }
-    LaunchedEffect(st.recipe.heals, ss.stage) { if (ss.stage == app.rawline.core.render.Stage.READY) healer?.sync(st.recipe.heals) }
+    LaunchedEffect(st.recipe.heals, st.recipe.lookVersion, ss.stage) { if (ss.stage == app.rawline.core.render.Stage.READY) healer?.sync(st.recipe.heals, st.recipe.lookVersion) }
     Box(Modifier.fillMaxSize()) {
     EditorScreen(
         photo = photo, state = st, placeholder = placeholder, extraTabs = listOf(mk.tab, rm.tab),

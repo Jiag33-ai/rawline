@@ -26,6 +26,8 @@ object Native {
     /** Same from a software ARGB_8888 bitmap, read in place (no copy of the pixels on the Java heap). 0 on failure. */
     external fun rawFromBitmap(bitmap: android.graphics.Bitmap): Long
     external fun rawInfo(handle: Long): IntArray      // width, height, tiff orientation
+    /** [look 1 white point factor, look 2 white balance gain] of a decoded image; both 1 for a finished picture. Read before the handle is consumed. */
+    external fun rawGains(handle: Long): FloatArray
     external fun freeRaw(handle: Long)
 
     // ---- GPU engine: every call must happen on the GL thread that owns the context ----
@@ -35,7 +37,10 @@ object Native {
     /** For an engine whose GL context is already gone (restored surface): frees the object without calling GL. */
     external fun engineAbandon(h: Long)
     external fun engineSetSource(h: Long, raw: Long): Boolean
-    external fun engineSetBaseCurve(h: Long, enabled: Boolean)
+    /** Base tone curve of a look version (1 or 2): the raw camera look when [enabled], identity for finished pictures. */
+    external fun engineSetBaseCurve(h: Long, enabled: Boolean, look: Int)
+    /** Multiplier on every source texel (look 1: [rawGains] index 0, look 2: index 1; 1 for a finished picture). Invalidates the analysis when it changes. */
+    external fun engineSetSrcGain(h: Long, gain: Float)
     external fun engineSetLayer(h: Long, index: Int, alpha: ByteArray, w: Int, hgt: Int)
     external fun engineSetOverlay(h: Long, rgbaHalf: ShortArray?, w: Int, hgt: Int)
     external fun engineOutputSize(h: Long, params: FloatArray): IntArray
@@ -49,7 +54,7 @@ object Native {
     external fun engineInvalidate(h: Long)
     external fun engineSetOutputSpace(h: Long, space: Int)   // 0 sRGB, 1 Display P3
     external fun engineUpdateOverlay(h: Long, x: Int, y: Int, w: Int, hgt: Int, rgbaHalf: ShortArray)
-    external fun baseCurve(): FloatArray
+    external fun baseCurve(look: Int): FloatArray
     /** Linear working-space rgb of a rectangle of a decoded raw (3 floats per pixel, edges clamped). */
     external fun rawRead(handle: Long, x: Int, y: Int, w: Int, h: Int): FloatArray
     external fun rawWrite(handle: Long, x: Int, y: Int, w: Int, h: Int, rgb: FloatArray)

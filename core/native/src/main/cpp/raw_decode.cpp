@@ -41,6 +41,7 @@ bool decodeRaw(const std::string &path, bool halfSize, RawImage &out, std::strin
     P.user_qual = 3;          // AHD
     P.med_passes = 0;
     P.fbdd_noiserd = 0;
+    P.adjust_maximum_thr = 0.f;   // look version 2: the frame's brightest pixel must not move the white point (the v1 factor is reported in out.v1Scale)
 
     int r = lr.open_file(path.c_str());
     if (r != LIBRAW_SUCCESS) { err = std::string("open: ") + libraw_strerror(r); return false; }
@@ -57,6 +58,13 @@ bool decodeRaw(const std::string &path, bool halfSize, RawImage &out, std::strin
     out.orientation = flip == 3 ? 3 : flip == 5 ? 8 : flip == 6 ? 6 : 1;
     out.camera = std::string(lr.imgdata.idata.make) + " " + lr.imgdata.idata.model;
     for (int i = 0; i < 4; i++) out.wbMul[i] = lr.imgdata.color.cam_mul[i];
+    {   // LibRaw's own rule for the white point it would have lowered (adjust_maximum, default threshold 0.75), evaluated on the unscaled decode
+        const auto &C = lr.imgdata.color;
+        float mx = float(C.maximum), dm = float(C.data_maximum);
+        out.v1Scale = (dm > 0.f && dm < mx && dm > mx * 0.75f) ? mx / dm : 1.f;
+        float lo = std::min(C.cam_mul[0], std::min(C.cam_mul[1], C.cam_mul[2])), hi = std::max(C.cam_mul[0], std::max(C.cam_mul[1], C.cam_mul[2]));
+        out.wbGain = (lo > 0.f) ? hi / lo : 1.f;   // pre_mul is normalised by its largest member, so a neutral lands at min/max of cam_mul: this brings it back to 1
+    }
     out.width = w;
     out.height = h;
     out.owner = keep;

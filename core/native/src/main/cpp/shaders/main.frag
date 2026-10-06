@@ -19,6 +19,7 @@ uniform float uOverlayOn;
 uniform vec4 uView;          // visible region of the output image, normalised: x, y, w, h
 uniform vec2 uOutPx;         // pixels in the render target
 uniform float uLod;
+uniform float uSrcGain;      // look version: 1 reproduces LibRaw's old white point rule, 2 is the white balance neutral gain
 uniform int uNumMasks;
 uniform int uShowMask;
 uniform float uAspect;       // output image width / height
@@ -252,15 +253,15 @@ void main() {
     vec3 g = srcUv(p);
     vec2 guv = clamp(g.xy, 0.0, 1.0);
     vec4 s = textureLod(uSrc, guv, uLod);
-    vec3 c = s.rgb;
+    vec3 c = s.rgb * uSrcGain;
     // Lens profile: lateral chromatic aberration (red and blue sampled at their own radius) and vignetting
     vec2 sd = (guv - 0.5) * uSrcSize;
     if (uLensFlags.x > 0.5) {
         float rn = length(sd) / (0.5 * min(uSrcSize.x, uSrcSize.y));
         float sr = uTcaR.x + rn * (uTcaR.y + rn * uTcaR.z);
         float sb = uTcaB.x + rn * (uTcaB.y + rn * uTcaB.z);
-        c.r = textureLod(uSrc, clamp(0.5 + (guv - 0.5) * sr, 0.0, 1.0), uLod).r;
-        c.b = textureLod(uSrc, clamp(0.5 + (guv - 0.5) * sb, 0.0, 1.0), uLod).b;
+        c.r = textureLod(uSrc, clamp(0.5 + (guv - 0.5) * sr, 0.0, 1.0), uLod).r * uSrcGain;
+        c.b = textureLod(uSrc, clamp(0.5 + (guv - 0.5) * sb, 0.0, 1.0), uLod).b * uSrcGain;
     }
     // Heal and remove patches are rendered from the source as it is (no lens gain, no CA correction), so they are laid over it
     // here, before the vignetting gain, and take the same gain as the pixels around them.
