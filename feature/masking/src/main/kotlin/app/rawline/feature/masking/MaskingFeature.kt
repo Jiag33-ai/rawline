@@ -146,10 +146,12 @@ class MaskingFeature(
     /**
      * The crop rectangle (cropX, cropY, cropW, cropH of the returned Geometry) that is actually rendered. This is the ONLY place the
      * masking code reads crop fields, so the view <-> frame mapping, brush ring and default gradient placement all follow it.
-     * TODO(PM): after merging the edge fix, return the session's effective crop (EditorSession.effectiveCrop / Geo.constrainGeometry)
-     * here instead of the recipe's own fields.
+     * It is the session's effective crop: the recipe crop trimmed so no outside-image pixels show (Geo.fitCrop).
      */
-    internal fun cropRect(): app.rawline.core.model.Geometry = state.recipe.geometry
+    internal fun cropRect(): app.rawline.core.model.Geometry {
+        val c = session.effectiveCrop
+        return state.recipe.geometry.copy(cropX = c[0], cropY = c[1], cropW = c[2], cropH = c[3])
+    }
 
     private fun pf(p: Offset): V2 {
         val g = cropRect()
