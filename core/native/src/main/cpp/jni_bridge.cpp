@@ -14,7 +14,7 @@ Java_app_rawline_core_nativelib_Native_librawVersion(JNIEnv *env, jobject) {
 JNIEXPORT jlongArray JNICALL
 Java_app_rawline_core_nativelib_Native_findPreview(JNIEnv *env, jobject, jint fd) {
     PreviewInfo info;
-    if (!findEmbeddedPreview(fd, info)) return nullptr;
+    try { if (!findEmbeddedPreview(fd, info)) return nullptr; } catch (...) { return nullptr; }  // no C++ exception may cross JNI
     jlong v[3] = {info.offset, info.length, info.orientation};
     jlongArray arr = env->NewLongArray(3);
     env->SetLongArrayRegion(arr, 0, 3, v);
@@ -28,7 +28,9 @@ Java_app_rawline_core_nativelib_Native_readBytes(JNIEnv *env, jobject, jint fd, 
     jbyteArray arr = env->NewByteArray(len);
     if (!arr) return nullptr;
     jbyte *p = env->GetByteArrayElements(arr, nullptr);
-    int64_t got = readFully(fd, off, reinterpret_cast<uint8_t *>(p), len);
+    if (!p) return nullptr;
+    int64_t got = -1;
+    try { got = readFully(fd, off, reinterpret_cast<uint8_t *>(p), len); } catch (...) {}
     env->ReleaseByteArrayElements(arr, p, 0);
     return got == len ? arr : nullptr;
 }
