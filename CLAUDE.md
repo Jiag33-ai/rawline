@@ -7,6 +7,7 @@ Spec: docs/SPEC.md. Decisions: docs/DECISIONS.md. Timings: docs/PERF.md.
 - Never claim speed/look results without the phone's Copy report. Never fake models or skip tests.
 - Branch per task, merge to main when CI is green, tag milestones.
 - Do not name any model in commits, code or docs.
+- After every push or release, tell Jai the latest release version name (for example v0.1.27) in the report, and say if it is not published yet.
 
 ## Commands
 - Sandbox toolchain: `tools/setup-sdk.sh` then `source tools/env.sh`
