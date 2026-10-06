@@ -38,6 +38,9 @@ public:
     /** 0 = sRGB, 1 = Display P3. */
     void setOutputSpace(int space) { outputSpace_ = space; }
 
+    /** Tests only: renderRegion paints pure magenta wherever a pixel falls outside the source image. */
+    void setDebugOutside(bool on) { debugOutside_ = on; }
+
     void invalidateAnalysis() { analysisKey_ = ~0ull; }
 
 private:
@@ -63,6 +66,7 @@ private:
     std::vector<float> lastCurves_;
     bool ready_ = false;
     int outputSpace_ = 0;
+    bool debugOutside_ = false;
 };
 
 }  // namespace rl

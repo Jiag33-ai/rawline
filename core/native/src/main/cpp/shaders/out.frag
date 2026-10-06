@@ -18,6 +18,7 @@ uniform float uPxScale;      // output pixels per reference pixel (keeps radii c
 uniform mat3 uToSrgb;        // working space (ProPhoto, D50) to linear sRGB
 uniform float uOutLinear;    // 1 = target is a float buffer (16 bit export): same encoding, no 8 bit rounding
 uniform float uChecker;      // 1 = draw a mid grey where the image is empty
+uniform float uMark;         // 1 = draw pure magenta where the image is empty (tests: proves no outside-image pixel survives)
 
 const vec3 Y = vec3(0.28807, 0.71184, 0.0000857);
 
@@ -107,5 +108,6 @@ void main() {
              texture(uBase, vec2((v.g * 255.0 + 0.5) / 256.0, 0.5)).r,
              texture(uBase, vec2((v.b * 255.0 + 0.5) / 256.0, 0.5)).r);
     if (inside < 0.5 && uChecker > 0.5) v = vec3(0.16);
+    if (inside < 0.5 && uMark > 0.5) v = vec3(1.0, 0.0, 1.0);
     oColor = vec4(v, 1.0);
 }

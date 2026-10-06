@@ -22,6 +22,67 @@ using namespace rl;
 
 static double now() { return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 
+// ---- Constrain-to-image solver. A C++ copy of Geo.fitCrop (core/render Geo.kt); tools/golden/fitcrop.expected pins both to the same numbers. ----
+static const float kEdgeMargin = 0.0015f;
+struct FitCtx {
+    const float *p; float srcW, srcH;
+    void map(float fx, float fy, float &u, float &v) const {
+        int rot = int(p[G_GEO + 3] + 0.5f);
+        bool odd = rot % 2 == 1;
+        float dw = odd ? srcH : srcW, dh = odd ? srcW : srcH;
+        float qx = (fx - 0.5f) * dw, qy = (fy - 0.5f) * dh;
+        float nx = qx / dw, ny = qy / dh;
+        qx *= 1.f + p[G_GEO2] * ny;
+        qy *= 1.f + p[G_GEO2 + 1] * nx;
+        float s = std::sin(p[G_GEO]), co = std::cos(p[G_GEO]);
+        float rx = co * qx - s * qy, ry = s * qx + co * qy;
+        if (p[G_LDIST_ON] > 0.5f) {
+            float rn = std::sqrt(rx * rx + ry * ry) / (0.5f * std::min(dw, dh));
+            float f = p[G_LDIST] + rn * (p[G_LDIST + 1] + rn * (p[G_LDIST + 2] + rn * (p[G_LDIST + 3] + rn * p[G_LDIST + 4])));
+            rx *= f; ry *= f;
+        }
+        float r2 = (rx * rx + ry * ry) / (dh * dh * 0.25f + dw * dw * 0.25f);
+        float k = 1.f + p[G_GEO2 + 2] * r2;
+        float bx = rx * k / dw + 0.5f, by = ry * k / dh + 0.5f;
+        if (p[G_GEO + 1] > 0.5f) bx = 1.f - bx;
+        if (p[G_GEO + 2] > 0.5f) by = 1.f - by;
+        if (rot == 1) { u = by; v = 1.f - bx; } else if (rot == 2) { u = 1.f - bx; v = 1.f - by; }
+        else if (rot == 3) { u = 1.f - by; v = bx; } else { u = bx; v = by; }
+    }
+    bool valid(float x, float y) const {
+        float u, v; map(x, y, u, v);
+        return u >= kEdgeMargin && u <= 1.f - kEdgeMargin && v >= kEdgeMargin && v <= 1.f - kEdgeMargin;
+    }
+    bool rectValid(float x, float y, float w, float h) const {
+        for (int i = 0; i <= 64; i++) {
+            float t = i / 64.f;
+            if (!valid(x + t * w, y) || !valid(x + t * w, y + h) || !valid(x, y + t * h) || !valid(x + w, y + t * h)) return false;
+        }
+        return true;
+    }
+};
+
+static void fitCrop(float *p, float srcW, float srcH) {
+    FitCtx ctx{p, srcW, srcH};
+    float w = std::clamp(p[G_CROP + 2], 0.001f, 1.f), h = std::clamp(p[G_CROP + 3], 0.001f, 1.f), x = p[G_CROP], y = p[G_CROP + 1];
+    bool trivial = p[G_GEO] == 0.f && p[G_GEO2] == 0.f && p[G_GEO2 + 1] == 0.f && p[G_GEO2 + 2] == 0.f && p[G_LDIST_ON] < 0.5f;
+    if (trivial) { p[G_CROP] = std::clamp(x, 0.f, 1.f - w); p[G_CROP + 1] = std::clamp(y, 0.f, 1.f - h); return; }
+    if (ctx.rectValid(x, y, w, h) || !ctx.valid(0.5f, 0.5f)) return;
+    float cx = x + w / 2, cy = y + h / 2;
+    auto place = [&](float s) {
+        for (int i = 0; i <= 16; i++) {
+            float t = i / 16.f, mx = cx + t * (0.5f - cx), my = cy + t * (0.5f - cy);
+            if (ctx.rectValid(mx - w * s / 2, my - h * s / 2, w * s, h * s)) return t;
+        }
+        return -1.f;
+    };
+    float lo = 0.f, hi = 1.f;
+    for (int i = 0; i < 22; i++) { float mid = (lo + hi) / 2; if (place(mid) >= 0.f) lo = mid; else hi = mid; }
+    float t = place(lo); if (t < 0.f) t = 1.f;
+    float mx = cx + t * (0.5f - cx), my = cy + t * (0.5f - cy);
+    p[G_CROP] = mx - w * lo / 2; p[G_CROP + 1] = my - h * lo / 2; p[G_CROP + 2] = w * lo; p[G_CROP + 3] = h * lo;
+}
+
 int main(int argc, char **argv) {
     if (argc < 4) { fprintf(stderr, "usage\n"); return 2; }
     auto getPD = (PFNEGLGETPLATFORMDISPLAYEXTPROC)eglGetProcAddress("eglGetPlatformDisplayEXT");
@@ -75,6 +136,7 @@ int main(int argc, char **argv) {
         {"exposure", S_EXPOSURE}, {"contrast", S_CONTRAST}, {"highlights", S_HIGHLIGHTS}, {"shadows", S_SHADOWS},
         {"whites", S_WHITES}, {"blacks", S_BLACKS}, {"temp", S_TEMP}, {"tint", S_TINT}, {"vibrance", S_VIBRANCE},
         {"saturation", S_SATURATION}, {"texture", S_TEXTURE}, {"clarity", S_CLARITY}, {"dehaze", S_DEHAZE}};
+    bool autofit = false, mark = false;
     for (int i = 5; i < argc; i++) {
         std::string a = argv[i];
         size_t eq = a.find('=');
@@ -90,6 +152,11 @@ int main(int argc, char **argv) {
         else if (k == "cropw") p[G_CROP + 2] = v;
         else if (k == "ksv") p[G_GEO2] = v;
         else if (k == "ksh") p[G_GEO2 + 1] = v;
+        else if (k == "autofit") autofit = v > 0.5f;
+        else if (k == "mark") mark = v > 0.5f;
+        else if (k == "lensfill") {   // strong synthetic profile (poly3, k1 = 0.06) that samples beyond the frame edge without a crop fit
+            p[G_LDIST] = 1.f - 0.06f; p[G_LDIST + 2] = 0.06f; p[G_LDIST_ON] = v;
+        }
         else if (k == "lens") {   // synthetic Lumix S 20-60 @ 20 mm style profile: ptlens a b c, strong vignetting, TCA
             p[G_LDIST] = 1.f - 0.02161f + 0.03781f + 0.08584f; p[G_LDIST + 1] = -0.08584f; p[G_LDIST + 2] = -0.03781f; p[G_LDIST + 3] = 0.02161f; p[G_LDIST_ON] = v;
             p[G_LTCA] = 1.0005613f; p[G_LTCA + 2] = -0.0002213f; p[G_LTCA + 3] = 0.9996489f; p[G_LTCA + 5] = 0.0002051f; p[G_LTCA_ON] = v;
@@ -122,6 +189,12 @@ int main(int argc, char **argv) {
             p[kOffBlocks + kBlockFloats + S_EXPOSURE] = v;
         }
     }
+    fprintf(stderr, "SRC %d %d %d\n", img.width, img.height, ori);
+    if (autofit) {
+        fitCrop(p.data(), float(img.width), float(img.height));
+        fprintf(stderr, "FITCROP %.5f %.5f %.5f %.5f\n", p[G_CROP], p[G_CROP + 1], p[G_CROP + 2], p[G_CROP + 3]);
+    }
+    eng.setDebugOutside(mark);
     int ow, oh;
     eng.outputSize(p.data(), ow, oh);
     int W = atoi(argv[3]);
@@ -138,6 +211,11 @@ int main(int argc, char **argv) {
         double maxd = 0;
         for (size_t i = 0; i < size_t(W) * H; i++) for (int c = 0; c < 3; c++) maxd = std::max(maxd, std::abs(rl::halfToFloat(hf[i * 4 + c]) * 255.0 - rgba[i * 4 + c]));
         fprintf(stderr, "float target max diff vs 8 bit: %.2f levels\n", maxd);
+    }
+    if (mark) {
+        size_t bad = 0;
+        for (size_t i = 0; i < size_t(W) * H; i++) if (rgba[i * 4] == 255 && rgba[i * 4 + 1] == 0 && rgba[i * 4 + 2] == 255) bad++;
+        fprintf(stderr, "OUTSIDE %zu of %zu\n", bad, size_t(W) * H);
     }
     FILE *f = fopen(argv[2], "wb");
     fprintf(f, "P6\n%d %d\n255\n", W, H);
