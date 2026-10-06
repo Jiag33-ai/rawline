@@ -24,5 +24,7 @@ dependencies {
     implementation(project(":core:ml"))
     implementation(project(":feature:editor"))
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.androidx.activity.compose)
     testImplementation(libs.junit)
+    testImplementation(libs.json)
 }
