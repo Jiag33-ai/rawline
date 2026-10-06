@@ -89,6 +89,18 @@ class MainActivity : ComponentActivity() {
 
 private val TopLevel = listOf("photos", "queue", "settings")
 
+private tailrec fun Context.findActivity(): android.app.Activity? = when (this) {
+    is android.app.Activity -> this
+    is android.content.ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
+/** Opens a system settings page. Neither the page nor its fallback is guaranteed to exist on every build, so a miss tells the user the way by hand. */
+private fun openSettings(context: Context, intent: android.content.Intent, byHand: String, fallback: android.content.Intent? = null, toast: (String) -> Unit) {
+    val ok = runCatching { context.startActivity(intent) }.isSuccess || (fallback != null && runCatching { context.startActivity(fallback) }.isSuccess)
+    if (!ok) toast(byHand)
+}
+
 @Composable
 private fun RawlineRoot() {
     val context = LocalContext.current
@@ -110,13 +122,18 @@ private fun RawlineRoot() {
     val lastEdited by vm.lastEdited.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
     val jobs by graph.db.exports().observe().collectAsStateWithLifecycle(emptyList())
-    var toast by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(toast) { if (toast != null) { kotlinx.coroutines.delay(2500); toast = null } }
+    var toast by remember { mutableStateOf<ToastMsg?>(null) }
+    fun showToast(text: String) { toast = Toasts.make(text, toast) }
+    // keyed on the sequence number, so the same text twice restarts the timer; errors stay longer
+    LaunchedEffect(toast?.seq) { toast?.let { kotlinx.coroutines.delay(Toasts.durationMs(it)); toast = null } }
     val nav = rememberNavController()
     val route by nav.currentBackStackEntryAsState()
     var exportSettingsFor by remember { mutableStateOf<Pair<Boolean, Photo?>?>(null) }
 
-    val mediaPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { vm.onPermission(it) }
+    val permissionBlocked by vm.permissionBlocked.collectAsStateWithLifecycle()
+    // Whether Android would still show the dialog. False before the first ask and after the second denial (see MediaAccess).
+    fun rationale() = context.findActivity()?.let { androidx.core.app.ActivityCompat.shouldShowRequestPermissionRationale(it, vm.mediaPermission) } ?: false
+    val mediaPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { vm.onPermissionResult(rationale()) }
     val notifPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> if (uri != null) vm.addFolder(uri) }
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> if (uris.isNotEmpty()) vm.importFiles(uris) }
@@ -125,19 +142,22 @@ private fun RawlineRoot() {
 
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
-        val o = androidx.lifecycle.LifecycleEventObserver { _, e -> if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) vm.onResume() }
+        val o = androidx.lifecycle.LifecycleEventObserver { _, e -> if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) vm.onResume(rationale()) }
         lifecycleOwner.lifecycle.addObserver(o)
         onDispose { lifecycleOwner.lifecycle.removeObserver(o) }
     }
-    // The camera roll shows up by itself: ask for access on first launch.
+    // The camera roll shows up by itself: ask for access on the very first launch only. The flag survives rotation, so the dialog
+    // is not launched twice, and later launches use the library's own button (Allow access, or Open settings once Android stops asking).
+    var autoAsked by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(Unit) {
-        if (!permission) mediaPermission.launch(vm.mediaPermission)
+        val prompt = if (permission) MediaPrompt.GRANTED else if (permissionBlocked) MediaPrompt.OPEN_SETTINGS else MediaPrompt.ASK
+        if (MediaAccess.autoAsk(prompt, vm.mediaAsked, autoAsked)) { autoAsked = true; mediaPermission.launch(vm.mediaPermission) }
         if (android.os.Build.VERSION.SDK_INT >= 33) notifPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         // jobs left running by a killed process go back to waiting, and the queue restarts if anything is waiting
         runCatching { graph.exportRunner.recoverAfterStart() }
     }
     LaunchedEffect(message) {
-        message?.let { if (it.isNotEmpty() && nav.currentDestination?.route != "settings") { toast = it; vm.message.value = null } }
+        message?.let { if (it.isNotEmpty() && nav.currentDestination?.route != "settings") { showToast(it); vm.message.value = null } }
     }
 
     fun openEditor(from: Photo, delta: Int) {
@@ -149,7 +169,6 @@ private fun RawlineRoot() {
     val currentRoute = route?.destination?.route
     Column(Modifier.fillMaxSize()) {
         Box(Modifier.weight(1f)) {
-            ToastHost(toast, Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp))
             // Library to editor and back is a horizontal move (320 ms, no bounce); the tabs and photo to photo swipes do not slide.
             val slide = tween<androidx.compose.ui.unit.IntOffset>(LrMotion.page, easing = LrMotion.standard)
             fun androidx.navigation.NavBackStackEntry.top() = destination.route in TopLevel
@@ -181,7 +200,7 @@ private fun RawlineRoot() {
                     Box(Modifier.statusBarsPadding()) {
                         LibraryScreen(
                             photos = photos, allCount = allPhotos.size, cameras = cameras, filter = filter, thumbs = graph.thumbs, progress = progress,
-                            sources = sources, selectedSource = source, permissionGranted = permission, allFilesGranted = allFiles,
+                            sources = sources, selectedSource = source, permissionGranted = permission, permissionBlocked = permissionBlocked, allFilesGranted = allFiles,
                             actions = LibraryActions(
                                 onOpen = { p ->
                                     val i = photos.indexOfFirst { it.id == p.id }
@@ -197,7 +216,8 @@ private fun RawlineRoot() {
                                 onImportFiles = { filePicker.launch(arrayOf("*/*")) },
                                 onAddFolder = { folderPicker.launch(null) },
                                 onRequestPermission = { mediaPermission.launch(vm.mediaPermission) },
-                                onRequestAllFiles = { runCatching { context.startActivity(vm.allFilesIntent()) }.onFailure { context.startActivity(android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)) } },
+                                onOpenSettings = { openSettings(context, vm.appSettingsIntent(), "Open Settings, Apps, Rawline, Permissions and allow Photos") { showToast(it) } },
+                                onRequestAllFiles = { openSettings(context, vm.allFilesIntent(), "Open Settings, Apps, Special app access, All files access", fallback = android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)) { showToast(it) } },
                                 hasCopied = copied != null,
                             ),
                         )
@@ -263,7 +283,7 @@ private fun RawlineRoot() {
                                     val label = when { source == "device:*" -> "all device photos"; source.startsWith("device:") -> "album ${source.removePrefix("device:")}"; else -> "a picked folder or imports" }
                                     val text = withContext(Dispatchers.IO) { ReportBuilder.build(context, graph, allPhotos.size, label) }
                                     (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Rawline report", text))
-                                    toast = "Report copied"
+                                    showToast("Report copied")
                                 }
                             },
                             lastCrash = remember { CrashStore.lastForBuild(context, ReportBuilder.buildLabel) },
@@ -275,7 +295,9 @@ private fun RawlineRoot() {
                     }
                 }
             }            }
-
+            // Drawn after the NavHost so it sits on top of every screen (the screens paint opaque backgrounds). Screens without the
+            // bottom tab bar run under the system navigation bar, so the toast keeps clear of it as well.
+            ToastHost(toast, Modifier.align(Alignment.BottomCenter).then(if (currentRoute in TopLevel) Modifier else Modifier.navigationBarsPadding()).padding(bottom = Toasts.bottomOffsetDp(currentRoute).dp, start = 16.dp, end = 16.dp))
         }
         if (currentRoute in TopLevel) {
             Row(Modifier.fillMaxWidth().background(Lr.Surface1).navigationBarsPadding().height(LrDim.bottomNav)) {
@@ -302,13 +324,16 @@ private fun NavItem(icon: LrIcon, label: String, selected: Boolean, badge: Int, 
 
 /** Quiet toast above the navigation: #292929, 6 dp, 13 sp, 160 ms in and 120 ms out. */
 @Composable
-private fun ToastHost(text: String?, modifier: Modifier) {
+private fun ToastHost(toast: ToastMsg?, modifier: Modifier) {
+    // keep the last text while the fade out runs
+    var last by remember { mutableStateOf("") }
+    if (toast != null) last = toast.text
     androidx.compose.animation.AnimatedVisibility(
-        text != null, modifier,
+        toast != null, modifier,
         enter = androidx.compose.animation.fadeIn(tween(160)) + androidx.compose.animation.slideInVertically(tween(160)) { 6 },
         exit = androidx.compose.animation.fadeOut(tween(120)),
     ) {
-        val shown = remember(text) { text ?: "" }
+        val shown = last
         Box(Modifier.widthIn(max = 320.dp).defaultMinSize(minHeight = 36.dp).background(Color(0xFF292929), RoundedCornerShape(6.dp)).border(1.dp, Lr.BorderSubtle, RoundedCornerShape(6.dp)).padding(horizontal = 12.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
             Text(shown, style = MaterialTheme.typography.bodySmall, color = Lr.TextPrimary)
         }

@@ -15,6 +15,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.rawline.core.cache.PerfLog
 import app.rawline.core.data.IndexProgress
+import app.rawline.core.data.SidecarResult
 import app.rawline.core.data.RecipeRead
 import app.rawline.core.model.EditRecipe
 import app.rawline.core.model.LibraryFilter
@@ -24,6 +25,7 @@ import app.rawline.core.render.ExportSettings
 import app.rawline.core.model.RecipeMerge
 import app.rawline.feature.library.SourceItem
 import app.rawline.core.ui.LrIcon
+import app.rawline.core.ui.Plurals
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -60,7 +62,10 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
     val lastEdited = MutableStateFlow<EditRecipe?>(null)
     val message = MutableStateFlow<String?>(null)
     val recentFolders = MutableStateFlow(graph.prefs.getStringSet("folders", emptySet())!!.toList())
-    val permissionGranted = MutableStateFlow(hasMediaPermission())
+    /** Photo access works (Photos permission or All files access). Recomputed on every resume, so granting it in Settings is noticed. */
+    val permissionGranted = MutableStateFlow(hasMediaPermission() || hasAllFiles())
+    /** True when Android will no longer show the permission dialog: the library offers "Open settings" instead of "Allow access". */
+    val permissionBlocked = MutableStateFlow(false)
     /** All files access lets the list include RAW files (RW2) that the phone does not classify as images. */
     val allFilesGranted = MutableStateFlow(hasAllFiles())
 
@@ -113,9 +118,13 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
 
     private fun hasAllFiles() = android.os.Build.VERSION.SDK_INT < 30 || android.os.Environment.isExternalStorageManager()
 
-    fun onResume() {
+    /** [rationale]: whether Android would still show the permission dialog (needs the Activity, so the screen supplies it). */
+    fun onResume(rationale: Boolean) {
         val now = hasAllFiles()
-        if (now != allFilesGranted.value) { allFilesGranted.value = now; if (permissionGranted.value) rescanDevice() }
+        val allFilesChanged = now != allFilesGranted.value
+        allFilesGranted.value = now
+        refreshPermission(rationale)
+        if (allFilesChanged && permissionGranted.value) rescanDevice()
     }
 
     fun allFilesIntent() = Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:${app.packageName}"))
@@ -127,10 +136,23 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
 
     val mediaPermission: String get() = if (android.os.Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_IMAGES else Manifest.permission.READ_EXTERNAL_STORAGE
 
-    fun onPermission(granted: Boolean) {
-        permissionGranted.value = granted || hasMediaPermission()
-        if (permissionGranted.value) startDeviceWatch()
+    /** True once the system dialog has been shown at least once (kept across launches). */
+    val mediaAsked: Boolean get() = graph.prefs.getBoolean("mediaAsked", false)
+
+    /** The result of the system dialog. */
+    fun onPermissionResult(rationale: Boolean) {
+        graph.prefs.edit().putBoolean("mediaAsked", true).apply()
+        refreshPermission(rationale)
     }
+
+    private fun refreshPermission(rationale: Boolean) {
+        val p = MediaAccess.prompt(hasMediaPermission(), hasAllFiles(), mediaAsked, rationale)
+        permissionGranted.value = p == MediaPrompt.GRANTED
+        permissionBlocked.value = p == MediaPrompt.OPEN_SETTINGS
+        if (p == MediaPrompt.GRANTED) startDeviceWatch()
+    }
+
+    fun appSettingsIntent() = Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${app.packageName}"))
 
     /** Lists the camera roll now and again whenever the phone's media database changes (new photo taken, file deleted). */
     private fun startDeviceWatch() {
@@ -159,7 +181,7 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
     fun importFiles(uris: List<Uri>) {
         viewModelScope.launch(Dispatchers.IO) {
             val n = graph.deviceScanner.importFiles(uris)
-            message.value = if (n == 0) "Nothing new to import" else "Imported $n photos"
+            message.value = if (n == 0) "Nothing new to import" else "Imported ${Plurals.photos(n)}"
             withContext(Dispatchers.Main) { selectSource("imported") }
             graph.indexer.indexPendingLike("imported")
         }
@@ -189,12 +211,22 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
     fun photoById(id: Long): Photo? = allPhotos.value.firstOrNull { it.id == id }
 
     // ---- ratings and organising ----
-    fun rate(list: List<Photo>, r: Int) = viewModelScope.launch { catalog.setRating(list, r) }
-    fun flag(list: List<Photo>, f: Int) = viewModelScope.launch { catalog.setFlag(list, f) }
-    fun label(list: List<Photo>, l: Int) = viewModelScope.launch { catalog.setLabel(list, l) }
+    // Catalogue work never runs on the main dispatcher: the XMP step does SAF file I/O per photo.
+    fun rate(list: List<Photo>, r: Int) = viewModelScope.launch(Dispatchers.IO) { reportSidecars(catalog.setRating(list, r)) }
+    fun flag(list: List<Photo>, f: Int) = viewModelScope.launch(Dispatchers.IO) { catalog.setFlag(list, f) }
+    fun label(list: List<Photo>, l: Int) = viewModelScope.launch(Dispatchers.IO) { reportSidecars(catalog.setLabel(list, l)) }
+
+    private var told = false
+    /** XMP is on but some photos cannot have a sidecar (camera roll, imported files) or it failed: say so once, never silently. */
+    private fun reportSidecars(r: SidecarResult) {
+        val text = SidecarNotice.text(r) ?: return
+        if (told) return
+        told = true
+        message.value = text
+    }
 
     // ---- copy, paste and sync of edits ----
-    fun copyEdits(p: Photo) = viewModelScope.launch {
+    fun copyEdits(p: Photo) = viewModelScope.launch(Dispatchers.IO) {
         when (val r = catalog.readRecipe(p)) {
             is RecipeRead.Ok -> { copied.value = r.recipe; message.value = "Copied edits from ${p.name}" }
             RecipeRead.Missing -> { copied.value = EditRecipe(); message.value = "Copied edits from ${p.name}" }
@@ -202,12 +234,12 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun pasteEdits(targets: List<Photo>, scopes: Set<PasteScope>) = viewModelScope.launch {
+    fun pasteEdits(targets: List<Photo>, scopes: Set<PasteScope>) = viewModelScope.launch(Dispatchers.IO) {
         val src = copied.value ?: return@launch
         message.value = applyToTargets(targets, "Pasted onto") { base -> RecipeMerge.paste(base, src, scopes) }
     }
 
-    fun syncEdits(from: Photo, to: List<Photo>) = viewModelScope.launch {
+    fun syncEdits(from: Photo, to: List<Photo>) = viewModelScope.launch(Dispatchers.IO) {
         val src = when (val r = catalog.readRecipe(from)) {
             is RecipeRead.Ok -> r.recipe
             RecipeRead.Missing -> EditRecipe()
@@ -223,25 +255,25 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
             val base = when (val r = catalog.readRecipe(t)) { is RecipeRead.Ok -> r.recipe; RecipeRead.Missing -> EditRecipe(); RecipeRead.Unreadable -> { skipped++; return@forEach } }
             catalog.saveRecipe(t, merge(base)); done++
         }
-        return "$verb $done photos" + if (skipped > 0) ", skipped $skipped with an unreadable edit" else ""
+        return "$verb ${Plurals.photos(done)}" + if (skipped > 0) ", skipped $skipped with an unreadable edit" else ""
     }
 
     // ---- export queue ----
     fun exportSettings() = ExportSettings.fromJson(graph.prefs.getString("export", null))
 
-    fun enqueueExport(list: List<Photo>) = viewModelScope.launch {
+    fun enqueueExport(list: List<Photo>) = viewModelScope.launch(Dispatchers.IO) {
         graph.exportRunner.enqueue(list, exportSettings())
-        message.value = if (list.size == 1) "Added to export queue" else "Added ${list.size} photos to export queue"
+        message.value = if (list.size == 1) "Added to export queue" else "Added ${Plurals.photos(list.size)} to export queue"
     }
 
     // ---- backup ----
     fun backupTo(uri: Uri) = viewModelScope.launch(Dispatchers.IO) {
-        runCatching { app.contentResolver.openOutputStream(uri)?.use { catalog.writeBackup(it) } }
+        runCatching { (app.contentResolver.openOutputStream(uri) ?: throw java.io.IOException("could not open the file")).use { catalog.writeBackup(it) } }
             .onSuccess { message.value = "Backup saved" }.onFailure { message.value = "Backup failed: ${it.message}" }
     }
 
     fun restoreFrom(uri: Uri) = viewModelScope.launch(Dispatchers.IO) {
-        runCatching { app.contentResolver.openInputStream(uri)?.use { catalog.readBackup(it) } }
-            .onSuccess { message.value = "Restored $it edits" }.onFailure { message.value = "Restore failed: ${it.message}" }
+        runCatching { (app.contentResolver.openInputStream(uri) ?: throw java.io.IOException("could not open the file")).use { catalog.readBackup(it) } }
+            .onSuccess { message.value = "Restored ${Plurals.edits(it)}" }.onFailure { message.value = "Restore failed: ${it.message}" }
     }
 }

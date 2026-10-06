@@ -119,3 +119,12 @@ class CatalogLogicTest {
         assertEquals("a.b.xmp", Xmp.sidecarName("a.b.RW2"))
     }
 }
+
+class XmpSupportTest {
+    @org.junit.Test fun onlyAddedFoldersGetSidecars() {
+        org.junit.Assert.assertTrue(Xmp.supports("content://com.android.externalstorage.documents/tree/primary%3ARAW"))
+        org.junit.Assert.assertFalse(Xmp.supports("device:Camera"))
+        org.junit.Assert.assertFalse(Xmp.supports("imported"))
+        org.junit.Assert.assertFalse(Xmp.supports(""))
+    }
+}

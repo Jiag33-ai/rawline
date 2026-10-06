@@ -59,7 +59,7 @@ fun SettingsScreen(
         Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Column(Modifier.weight(1f)) {
                 Text("Write XMP sidecars", style = MaterialTheme.typography.bodyLarge)
-                Text("Saves ratings next to your photos so they survive outside the app", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Saves ratings and colour labels next to photos in folders you add. Camera roll photos and imported files are not covered.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Switch(xmpOn, onXmpChange)
         }

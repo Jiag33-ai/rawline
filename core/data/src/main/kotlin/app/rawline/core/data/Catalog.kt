@@ -6,6 +6,8 @@ import android.provider.DocumentsContract
 import app.rawline.core.model.EditRecipe
 import app.rawline.core.model.Photo
 import androidx.room.withTransaction
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.InputStream
@@ -31,16 +33,31 @@ class Catalog(private val context: Context, private val db: RawlineDb, private v
         }
     }
 
-    suspend fun setRating(list: List<Photo>, rating: Int) { list.chunked(400).forEach { photos.setRating(it.map { p -> p.id }, rating) }; saveMeta(list) { it.copy(rating = rating) } }
-    suspend fun setFlag(list: List<Photo>, flag: Int) { list.chunked(400).forEach { photos.setFlag(it.map { p -> p.id }, flag) }; saveMeta(list) { it.copy(flag = flag) } }
-    suspend fun setLabel(list: List<Photo>, label: Int) { list.chunked(400).forEach { photos.setLabel(it.map { p -> p.id }, label) }; saveMeta(list) { it.copy(label = label) } }
+    suspend fun setRating(list: List<Photo>, rating: Int): SidecarResult { list.chunked(400).forEach { photos.setRating(it.map { p -> p.id }, rating) }; return saveMeta(list) { it.copy(rating = rating) } }
+    suspend fun setFlag(list: List<Photo>, flag: Int): SidecarResult { list.chunked(400).forEach { photos.setFlag(it.map { p -> p.id }, flag) }; return saveMeta(list, sidecar = false) { it.copy(flag = flag) } }   // a flag is not stored in the sidecar
+    suspend fun setLabel(list: List<Photo>, label: Int): SidecarResult { list.chunked(400).forEach { photos.setLabel(it.map { p -> p.id }, label) }; return saveMeta(list) { it.copy(label = label) } }
 
-    private suspend fun saveMeta(list: List<Photo>, f: (MetaEntity) -> MetaEntity) {
+    /**
+     * The database write comes first (the grid updates from it). The XMP sidecar step is SAF file I/O with several binder calls per
+     * photo, so it runs on the IO dispatcher whichever thread called, and reports what it could not do instead of staying silent.
+     */
+    private suspend fun saveMeta(list: List<Photo>, sidecar: Boolean = true, f: (MetaEntity) -> MetaEntity): SidecarResult {
         val old = list.chunked(400).flatMap { c -> edits.metaFor(c.map { it.key }) }.associateBy { it.key }
         val now = System.currentTimeMillis()
-        edits.putMeta(list.map { f(old[it.key] ?: MetaEntity(it.key, it.rating, it.flag, it.label)).copy(updatedAt = now) })
-        // XMP sidecar is best effort and only when the user turned it on
-        if (xmpEnabled()) list.forEach { p -> val m = edits.metaFor(listOf(p.key)).firstOrNull(); if (m != null) runCatching { Xmp.write(context, p, m.rating, m.label, edits.get(p.key)?.json) } }
+        val updated = list.map { f(old[it.key] ?: MetaEntity(it.key, it.rating, it.flag, it.label)).copy(updatedAt = now) }
+        edits.putMeta(updated)
+        if (!sidecar || !xmpEnabled()) return SidecarResult.NONE
+        return withContext(Dispatchers.IO) {
+            val byKey = updated.associateBy { it.key }
+            var written = 0; var unsupported = 0; var failed = 0
+            for (p in list) {
+                if (!Xmp.supports(p)) { unsupported++; continue }
+                val m = byKey[p.key] ?: continue
+                val ok = runCatching { Xmp.write(context, p, m.rating, m.label, edits.get(p.key)?.json) }.getOrDefault(false)
+                if (ok) written++ else failed++
+            }
+            SidecarResult(written, unsupported, failed)
+        }
     }
 
     private fun xmpEnabled() = context.getSharedPreferences("rawline", Context.MODE_PRIVATE).getBoolean("xmp", false)
@@ -124,8 +141,20 @@ class Catalog(private val context: Context, private val db: RawlineDb, private v
     }
 }
 
+/** What the sidecar step did for one rating, flag or label change: [unsupported] photos have no folder to write into, [failed] could not be written. */
+data class SidecarResult(val written: Int, val unsupported: Int, val failed: Int) {
+    companion object { val NONE = SidecarResult(0, 0, 0) }
+}
+
 /** Minimal XMP sidecar: rating, label and a few basic develop settings. Existing sidecars are read for rating and label. */
 object Xmp {
+    /**
+     * Sidecars are written through a folder the user added (a SAF tree). Camera roll photos ("device:...") and picked files
+     * ("imported") have no tree to write into, so for them nothing is written and the app says so.
+     */
+    fun supports(folderUri: String) = !folderUri.startsWith("device:") && folderUri != "imported" && folderUri.isNotEmpty()
+    fun supports(p: Photo) = supports(p.folderUri)
+
     fun sidecarName(name: String) = name.substringBeforeLast('.') + ".xmp"
 
     fun build(rating: Int, label: Int, recipeJson: String?): String {

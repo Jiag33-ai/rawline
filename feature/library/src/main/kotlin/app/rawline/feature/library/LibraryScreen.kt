@@ -97,6 +97,7 @@ class LibraryActions(
     val onImportFiles: () -> Unit,
     val onAddFolder: () -> Unit,
     val onRequestPermission: () -> Unit,
+    val onOpenSettings: () -> Unit,
     val onRequestAllFiles: () -> Unit,
     val hasCopied: Boolean,
 )
@@ -114,6 +115,7 @@ fun LibraryScreen(
     sources: List<SourceItem>,
     selectedSource: String,
     permissionGranted: Boolean,
+    permissionBlocked: Boolean,
     allFilesGranted: Boolean,
     actions: LibraryActions,
 ) {
@@ -128,6 +130,8 @@ fun LibraryScreen(
     LaunchedEffect(gridState.isScrollInProgress) {
         if (gridState.isScrollInProgress) FrameMonitor.start() else FrameMonitor.stop("grid")
     }
+    // Leaving the screen mid fling cancels the effect above without a "stopped scrolling" step, so stop the frame callbacks here.
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { FrameMonitor.stop("grid") } }
     val selecting = selected.value.isNotEmpty()
     androidx.activity.compose.BackHandler(enabled = selecting) { selected.value = emptySet() }
     val sel = photos.filter { it.id in selected.value }
@@ -188,7 +192,7 @@ fun LibraryScreen(
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when {
-                !permissionGranted && selectedSource.startsWith("device:") && photos.isEmpty() -> PermissionPrompt(actions.onRequestPermission, actions.onImportFiles)
+                !permissionGranted && selectedSource.startsWith("device:") && photos.isEmpty() -> PermissionPrompt(permissionBlocked, actions.onRequestPermission, actions.onOpenSettings, actions.onImportFiles)
                 photos.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     EmptyState(LrIcon.PHOTOS, if (filter.isActive) "No photos match" else "Nothing here yet", if (filter.isActive) "Change or clear the filter to see more." else "Tap + to import photos or a folder.")
                 }
@@ -231,9 +235,11 @@ fun LibraryScreen(
 private fun IconTap(icon: LrIcon, description: String, tint: Color = Lr.IconPrimary, onClick: () -> Unit) = LrIconButton(icon, description, onClick, tint = tint)
 
 @Composable
-private fun PermissionPrompt(onAllow: () -> Unit, onImport: () -> Unit) {
+private fun PermissionPrompt(blocked: Boolean, onAllow: () -> Unit, onOpenSettings: () -> Unit, onImport: () -> Unit) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        EmptyState(LrIcon.CAMERA, "Show your camera roll", "Allow access to photos so Rawline can list what is on your phone.") {
+        if (blocked) EmptyState(LrIcon.CAMERA, "Photo access is off", "Android will not ask again. Open Settings and allow Photos for Rawline, or import files instead.") {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { PrimaryButton("Open settings", onOpenSettings); SecondaryButton("Import files", onImport) }
+        } else EmptyState(LrIcon.CAMERA, "Show your camera roll", "Allow access to photos so Rawline can list what is on your phone.") {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { PrimaryButton("Allow access", onAllow); SecondaryButton("Import files", onImport) }
         }
     }
