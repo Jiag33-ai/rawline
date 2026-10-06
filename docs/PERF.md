@@ -24,6 +24,10 @@ Targets (S24 Ultra, S5IIX RW2). **Nothing here is measured on the phone yet.** T
 | Studio: home first paint (`studio_home_first_paint_ms`) | not set | not measured |
 | Studio: Close, tap to leaving (`studio_leave_ms`) | not set (no thumbnail work on the path) | not measured |
 | Studio: memory high-water mark | under 2.2 GB | not measured |
+| Studio: rectangle select on a 24 MP canvas, outline update | < 150 ms (spec 2.2; a canvas is capped at 12 MP until S2 step 6) | not measured |
+| Studio: lasso of 200 points, outline update | < 150 ms | not measured |
+| Studio: mask paint stroke frame time p95 | < 16.6 ms | not measured |
+| Studio: tile decode, deflate against WebP (S24U, 256 x 256 tile) | switch only if deflate is over 3 ms a tile | not measured |
 
 Timers recorded by the app (names in the report): `tier2_total_ms`, `tier2_parse_ms`, `tier2_read_ms`, `tier2_decode_ms`, `swipe_cold_ms`, `grid frames`, `grid jank_frames(>25ms)`, `index_total_ms`, `edit_decode_ms`, `edit_upload_ms`, `edit_first_frame_ms`, `frame_render_ms`, `full_decode_ms`, `export_render_ms`, `ai_*_run_ms`, `heal_*_ms`, `denoise_total_ms`.
 
@@ -44,3 +48,4 @@ Measured on the build machine, only to show where work goes; the phone is a diff
 
 ## Checks that need the phone
 Sliders under 16 ms; grid 120 fps; swipe timings; Edit to first frame; export time; AI mask readiness (< 2 s after editing starts, tap-to-select < 300 ms); remove a person-sized object from 24 MP in under 10 s; 30 minute soak test.
+- Studio S2 (Mesa llvmpipe only, golden and host): nothing was timed. The CPU lasso and ellipse are scan converted (O(rows x width), not O(pixels x 16 x edges)); how long a 12 MP selection takes on the phone is unknown until a Copy report. The selection, mask and tile numbers above stay "not measured".
