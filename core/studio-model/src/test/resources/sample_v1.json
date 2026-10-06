@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "appVersion": "0.1.100",
+  "id": "p1",
+  "name": "Sample \"quoted\" name",
+  "created": 1759700000000,
+  "modified": 1759700100000,
+  "canvas": {"width": 1200, "height": 800},
+  "colourSpace": "display-p3",
+  "blendSpace": "gamma",
+  "futureField": {"ignored": true},
+  "layers": [
+    {"kind": "pixel", "id": "bg", "name": "Background", "visible": true, "locked": true, "opacity": 100, "blend": "normal", "x": 0, "y": 0, "scale": 1.0, "width": 1200, "height": 800, "pixels": "layers/bg.webp"},
+    {"kind": "pixel", "id": "paint", "name": "Paint", "visible": false, "locked": false, "opacity": 65, "blend": "multiply", "x": -20, "y": 30, "scale": 1.5, "width": 600, "height": 400, "pixels": null, "alsoIgnored": 3}
+  ]
+}
