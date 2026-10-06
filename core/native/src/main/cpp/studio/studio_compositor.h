@@ -36,6 +36,17 @@ public:
     bool updateLayerRegion(int slot, int x, int y, int w, int h, const uint8_t *rgba);
     void removeLayer(int slot);
 
+    /**
+     * Live stroke on one layer (spec 3.3: the stroke buffer is blended in at the layer's place in the stack). beginStroke clears an R16F
+     * coverage buffer the size of the layer; addStamps draws stamps (x, y, radius triples, layer pixels) into it with `over` accumulation;
+     * render() shows the layer with the stroke applied; readStroke gives the coverage of a rectangle back for the commit; endStroke frees it.
+     */
+    bool beginStroke(int slot, float r, float g, float b, float opacity, bool erase, float hardness, float flow);
+    bool addStamps(const float *xyr, int count);
+    bool readStroke(int x, int y, int w, int h, float *coverage);
+    void endStroke();
+    bool stroking() const { return stroke_.slot >= 0; }
+
     /** Renders the view (top left vx, vy in document pixels, zoom screen pixels per document pixel) into out: outW * outH * 4 straight RGBA8, row 0 top. */
     bool render(const std::vector<LayerDraw> &layers, float vx, float vy, float zoom, int outW, int outH, uint8_t *out);
 
@@ -45,11 +56,14 @@ public:
 private:
     struct Slot { GLuint tex = 0; int w = 0, h = 0; };
     struct Target { GLuint tex = 0, fbo = 0; int w = 0, h = 0; GLenum fmt = 0; };
+    struct Stroke { int slot = -1; float rgb[3] = {0, 0, 0}; float opacity = 1; bool erase = false; float hardness = 1, flow = 1; };
     bool ensureTarget(Target &t, int w, int h, GLenum fmt);
     void freeTarget(Target &t);
     void draw(const Target &dst, const Target *backdrop, const LayerDraw *l, int mode, float vx, float vy, float zoom);
 
-    GLuint prog_ = 0, vert_ = 0, vao_ = 0;
+    GLuint prog_ = 0, stampProg_ = 0, vert_ = 0, vao_ = 0;
+    Target strokeBuf_;
+    Stroke stroke_;
     Slot slots_[kMaxSlots];
     Target ping_[2], resolve_;
     bool ready_ = false;

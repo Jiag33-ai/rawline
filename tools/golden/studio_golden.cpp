@@ -36,9 +36,17 @@ int main(int argc, char **argv) {
     if (!f) { std::fprintf(stderr, "no scene\n"); return 5; }
     float vx = 0, vy = 0, zoom = 1; int ow = 0, oh = 0;
     std::vector<rl::studio::LayerDraw> draws;
+    std::vector<float> stamps;
     char kind[16], path[1024];
     while (std::fscanf(f, "%15s", kind) == 1) {
-        if (std::string(kind) == "view") { if (std::fscanf(f, "%f %f %f %d %d", &vx, &vy, &zoom, &ow, &oh) != 5) return 5; }
+        if (std::string(kind) == "canvas") { int cw, ch; if (std::fscanf(f, "%d %d", &cw, &ch) != 2) return 5; if (ow == 0) { ow = cw; oh = ch; } }
+        else if (std::string(kind) == "stroke") {
+            int slot, erase; float r, g, b, op, hard, flow;
+            if (std::fscanf(f, "%d %f %f %f %f %d %f %f", &slot, &r, &g, &b, &op, &erase, &hard, &flow) != 8) return 5;
+            if (!comp.beginStroke(slot, r, g, b, op, erase != 0, hard, flow)) { std::fprintf(stderr, "beginStroke failed\n"); return 6; }
+        }
+        else if (std::string(kind) == "stamp") { float x, y, rad; if (std::fscanf(f, "%f %f %f", &x, &y, &rad) != 3) return 5; stamps.insert(stamps.end(), {x, y, rad}); }
+        else if (std::string(kind) == "view") { if (std::fscanf(f, "%f %f %f %d %d", &vx, &vy, &zoom, &ow, &oh) != 5) return 5; }
         else if (std::string(kind) == "layer") {
             int w, h, mode; float x, y, sc, op;
             if (std::fscanf(f, "%1023s %d %d %f %f %f %f %d", path, &w, &h, &x, &y, &sc, &op, &mode) != 8) return 5;
@@ -52,7 +60,12 @@ int main(int argc, char **argv) {
         }
     }
     std::fclose(f);
+    if (!stamps.empty() && !comp.addStamps(stamps.data(), int(stamps.size() / 3))) { std::fprintf(stderr, "addStamps failed\n"); return 6; }
     std::vector<uint8_t> out(size_t(ow) * oh * 4);
+    if (comp.stroking() && getenv("STUDIO_READ_STROKE")) {   // commit path check: read the coverage back
+        std::vector<float> cov(size_t(ow) * oh); comp.readStroke(0, 0, ow, oh, cov.data());
+        FILE *cf = std::fopen(getenv("STUDIO_READ_STROKE"), "wb"); std::fwrite(cov.data(), 4, cov.size(), cf); std::fclose(cf);
+    }
     if (!comp.render(draws, vx, vy, zoom, ow, oh, out.data())) { std::fprintf(stderr, "render failed\n"); return 7; }
     std::fprintf(stderr, "rendered %dx%d, %d layers, %.2f MB of textures\n", ow, oh, int(draws.size()), comp.textureBytes() / 1048576.0);
     FILE *o = std::fopen(argv[2], "wb");

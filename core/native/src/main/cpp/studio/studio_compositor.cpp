@@ -32,6 +32,15 @@ bool Compositor::init(std::string &err) {
     GLint ok = 0;
     glGetProgramiv(prog_, GL_LINK_STATUS, &ok);
     if (!ok) { char log[4096]; glGetProgramInfoLog(prog_, sizeof log, nullptr, log); err += log; glDeleteProgram(prog_); prog_ = 0; return false; }
+    GLuint sv = compile(GL_VERTEX_SHADER, SH_studio_stamp_glsl, err);
+    GLuint sf = compile(GL_FRAGMENT_SHADER, SH_studio_stamp_frag, err);
+    if (!sv || !sf) { if (sv) glDeleteShader(sv); if (sf) glDeleteShader(sf); return false; }
+    stampProg_ = glCreateProgram();
+    glAttachShader(stampProg_, sv); glAttachShader(stampProg_, sf);
+    glLinkProgram(stampProg_);
+    glDeleteShader(sv); glDeleteShader(sf);
+    glGetProgramiv(stampProg_, GL_LINK_STATUS, &ok);
+    if (!ok) { char log[4096]; glGetProgramInfoLog(stampProg_, sizeof log, nullptr, log); err += log; glDeleteProgram(stampProg_); stampProg_ = 0; return false; }
     glGenVertexArrays(1, &vao_);
     ready_ = true;
     return true;
@@ -42,8 +51,10 @@ void Compositor::release() {
     for (Slot &s : slots_) { if (s.tex) glDeleteTextures(1, &s.tex); s = Slot(); }
     for (Target &t : ping_) freeTarget(t);
     freeTarget(resolve_);
-    glDeleteProgram(prog_); glDeleteVertexArrays(1, &vao_);
-    prog_ = 0; vao_ = 0; ready_ = false;
+    freeTarget(strokeBuf_);
+    stroke_ = Stroke();
+    glDeleteProgram(prog_); glDeleteProgram(stampProg_); glDeleteVertexArrays(1, &vao_);
+    prog_ = 0; stampProg_ = 0; vao_ = 0; ready_ = false;
 }
 
 void Compositor::freeTarget(Target &t) {
@@ -120,6 +131,17 @@ void Compositor::draw(const Target &dst, const Target *backdrop, const LayerDraw
         glUniform2i(glGetUniformLocation(prog_, "uLayerSize"), s.w, s.h);
         glUniform4f(glGetUniformLocation(prog_, "uRect"), l->x, l->y, s.w * l->scale, s.h * l->scale);
         glUniform1f(glGetUniformLocation(prog_, "uOpacity"), l->opacity);
+        bool live = stroke_.slot == l->slot && strokeBuf_.tex;
+        glUniform1i(glGetUniformLocation(prog_, "uStrokeMode"), live ? (stroke_.erase ? 2 : 1) : 0);
+        if (live) {
+            glActiveTexture(GL_TEXTURE2);
+            glBindTexture(GL_TEXTURE_2D, strokeBuf_.tex);
+            glUniform1i(glGetUniformLocation(prog_, "uStroke"), 2);
+            glUniform3f(glGetUniformLocation(prog_, "uStrokeColor"), stroke_.rgb[0], stroke_.rgb[1], stroke_.rgb[2]);
+            glUniform1f(glGetUniformLocation(prog_, "uStrokeOpacity"), stroke_.opacity);
+        }
+    } else {
+        glUniform1i(glGetUniformLocation(prog_, "uStrokeMode"), 0);
     }
     glBindVertexArray(vao_);
     glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -150,11 +172,72 @@ bool Compositor::render(const std::vector<LayerDraw> &layers, float vx, float vy
     return ok && glGetError() == GL_NO_ERROR;
 }
 
+bool Compositor::beginStroke(int slot, float r, float g, float b, float opacity, bool erase, float hardness, float flow) {
+    if (!ready_ || slot < 0 || slot >= kMaxSlots || !slots_[slot].tex) return false;
+    while (glGetError() != GL_NO_ERROR) {}
+    const Slot &sl = slots_[slot];
+    if (!ensureTarget(strokeBuf_, sl.w, sl.h, GL_R16F)) { stroke_ = Stroke(); return false; }
+    glBindFramebuffer(GL_FRAMEBUFFER, strokeBuf_.fbo);
+    glViewport(0, 0, sl.w, sl.h);
+    glClearColor(0.f, 0.f, 0.f, 0.f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    stroke_ = Stroke{slot, {r, g, b}, opacity, erase, hardness, flow};
+    return glGetError() == GL_NO_ERROR;
+}
+
+bool Compositor::addStamps(const float *xyr, int count) {
+    if (!ready_ || stroke_.slot < 0 || !strokeBuf_.tex || count <= 0) return false;
+    GLint prevFbo = 0, prevVp[4];
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+    glGetIntegerv(GL_VIEWPORT, prevVp);
+    glBindFramebuffer(GL_FRAMEBUFFER, strokeBuf_.fbo);
+    glViewport(0, 0, strokeBuf_.w, strokeBuf_.h);
+    glDisable(GL_DEPTH_TEST); glDisable(GL_SCISSOR_TEST); glDisable(GL_CULL_FACE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);   // a = s + a (1 - s)
+    glUseProgram(stampProg_);
+    glUniform2f(glGetUniformLocation(stampProg_, "uSize"), float(strokeBuf_.w), float(strokeBuf_.h));
+    glUniform1f(glGetUniformLocation(stampProg_, "uHardness"), stroke_.hardness);
+    glUniform1f(glGetUniformLocation(stampProg_, "uFlow"), stroke_.flow);
+    glBindVertexArray(vao_);
+    const GLint loc = glGetUniformLocation(stampProg_, "uStamps");
+    for (int i = 0; i < count; i += 64) {
+        int n = std::min(64, count - i);
+        float buf[64 * 4];
+        for (int k = 0; k < n; k++) { buf[k * 4] = xyr[(i + k) * 3]; buf[k * 4 + 1] = xyr[(i + k) * 3 + 1]; buf[k * 4 + 2] = xyr[(i + k) * 3 + 2]; buf[k * 4 + 3] = 0.f; }
+        glUniform4fv(loc, n, buf);
+        glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, n);
+    }
+    glDisable(GL_BLEND);
+    glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
+    glViewport(prevVp[0], prevVp[1], prevVp[2], prevVp[3]);
+    return glGetError() == GL_NO_ERROR;
+}
+
+bool Compositor::readStroke(int x, int y, int w, int h, float *coverage) {
+    if (!ready_ || !strokeBuf_.tex || x < 0 || y < 0 || w <= 0 || h <= 0 || x + w > strokeBuf_.w || y + h > strokeBuf_.h) return false;
+    GLint prevFbo = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, strokeBuf_.fbo);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    std::vector<float> rgba(size_t(w) * h * 4);   // RGBA with FLOAT is the combination every driver accepts for a float attachment
+    glReadPixels(x, y, w, h, GL_RGBA, GL_FLOAT, rgba.data());
+    glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
+    for (size_t i = 0; i < size_t(w) * h; i++) coverage[i] = rgba[i * 4];
+    return glGetError() == GL_NO_ERROR;
+}
+
+void Compositor::endStroke() {
+    freeTarget(strokeBuf_);
+    stroke_ = Stroke();
+}
+
 int64_t Compositor::textureBytes() const {
     int64_t n = 0;
     for (const Slot &s : slots_) n += int64_t(s.w) * s.h * 4;
     for (const Target &t : ping_) n += int64_t(t.w) * t.h * 8;
     n += int64_t(resolve_.w) * resolve_.h * 4;
+    n += int64_t(strokeBuf_.w) * strokeBuf_.h * 2;
     return n;
 }
 

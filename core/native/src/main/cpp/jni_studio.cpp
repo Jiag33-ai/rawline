@@ -95,6 +95,39 @@ JNIEXPORT jboolean JNICALL Java_app_rawline_core_nativelib_StudioNative_render(J
     });
 }
 
+/** Clears an R16F coverage buffer the size of the slot's layer and remembers the stroke style. */
+JNIEXPORT jboolean JNICALL Java_app_rawline_core_nativelib_StudioNative_beginStroke(JNIEnv *, jobject, jlong h, jint slot, jfloat r, jfloat g, jfloat b, jfloat opacity, jboolean erase, jfloat hardness, jfloat flow) {
+    return guarded<jboolean>("studioBeginStroke", JNI_FALSE, [&]() -> jboolean { return reinterpret_cast<Compositor *>(h)->beginStroke(slot, r, g, b, opacity, erase, hardness, flow); });
+}
+
+/** xyr: count * 3 floats (x, y, radius in layer pixels). */
+JNIEXPORT jboolean JNICALL Java_app_rawline_core_nativelib_StudioNative_addStamps(JNIEnv *env, jobject, jlong h, jfloatArray xyr, jint count) {
+    return guarded<jboolean>("studioAddStamps", JNI_FALSE, [&]() -> jboolean {
+        if (!xyr || count <= 0 || size_t(env->GetArrayLength(xyr)) < size_t(count) * 3) return JNI_FALSE;
+        jfloat *p = env->GetFloatArrayElements(xyr, nullptr);
+        if (!p) throw std::bad_alloc();
+        bool ok = reinterpret_cast<Compositor *>(h)->addStamps(p, count);
+        env->ReleaseFloatArrayElements(xyr, p, JNI_ABORT);
+        return ok;
+    });
+}
+
+/** coverage: w * h floats, row 0 = the rectangle's top row. */
+JNIEXPORT jboolean JNICALL Java_app_rawline_core_nativelib_StudioNative_readStroke(JNIEnv *env, jobject, jlong h, jint x, jint y, jint w, jint hgt, jfloatArray coverage) {
+    return guarded<jboolean>("studioReadStroke", JNI_FALSE, [&]() -> jboolean {
+        if (!coverage || w <= 0 || hgt <= 0 || w > 16384 || hgt > 16384 || size_t(env->GetArrayLength(coverage)) < size_t(w) * size_t(hgt)) return JNI_FALSE;
+        jfloat *p = env->GetFloatArrayElements(coverage, nullptr);
+        if (!p) throw std::bad_alloc();
+        bool ok = reinterpret_cast<Compositor *>(h)->readStroke(x, y, w, hgt, p);
+        env->ReleaseFloatArrayElements(coverage, p, 0);
+        return ok;
+    });
+}
+
+JNIEXPORT void JNICALL Java_app_rawline_core_nativelib_StudioNative_endStroke(JNIEnv *, jobject, jlong h) {
+    guardedV("studioEndStroke", [&] { reinterpret_cast<Compositor *>(h)->endStroke(); });
+}
+
 JNIEXPORT jlong JNICALL Java_app_rawline_core_nativelib_StudioNative_textureBytes(JNIEnv *, jobject, jlong h) {
     return guarded<jlong>("studioTextureBytes", 0, [&]() -> jlong { return reinterpret_cast<Compositor *>(h)->textureBytes(); });
 }
