@@ -18,7 +18,10 @@ list(FILTER LIBRAW_SOURCES EXCLUDE REGEX "/integration/|_ph\\.cpp$")
 
 add_library(raw SHARED ${LIBRAW_SOURCES})
 target_include_directories(raw PUBLIC ${libraw_src_SOURCE_DIR})
-target_compile_definitions(raw PRIVATE LIBRAW_BUILDLIB)
+# USE_ZLIB: Deflate compressed DNG (float and HDR DNG, some phone DNGs). zlib is part of the Android NDK sysroot (libz.so is a system library).
+# Lossy JPEG compressed DNG (USE_JPEG) stays out: it needs libjpeg and no supported camera here writes it.
+target_compile_definitions(raw PRIVATE LIBRAW_BUILDLIB USE_ZLIB)
+target_link_libraries(raw PRIVATE z)
 # LibRaw's AHD demosaic and several colour passes are `#pragma omp` loops: without OpenMP a full resolution decode runs on one core.
 # libomp is linked statically (-static-openmp, libomp.a ships with the NDK for arm64), so no extra .so has to be packaged and loaded.
 # Output is bit identical to the single threaded build (checked on the sample RAW, tools/golden).

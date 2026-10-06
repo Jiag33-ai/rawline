@@ -17,6 +17,8 @@ Timers recorded by the app (names in the report): `tier2_total_ms`, `tier2_parse
 
 ## Sandbox numbers (not the phone)
 Measured on the build machine, only to show where work goes; the phone is a different CPU/GPU.
+- LibRaw full decode of the 24 MP sample RW2 on the 4 core build machine: 3.0 s single threaded, 1.6 to 1.9 s with OpenMP (the Android build uses OpenMP too; the phone number is still needed). Half size: 0.71 s to 0.54 s. Output is bit identical.
+- Peak memory of the same decode (host RSS): 420 MB to 242 MB full, 144 MB to 98 MB half size, after converting LibRaw's pixel block in place.
 - Embedded preview parser on 38 MB RW2: 5 to 12 microseconds.
 - LibRaw half-size decode of a 24 MP RW2 on the x86 build machine: about 0.9 s single thread. The phone budget for Edit to first frame is 1.2 s, so this is the number to watch.
 - GL pipeline on Mesa llvmpipe (CPU rasteriser) at 960 x 640: about 35 ms per frame. A real GPU is far faster, but this is unmeasured.
