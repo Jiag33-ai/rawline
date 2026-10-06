@@ -41,7 +41,7 @@ class InputRouter {
     private var penNearUntil = Long.MIN_VALUE
 
     /** Pen hover from the canvas (Compose PointerEventType.Enter and Move with a stylus: [near] true, Exit: false). */
-    fun onHover(near: Boolean, timeMs: Long) { penNearUntil = if (near) Long.MAX_VALUE else timeMs + PALM_GRACE_MS }
+    fun onHover(near: Boolean, timeMs: Long) { penNearUntil = if (near) timeMs + HOVER_STALE_MS else timeMs + PALM_GRACE_MS }   // hover events keep coming while the pen is near; if they stop (a missed exit) the palm rule lapses by itself
 
     fun onEvent(e: InputEvent): List<Action> {
         val out = ArrayList<Action>(2)
@@ -90,7 +90,7 @@ class InputRouter {
 
     private var strokePos: FloatArray? = null
 
-    companion object { const val PALM_GRACE_MS = 600L }
+    companion object { const val PALM_GRACE_MS = 600L; const val HOVER_STALE_MS = 2_000L }
 
     private fun beginGesture() {
         val (cx, cy, d) = measure(); lastCx = cx; lastCy = cy; lastDist = d.coerceAtLeast(1f)

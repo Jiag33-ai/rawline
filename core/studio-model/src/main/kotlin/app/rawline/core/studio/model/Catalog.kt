@@ -37,11 +37,16 @@ object ProjectCatalog {
     fun duplicate(fs: Fs, root: String, id: String, newId: String, nowMs: Long): ProjectRow {
         require(!fs.exists("$root/$newId/project.json") && fs.dirs(root).none { it == newId }) { "project $newId exists" }
         val src = "$root/$id"; val dst = "$root/$newId"
-        for (n in fs.list(src)) if (!n.endsWith(".tmp")) fs.write("$dst/$n", fs.read("$src/$n")!!)
-        for (n in fs.list("$src/layers")) if (!n.endsWith(".tmp")) fs.write("$dst/layers/$n", fs.read("$src/layers/$n")!!)
-        val store = ProjectStore(fs, dst)
-        val doc = store.open().document
-        store.save(doc.copy(id = newId, name = (doc.name + " copy").take(60), modified = nowMs), { null }, emptySet())
+        try {
+            for (n in fs.list(src)) if (!n.endsWith(".tmp")) fs.write("$dst/$n", fs.read("$src/$n")!!)
+            for (n in fs.list("$src/layers")) if (!n.endsWith(".tmp")) fs.write("$dst/layers/$n", fs.read("$src/layers/$n")!!)
+            val store = ProjectStore(fs, dst)
+            val doc = store.open().document
+            store.save(doc.copy(id = newId, name = (doc.name + " copy").take(60), modified = nowMs), { null }, emptySet())
+        } catch (t: Throwable) {
+            runCatching { fs.deleteTree(dst) }   // a copy that did not finish is not left behind as a damaged project
+            throw t
+        }
         return row(fs, dst, newId)
     }
 

@@ -90,6 +90,7 @@ class StudioSession(
     private var saveAgainNow = false
     private var timerArmed = false
     private var lastSaveStart = Long.MIN_VALUE / 2
+    private var lastFailureAt = Long.MIN_VALUE / 2               // when the last save failed: the retry gap counts from here, not from when that save began
     private var lastModified = initial.modified
     private var saveFailed = false
     private var noSpace = false                                  // the last failure was "not enough free space"
@@ -143,6 +144,24 @@ class StudioSession(
 
     /** On pause and Back: write what changed now, not in five seconds. Returns at once. */
     fun flush() = model { if (needsSave || dirty.isNotEmpty()) markDirty(now = true) }
+
+    /**
+     * Leaving: saves now and waits (at most [timeoutMs], real time) until the save has finished or failed, then returns the save state. Call from a worker thread, never the main thread.
+     * SAVED, or a state with unsaved work (FAILED, NO_SPACE, or DIRTY/SAVING when the time ran out) so the screen can ask before it throws the work away.
+     */
+    fun flushAndWait(timeoutMs: Long): SaveState {
+        flush()
+        val end = System.nanoTime() + timeoutMs * 1_000_000
+        while (System.nanoTime() < end) {
+            val s = _state.value.save
+            if (s != SaveState.SAVING && s != SaveState.DIRTY) return s
+            Thread.sleep(20)
+        }
+        return _state.value.save
+    }
+
+    /** The app is in the background or the screen is off: the GPU waits until it is back. The exporter waits for the foreground instead of failing (review R2). */
+    fun isBackgrounded(): Boolean = gl.isPaused
 
     /** The screen is gone. A last save is started if anything is unsaved; the pools wind themselves down when idle. */
     fun release() {
@@ -737,7 +756,7 @@ class StudioSession(
     private fun scheduleSave(now: Boolean) {
         if (saving) { saveAgain = true; if (now) saveAgainNow = true; publishSave(); return }
         val spacing = if (saveFailed) SpaceCheck.retryDelayMs(failStreak) else SAVE_EVERY_MS
-        val wait = if (now) 0L else lastSaveStart + spacing - env.clock()
+        val wait = if (now) 0L else (if (saveFailed) lastFailureAt else lastSaveStart) + spacing - env.clock()
         if (wait <= 0L) startSave()
         else {
             publishSave()
@@ -797,7 +816,7 @@ class StudioSession(
     private fun onSaveFailed(changed: Set<String>, snaps: Map<String, RawPixels>, full: Boolean) {
         for ((id, px) in snaps) { inFlight.remove(id); if (id != activeId) unsaved.putIfAbsent(id, px) }
         dirty += changed
-        saving = false; saveFailed = true; noSpace = full; failStreak++
+        saving = false; saveFailed = true; noSpace = full; failStreak++; lastFailureAt = env.clock()
         if (!everSaved) fs.deleteTree(root)   // a first save that failed leaves no half written project folder behind
         if (!failureNotified) { failureNotified = true; toast(if (full) SpaceCheck.SAVE_FAILED_FULL else SpaceCheck.SAVE_FAILED_OTHER) }
         if (failStreak >= SpaceCheck.MAX_TRIES) { retryHalted = true; needsSave = true; publishSave(); return }

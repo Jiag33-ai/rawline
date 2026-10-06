@@ -125,6 +125,59 @@ class StudioExporterTest {
         assertEquals(StudioExporter.Result.FAILED, r)
     }
 
+    @Test fun anExportInTheBackgroundWaitsForTheForegroundAndThenFinishesExactly() {
+        val hn = harness(); val snap = hn.s.exportSnapshot()!!
+        hn.gl.isPaused = true; hn.gl.gpu.renderFails = true            // the view is paused: the GPU would fail or wait
+        var slept = 0
+        val sleep: (Long) -> Unit = { assertEquals(1_000L, it); if (++slept == 3) { hn.gl.isPaused = false; hn.gl.gpu.renderFails = false } }
+        val bos = ByteArrayOutputStream()
+        val r = StudioExporter(hn.s, stripRows = 16, sleep = sleep).flatten(snap, FlattenFormat.PNG, 92, bos, { false }, {})
+        assertEquals(StudioExporter.Result.DONE, r); assertEquals(3, slept)
+        assertArrayEquals(whole(hn, snap), decodePng(bos.toByteArray()).first)
+    }
+
+    @Test fun anExportThatStaysInTheBackgroundForTheWholeLimitSaysSoInsteadOfFailing() {
+        val hn = harness(); val snap = hn.s.exportSnapshot()!!
+        hn.gl.isPaused = true
+        var slept = 0
+        val errors = ArrayList<String>()
+        val perf = object : StudioPerf { override fun record(name: String, value: Long) {}; override fun error(message: String) { errors += message } }
+        val r = StudioExporter(hn.s, perf, foregroundWaitMs = 5_000, sleep = { slept++ }).flatten(snap, FlattenFormat.PNG, 92, ByteArrayOutputStream(), { false }, {})
+        assertEquals(StudioExporter.Result.BACKGROUND_TIMEOUT, r); assertEquals(5, slept)
+        assertEquals(1, errors.size)
+    }
+
+    @Test fun cancelWhileWaitingForTheForegroundCancels() {
+        val hn = harness(); val snap = hn.s.exportSnapshot()!!
+        hn.gl.isPaused = true
+        var cancel = false; var slept = 0
+        val r = StudioExporter(hn.s, sleep = { if (++slept == 2) cancel = true }).flatten(snap, FlattenFormat.PNG, 92, ByteArrayOutputStream(), { cancel }, {})
+        assertEquals(StudioExporter.Result.CANCELLED, r); assertEquals(2, slept)
+    }
+
+    @Test fun theWaitingLimitIsForTheWholeExportNotForEachStrip() {
+        val hn = harness(); val snap = hn.s.exportSnapshot()!!
+        var slept = 0
+        // paused again before every strip: 2 s each time, a 5 s limit runs out in the third strip
+        val ex = StudioExporter(hn.s, stripRows = 10, foregroundWaitMs = 5_000, sleep = { if (++slept % 2 == 0) hn.gl.isPaused = false })
+        hn.gl.isPaused = true
+        val r = ex.flatten(snap, FlattenFormat.PNG, 92, ByteArrayOutputStream(), { false }, { hn.gl.isPaused = true })
+        assertEquals(StudioExporter.Result.BACKGROUND_TIMEOUT, r); assertEquals(5, slept)
+    }
+
+    @Test fun theRotationCountersGoInTheCopyReportAndResetWhenTheProjectCloses() {
+        StudioStats.clear()
+        StudioStats.update(StudioStats.Snapshot(40, 30, 1, 1, 1, 1, "saved", "p"))
+        StudioStats.glAttached(); StudioStats.glCreated(); StudioStats.glDetached(); StudioStats.glAttached()
+        val d = StudioStats.describe()!!
+        assertTrue(d, d.contains("studio_gl_attach 2") && d.contains("studio_gl_detach 1") && d.contains("studio_gl_create 1"))
+        StudioStats.clear()
+        assertNull(StudioStats.describe())
+        StudioStats.update(StudioStats.Snapshot(40, 30, 1, 1, 1, 1, "saved", "p"))
+        assertTrue(StudioStats.describe()!!.contains("studio_gl_attach 0"))
+        StudioStats.clear()
+    }
+
     @Test fun theExportTimeIsReported() {
         val hn = harness(); val snap = hn.s.exportSnapshot()!!
         val names = ArrayList<String>()

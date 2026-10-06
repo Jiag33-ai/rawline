@@ -79,10 +79,14 @@ class StudioGl(private val perf: StudioPerf) : GLSurfaceView.Renderer, GpuExecut
     }
 
     /** The view is paused (screen off, another app on top): the context may be lost before the next frame, so jobs wait until it is known to be valid again. */
-    fun paused() { synchronized(pending) { glReady = false } }
+    fun paused() { pausedFlag = true; synchronized(pending) { glReady = false } }
+
+    /** True from [paused] to [resumed]: the app is in the background or the screen is off. Read by the exporter, which waits for the foreground (review R2). */
+    @Volatile private var pausedFlag = false
+    override val isPaused: Boolean get() = pausedFlag
 
     /** The view resumed: if the context survived, jobs run again; if it did not, [onSurfaceCreated] does the same once the new one exists. */
-    fun resumed() { view?.queueEvent { markReadyIfValid() } }
+    fun resumed() { pausedFlag = false; view?.queueEvent { markReadyIfValid() } }
 
     private fun markReadyIfValid() {
         if (handle == 0L || gpu == null || EGL14.eglGetCurrentContext() == EGL14.EGL_NO_CONTEXT) return
@@ -97,6 +101,7 @@ class StudioGl(private val perf: StudioPerf) : GLSurfaceView.Renderer, GpuExecut
      */
     fun viewDetached(v: GLSurfaceView) {
         if (released) destroy(v)
+        else synchronized(pending) { glReady = false }   // the GL thread is going and its queue with it: jobs wait in [pending] until the next surface (review R1)
     }
 
     /** The GL thread stops in the view's detach, so the compositor is torn down first while that thread can still run it. */
@@ -130,6 +135,7 @@ class StudioGl(private val perf: StudioPerf) : GLSurfaceView.Renderer, GpuExecut
             return
         }
         gpu = NativeStudioGpu(handle)
+        StudioStats.glCreated()
         display = Display.create()
         val restored = everCreated
         everCreated = true
@@ -256,7 +262,13 @@ class StudioGlView(context: Context, private val gl: StudioGl) : GLSurfaceView(c
 
     override fun onResume() { super.onResume(); gl.resumed() }
 
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        StudioStats.glAttached()
+    }
+
     override fun onDetachedFromWindow() {
+        StudioStats.glDetached()
         gl.viewDetached(this)
         super.onDetachedFromWindow()
     }

@@ -45,6 +45,7 @@ import app.rawline.core.studio.render.FlattenFormat
 import app.rawline.core.studio.render.StudioExporter
 import app.rawline.core.studio.render.StudioPerf
 import app.rawline.core.studio.render.StudioSession
+import app.rawline.core.ui.KeepScreenOn
 import app.rawline.core.ui.Lr
 import app.rawline.core.ui.LrTextButton
 import app.rawline.core.ui.PrimaryButton
@@ -106,6 +107,7 @@ fun ExportSheet(session: StudioSession, width: Int, height: Int, projectName: St
                 when (r) {
                     StudioExporter.Result.DONE -> if (target.publish()) null to target else { target.discard(); "The picture was written but could not be made visible." to null }
                     StudioExporter.Result.CANCELLED -> { target.discard(); "Export cancelled." to null }
+                    StudioExporter.Result.BACKGROUND_TIMEOUT -> { target.discard(); "Export paused while Rawline was in the background. Open it again to finish." to null }
                     StudioExporter.Result.FAILED -> { target.discard(); "Export failed. The canvas may be too large for the memory that is free." to null }
                 }
             }
@@ -119,6 +121,8 @@ fun ExportSheet(session: StudioSession, width: Int, height: Int, projectName: St
     }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(format.mime)) { uri -> if (uri != null) startExport(Where.DOCUMENT, uri) }
+    // While an export runs the screen stays on: a screen timeout would pause the GPU view and the export would wait (review R2). Released when it ends or the sheet goes.
+    KeepScreenOn(running)
     // leaving while it renders cancels the render (the worker deletes the partial file)
     DisposableEffect(Unit) { onDispose { cancel.set(true) } }
     val close = { if (running) cancel.set(true) else onDismiss() }

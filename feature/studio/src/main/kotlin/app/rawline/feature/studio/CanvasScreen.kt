@@ -132,20 +132,28 @@ fun StudioCanvasScreen(session: StudioSession, gl: StudioGl, projects: StudioPro
         }
         onDispose { session.thumbnailer = null }
     }
-    // Leaving: save what is unsaved (a flush that returns at once; the session writes it and release() finishes it) and go. No thumbnail work, no waiting.
-    val leave: () -> Unit = {
+    // Leaving: save what is unsaved, wait for that save to finish, and go. No thumbnail work (BK-507). [force] is the dialog's "Leave": the person has been told, so it only flushes.
+    // Otherwise leaving waits (5 s at most, off the main thread) for the save, and if it did not work it stays on the screen and asks first (review R4).
+    var confirmLeave by remember { mutableStateOf(false) }
+    val leave: (Boolean) -> Unit = { force ->
         if (!leaving) {
             leaving = true
             val t0 = android.os.SystemClock.elapsedRealtime()
-            session.flush()
-            onExit()
-            perf.record("studio_leave_ms", android.os.SystemClock.elapsedRealtime() - t0)
+            val ready = state.phase == Phase.READY
+            scope.launch {
+                if (ready && !force) {
+                    // flushAndWait sleeps in short steps: worker thread only
+                    val saved = withContext(Dispatchers.IO) { session.flushAndWait(5_000) }
+                    if (saved != app.rawline.core.studio.render.SaveState.SAVED) { leaving = false; confirmLeave = true; return@launch }
+                } else session.flush()
+                onExit()
+                perf.record("studio_leave_ms", android.os.SystemClock.elapsedRealtime() - t0)
+            }
         }
     }
     // BK-503: leaving while the last save failed would lose the changes (the project stays in memory only while this screen is open): ask first, and offer Export.
-    var confirmLeave by remember { mutableStateOf(false) }
     val unsaved = state.save == app.rawline.core.studio.render.SaveState.FAILED || state.save == app.rawline.core.studio.render.SaveState.NO_SPACE
-    val tryLeave: () -> Unit = { if (unsaved && state.phase == Phase.READY) confirmLeave = true else leave() }
+    val tryLeave: () -> Unit = { if (unsaved && state.phase == Phase.READY) confirmLeave = true else leave(false) }
     BackHandler(enabled = !leaving) { if (exportOpen) exportOpen = false else if (layersOpen) layersOpen = false else tryLeave() }
 
     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
@@ -187,7 +195,7 @@ fun StudioCanvasScreen(session: StudioSession, gl: StudioGl, projects: StudioPro
         onDismissRequest = { confirmLeave = false },
         title = { Text("Leave without saving?") },
         text = { Text("Your last changes are not saved. Export keeps a picture of what you have.") },
-        confirmButton = { LrTextButton(onClick = { confirmLeave = false; leave() }) { Text("Leave") } },
+        confirmButton = { LrTextButton(onClick = { confirmLeave = false; leave(true) }) { Text("Leave") } },
         dismissButton = {
             Row {
                 LrTextButton(onClick = { confirmLeave = false }) { Text("Stay") }

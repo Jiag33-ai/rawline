@@ -36,7 +36,8 @@ class MemFs : Fs {
     override fun freeBytes() = free
     override fun exists(path: String) = files.containsKey(path)
     override fun read(path: String) = files[path]
-    override fun write(path: String, data: ByteArray) { if (failWrites || failPathContains?.let { path.contains(it) } == true) throw java.io.IOException("disk full"); files[path] = data.copyOf() }
+    var onWrite: (() -> Unit)? = null
+    override fun write(path: String, data: ByteArray) { onWrite?.invoke(); if (failWrites || failPathContains?.let { path.contains(it) } == true) throw java.io.IOException("disk full"); files[path] = data.copyOf() }
     override fun rename(from: String, to: String) { files[to] = files.remove(from) ?: throw IllegalStateException("no $from") }
     override fun delete(path: String) { files.remove(path) }
     override fun list(dir: String) = files.keys.filter { it.startsWith("$dir/") && !it.substring(dir.length + 1).contains('/') }.map { it.substring(dir.length + 1) }
@@ -99,6 +100,7 @@ class FakeGl(val gpu: FakeGpu = FakeGpu()) : GpuExecutor {
     var last: FrameSpec? = null
     var renders = 0
     var frozen = false   // a GL thread that never runs anything
+    override var isPaused = false   // the view is paused (app in the background)
     override fun post(onDrop: (() -> Unit)?, block: (StudioGpu) -> Unit) { if (!frozen) block(gpu) }
     override fun setFrame(frame: FrameSpec?) { last = frame }
     override fun requestRender() { renders++ }

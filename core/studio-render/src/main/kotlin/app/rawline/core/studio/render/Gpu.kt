@@ -46,4 +46,6 @@ interface GpuExecutor {
     fun setFrame(frame: FrameSpec?)
     fun requestRender()
     var listener: SurfaceListener?
+    /** True while the app is in the background or the screen is off (the view is paused): GPU jobs wait until it resumes. Read by the exporter. */
+    val isPaused: Boolean get() = false
 }
