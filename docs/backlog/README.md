@@ -10,11 +10,12 @@ Read in this order: `DISPATCH.md` (which worker next, with file names and estima
 | `DISPATCH.md` | One worker at a time on main: order, files to hand over, entries, estimates, exit checks, what Jai is asked to do |
 | `FINAL.md` | End of campaign checklist: final re-check, release verification, docs, proposed CLAUDE.md lines, clean up, the report to Jai |
 | `BACKLOG.md` | 507 entries (BK-001 to BK-507) by area, with milestones M1 to M7, the quick wins table, traceability to the audits and the NEXT 25 TASKS worklist. Generated: do not edit by hand, see below |
+| `FINAL-REPORT.md` | The short report for Jai at the end of the campaign (plain English, with a box of numbers to refresh before sending) |
 | `PHONE-TEST-S1.md` | The 10 minute phone test of the first Studio release, in plain steps for Jai |
 | `probes/` | Host tests that demonstrated a finding (`FullDiskProbe.kt`: the endless save retry on a full phone); they compile against `core/studio-render` test sources and are evidence, not part of the build |
 | `tasks/` | One zero-questions task file per worker (decisions made, code that was compiled and run, patches, acceptance, phone checks). Each says plainly what was run and what was only written |
 | `tasks/superseded/` | The old W09 plan. Do not dispatch; its residue is `tasks/W09b-engine-residue.md` |
-| `reviews/` | Read only reviews of merged code (`review-s1b.md`) with findings that became entries |
+| `reviews/` | Read only reviews of merged code (`review-s1b.md`, `review-w13.md`) with findings that became entries |
 | `audits/` | The three audit documents the backlog cites (AE engine, AQ quality, AU UI) |
 | `patches/` | Unified diffs the task files refer to. Each was checked with `git apply --check` against the commit named in its task file on 6 Oct 2026; run the check again before use (`git apply --check docs/backlog/patches/<name>`) |
 | `src/` | The generator: `assemble.py` and `parts/` (the entries and the worklist). `BACKLOG.md` is rebuilt from them |
@@ -32,13 +33,16 @@ Binary or large fixtures stayed in the session's scratchpad: the synthetic DNG f
 ## Files
 | File | Size |
 |---|---|
-| `BACKLOG.md` | 524 KB |
-| `DISPATCH.md` | 9 KB |
+| `BACKLOG.md` | 534 KB |
+| `DISPATCH.md` | 10 KB |
+| `FINAL-REPORT.md` | 3 KB |
 | `FINAL.md` | 9 KB |
-| `PHONE-TEST-S1.md` | 6 KB |
+| `JAI-MESSAGE-W32.md` | 2 KB |
+| `PHONE-TEST-S1.md` | 7 KB |
 | `audits/audit-engine.md` | 43 KB |
 | `audits/audit-quality.md` | 33 KB |
 | `audits/audit-ui.md` | 46 KB |
+| `patches/w09b-after-w22.patch` | 4 KB |
 | `patches/w22-editrecipe.patch` | 3 KB |
 | `patches/w22-look2_engine.patch` | 6 KB |
 | `patches/w23-look2_shader.patch` | 9 KB |
@@ -46,9 +50,12 @@ Binary or large fixtures stayed in the session's scratchpad: the synthetic DNG f
 | `patches/w28-model.patch` | 7 KB |
 | `patches/w28-native.patch` | 3 KB |
 | `patches/w29-library.patch` | 1 KB |
+| `patches/w32-core.patch` | 13 KB |
+| `patches/w32-ui.patch` | 4 KB |
 | `probes/FullDiskProbe.kt` | 1 KB |
 | `reviews/review-s1b.md` | 19 KB |
-| `src/assemble.py` | 67 KB |
+| `reviews/review-w13.md` | 13 KB |
+| `src/assemble.py` | 68 KB |
 | `src/parts/next25.md` | 34 KB |
 | `src/parts/p1.md` | 17 KB |
 | `src/parts/p10.md` | 23 KB |
@@ -68,6 +75,7 @@ Binary or large fixtures stayed in the session's scratchpad: the synthetic DNG f
 | `src/parts/p23.md` | 5 KB |
 | `src/parts/p24.md` | 1 KB |
 | `src/parts/p25.md` | 6 KB |
+| `src/parts/p26.md` | 5 KB |
 | `src/parts/p3.md` | 12 KB |
 | `src/parts/p4.md` | 14 KB |
 | `src/parts/p5.md` | 17 KB |
@@ -76,8 +84,8 @@ Binary or large fixtures stayed in the session's scratchpad: the synthetic DNG f
 | `src/parts/p8.md` | 13 KB |
 | `src/parts/p9.md` | 16 KB |
 | `tasks/W06-auto-backups.md` | 42 KB |
-| `tasks/W09b-engine-residue.md` | 13 KB |
-| `tasks/W13-s1b-fixes.md` | 39 KB |
+| `tasks/W09b-engine-residue.md` | 18 KB |
+| `tasks/W13-s1b-fixes.md` | 63 KB |
 | `tasks/W15-card-import.md` | 25 KB |
 | `tasks/W16-platform.md` | 20 KB |
 | `tasks/W18-studio-s1a.md` | 77 KB |
@@ -89,8 +97,10 @@ Binary or large fixtures stayed in the session's scratchpad: the synthetic DNG f
 | `tasks/W26-studio-s2.md` | 26 KB |
 | `tasks/W27-onboarding-help.md` | 44 KB |
 | `tasks/W29-library-first-impression.md` | 21 KB |
-| `tasks/W30-commit-message-check.md` | 15 KB |
+| `tasks/W30-commit-message-check.md` | 2 KB |
+| `tasks/W31-studio-s1d.md` | 26 KB |
+| `tasks/W32-w13-followups.md` | 7 KB |
 | `tasks/superseded/W09-engine-fixes.md` | 74 KB |
-| `tools/final-check.sh` | 5 KB |
+| `tools/final-check.sh` | 7 KB |
 
-Total: 60 files, 1892 KB. No file is larger than 1 MB.
+Total: 69 files, 2001 KB. No file is larger than 1 MB.

@@ -1,0 +1,197 @@
+diff --git a/core/studio-model/src/main/kotlin/app/rawline/core/studio/model/Catalog.kt b/core/studio-model/src/main/kotlin/app/rawline/core/studio/model/Catalog.kt
+index 4a8b015..f5e017a 100644
+--- a/core/studio-model/src/main/kotlin/app/rawline/core/studio/model/Catalog.kt
++++ b/core/studio-model/src/main/kotlin/app/rawline/core/studio/model/Catalog.kt
+@@ -37,11 +37,16 @@ object ProjectCatalog {
+     fun duplicate(fs: Fs, root: String, id: String, newId: String, nowMs: Long): ProjectRow {
+         require(!fs.exists("$root/$newId/project.json") && fs.dirs(root).none { it == newId }) { "project $newId exists" }
+         val src = "$root/$id"; val dst = "$root/$newId"
+-        for (n in fs.list(src)) if (!n.endsWith(".tmp")) fs.write("$dst/$n", fs.read("$src/$n")!!)
+-        for (n in fs.list("$src/layers")) if (!n.endsWith(".tmp")) fs.write("$dst/layers/$n", fs.read("$src/layers/$n")!!)
+-        val store = ProjectStore(fs, dst)
+-        val doc = store.open().document
+-        store.save(doc.copy(id = newId, name = (doc.name + " copy").take(60), modified = nowMs), { null }, emptySet())
++        try {
++            for (n in fs.list(src)) if (!n.endsWith(".tmp")) fs.write("$dst/$n", fs.read("$src/$n")!!)
++            for (n in fs.list("$src/layers")) if (!n.endsWith(".tmp")) fs.write("$dst/layers/$n", fs.read("$src/layers/$n")!!)
++            val store = ProjectStore(fs, dst)
++            val doc = store.open().document
++            store.save(doc.copy(id = newId, name = (doc.name + " copy").take(60), modified = nowMs), { null }, emptySet())
++        } catch (t: Throwable) {
++            runCatching { fs.deleteTree(dst) }   // a copy that did not finish is not left behind as a damaged project
++            throw t
++        }
+         return row(fs, dst, newId)
+     }
+ 
+diff --git a/core/studio-model/src/main/kotlin/app/rawline/core/studio/model/InputRouter.kt b/core/studio-model/src/main/kotlin/app/rawline/core/studio/model/InputRouter.kt
+index 0cd900d..4c172c1 100644
+--- a/core/studio-model/src/main/kotlin/app/rawline/core/studio/model/InputRouter.kt
++++ b/core/studio-model/src/main/kotlin/app/rawline/core/studio/model/InputRouter.kt
+@@ -41,7 +41,7 @@ class InputRouter {
+     private var penNearUntil = Long.MIN_VALUE
+ 
+     /** Pen hover from the canvas (Compose PointerEventType.Enter and Move with a stylus: [near] true, Exit: false). */
+-    fun onHover(near: Boolean, timeMs: Long) { penNearUntil = if (near) Long.MAX_VALUE else timeMs + PALM_GRACE_MS }
++    fun onHover(near: Boolean, timeMs: Long) { penNearUntil = if (near) timeMs + HOVER_STALE_MS else timeMs + PALM_GRACE_MS }   // hover events keep coming while the pen is near; if they stop (a missed exit) the palm rule lapses by itself
+ 
+     fun onEvent(e: InputEvent): List<Action> {
+         val out = ArrayList<Action>(2)
+@@ -90,7 +90,7 @@ class InputRouter {
+ 
+     private var strokePos: FloatArray? = null
+ 
+-    companion object { const val PALM_GRACE_MS = 600L }
++    companion object { const val PALM_GRACE_MS = 600L; const val HOVER_STALE_MS = 2_000L }
+ 
+     private fun beginGesture() {
+         val (cx, cy, d) = measure(); lastCx = cx; lastCy = cy; lastDist = d.coerceAtLeast(1f)
+diff --git a/b/core/studio-model/src/test/kotlin/app/rawline/core/studio/model/W32Test.kt b/core/studio-model/src/test/kotlin/app/rawline/core/studio/model/W32Test.kt
+new file mode 100644
+index 0000000..9aba875
+--- /dev/null
++++ b/core/studio-model/src/test/kotlin/app/rawline/core/studio/model/W32Test.kt
+@@ -0,0 +1,26 @@
++package app.rawline.core.studio.model
++
++import org.junit.Assert.*
++import org.junit.Test
++
++class W32RouterTest {
++    private fun ev(p: Phase, id: Int, kind: PointerKind, t: Long) = InputEvent(p, id, 1f, 1f, 1f, kind, t)
++    @Test fun aMissedHoverExitLapsesAfterTwoSeconds() {
++        val r = InputRouter(); r.onHover(true, 100)
++        assertTrue(r.onEvent(ev(Phase.DOWN, 1, PointerKind.FINGER, 1_000)).isEmpty())      // still near: a palm
++        r.onEvent(ev(Phase.UP, 1, PointerKind.FINGER, 1_100))
++        val a = r.onEvent(ev(Phase.DOWN, 2, PointerKind.FINGER, 3_600_000))                // an hour later, no exit ever came
++        assertEquals(listOf("StrokeStart"), a.map { it::class.simpleName })
++    }
++    @Test fun hoverMovesKeepTheRuleAlive() {
++        val r = InputRouter(); for (t in 0L..10_000L step 500) r.onHover(true, t)         // the pen hovers for ten seconds
++        assertTrue(r.onEvent(ev(Phase.DOWN, 1, PointerKind.FINGER, 10_400)).isEmpty())
++        assertEquals(1, r.onEvent(ev(Phase.DOWN, 7, PointerKind.STYLUS, 10_450)).size)       // the pen itself still draws
++    }
++    @Test fun exitStillGivesTheShortGrace() {
++        val r = InputRouter(); r.onHover(true, 0); r.onHover(false, 1_000)
++        assertTrue(r.onEvent(ev(Phase.DOWN, 1, PointerKind.FINGER, 1_500)).isEmpty())
++        r.onEvent(ev(Phase.UP, 1, PointerKind.FINGER, 1_550))
++        assertEquals(1, r.onEvent(ev(Phase.DOWN, 2, PointerKind.FINGER, 1_600)).size)
++    }
++}
+diff --git a/core/studio-render/src/main/kotlin/app/rawline/core/studio/render/StudioSession.kt b/core/studio-render/src/main/kotlin/app/rawline/core/studio/render/StudioSession.kt
+index 7a5ae3d..1012762 100644
+--- a/core/studio-render/src/main/kotlin/app/rawline/core/studio/render/StudioSession.kt
++++ b/core/studio-render/src/main/kotlin/app/rawline/core/studio/render/StudioSession.kt
+@@ -83,6 +83,7 @@ class StudioSession(
+     private var saveAgainNow = false
+     private var timerArmed = false
+     private var lastSaveStart = Long.MIN_VALUE / 2
++    private var lastFailureAt = Long.MIN_VALUE / 2               // when the last save failed: the retry gap counts from here, not from when that save began
+     private var lastModified = initial.modified
+     private var saveFailed = false
+     private var noSpace = false                                  // the last failure was "not enough free space"
+@@ -136,6 +137,21 @@ class StudioSession(
+     /** On pause and Back: write what changed now, not in five seconds. Returns at once. */
+     fun flush() = model { if (needsSave || dirty.isNotEmpty()) markDirty(now = true) }
+ 
++    /**
++     * Leaving: saves now and waits (at most [timeoutMs], real time) until the save has finished or failed, then returns the save state. Call from a worker thread, never the main thread.
++     * SAVED, or a state with unsaved work (FAILED, NO_SPACE, or DIRTY/SAVING when the time ran out) so the screen can ask before it throws the work away.
++     */
++    fun flushAndWait(timeoutMs: Long): SaveState {
++        flush()
++        val end = System.nanoTime() + timeoutMs * 1_000_000
++        while (System.nanoTime() < end) {
++            val s = _state.value.save
++            if (s != SaveState.SAVING && s != SaveState.DIRTY) return s
++            Thread.sleep(20)
++        }
++        return _state.value.save
++    }
++
+     /** The screen is gone. A last save is started if anything is unsaved; the pools wind themselves down when idle. */
+     fun release() {
+         model { if (needsSave || dirty.isNotEmpty()) markDirty(now = true); released = true }
+@@ -692,7 +708,7 @@ class StudioSession(
+     private fun scheduleSave(now: Boolean) {
+         if (saving) { saveAgain = true; if (now) saveAgainNow = true; publishSave(); return }
+         val spacing = if (saveFailed) SpaceCheck.retryDelayMs(failStreak) else SAVE_EVERY_MS
+-        val wait = if (now) 0L else lastSaveStart + spacing - env.clock()
++        val wait = if (now) 0L else (if (saveFailed) lastFailureAt else lastSaveStart) + spacing - env.clock()
+         if (wait <= 0L) startSave()
+         else {
+             publishSave()
+@@ -751,7 +767,7 @@ class StudioSession(
+     private fun onSaveFailed(changed: Set<String>, snaps: Map<String, RawPixels>, full: Boolean) {
+         for ((id, px) in snaps) { inFlight.remove(id); if (id != activeId) unsaved.putIfAbsent(id, px) }
+         dirty += changed
+-        saving = false; saveFailed = true; noSpace = full; failStreak++
++        saving = false; saveFailed = true; noSpace = full; failStreak++; lastFailureAt = env.clock()
+         if (!everSaved) fs.deleteTree(root)   // a first save that failed leaves no half written project folder behind
+         if (!failureNotified) { failureNotified = true; toast(if (full) SpaceCheck.SAVE_FAILED_FULL else SpaceCheck.SAVE_FAILED_OTHER) }
+         if (failStreak >= SpaceCheck.MAX_TRIES) { retryHalted = true; needsSave = true; publishSave(); return }
+diff --git a/core/studio-render/src/test/kotlin/app/rawline/core/studio/render/StudioSessionTest.kt b/core/studio-render/src/test/kotlin/app/rawline/core/studio/render/StudioSessionTest.kt
+index 0fec1b4..e63e0d7 100644
+--- a/core/studio-render/src/test/kotlin/app/rawline/core/studio/render/StudioSessionTest.kt
++++ b/core/studio-render/src/test/kotlin/app/rawline/core/studio/render/StudioSessionTest.kt
+@@ -36,7 +36,8 @@ class MemFs : Fs {
+     override fun freeBytes() = free
+     override fun exists(path: String) = files.containsKey(path)
+     override fun read(path: String) = files[path]
+-    override fun write(path: String, data: ByteArray) { if (failWrites || failPathContains?.let { path.contains(it) } == true) throw java.io.IOException("disk full"); files[path] = data.copyOf() }
++    var onWrite: (() -> Unit)? = null
++    override fun write(path: String, data: ByteArray) { onWrite?.invoke(); if (failWrites || failPathContains?.let { path.contains(it) } == true) throw java.io.IOException("disk full"); files[path] = data.copyOf() }
+     override fun rename(from: String, to: String) { files[to] = files.remove(from) ?: throw IllegalStateException("no $from") }
+     override fun delete(path: String) { files.remove(path) }
+     override fun list(dir: String) = files.keys.filter { it.startsWith("$dir/") && !it.substring(dir.length + 1).contains('/') }.map { it.substring(dir.length + 1) }
+diff --git a/b/core/studio-render/src/test/kotlin/app/rawline/core/studio/render/W32SessionTest.kt b/core/studio-render/src/test/kotlin/app/rawline/core/studio/render/W32SessionTest.kt
+new file mode 100644
+index 0000000..cefe17a
+--- /dev/null
++++ b/core/studio-render/src/test/kotlin/app/rawline/core/studio/render/W32SessionTest.kt
+@@ -0,0 +1,45 @@
++package app.rawline.core.studio.render
++
++import app.rawline.core.studio.model.*
++import org.junit.Assert.*
++import org.junit.Test
++
++class W32SessionTest {
++    private fun blank(w: Int = 64, h: Int = 48) = Document("p1", "T", w, h, layers = listOf(Layer.Pixel(LayerCommon("a", "a"), w, h)), created = 1, modified = 1)
++    private fun white(w: Int = 64, h: Int = 48) = RawPixels(w, h, ByteArray(w * h * 4) { 255.toByte() })
++
++    @Test fun theRetryGapCountsFromTheFailureNotFromTheStartOfTheSave() {
++        val m = MemFs(); val h = Harness(fs = m, doc = blank(), pixels = mapOf("a" to white()))
++        h.s.start(); h.s.setBrush(Brush(diameter = 6.0, pressureSize = false)); h.now += 10_000
++        m.failWrites = true; m.onWrite = { h.now += 7_000 }               // every save takes 7 s of fake time before it fails
++        val before = h.errors.count { it.contains("studio save") }
++        h.stroke(listOf(5f to 5f, 30f to 5f))
++        val tries = h.errors.count { it.contains("studio save") } - before
++        assertEquals("one try, then a timer: no immediate second try", 1, tries)
++        assertEquals(1, h.timers.size)
++        assertEquals(SpaceCheck.retryDelayMs(1), h.timers.single().first)
++    }
++    @Test fun leavingReportsAFailedSaveInsteadOfSilentlyDroppingTheWork() {
++        val m = MemFs(); val h = Harness(fs = m, doc = blank(), pixels = mapOf("a" to white()))
++        h.s.start(); h.s.setBrush(Brush(diameter = 6.0, pressureSize = false)); h.now += 10_000
++        h.stroke(listOf(5f to 5f, 30f to 5f)); h.now += 10_000
++        m.failWrites = true                                                // the phone fills up between the last edit and Close
++        h.stroke(listOf(5f to 20f, 30f to 20f))                            // an edit that has not been saved yet (the debounce has not run)
++        h.now -= 5_000                                                      // Close within the 5 s window
++        val s = h.s.flushAndWait(500)
++        assertTrue("state $s", s == SaveState.NO_SPACE || s == SaveState.FAILED)
++    }
++    @Test fun leavingAfterASuccessfulSaveReportsSaved() {
++        val m = MemFs(); val h = Harness(fs = m, doc = blank(), pixels = mapOf("a" to white()))
++        h.s.start(); h.s.setBrush(Brush(diameter = 6.0, pressureSize = false)); h.now += 10_000
++        h.stroke(listOf(5f to 5f, 30f to 5f))
++        assertEquals(SaveState.SAVED, h.s.flushAndWait(500))
++    }
++    @Test fun aDuplicateThatFailsHalfWayLeavesNoCopy() {
++        val m = MemFs(); val h = Harness(fs = m, doc = blank(), pixels = mapOf("a" to white()))
++        h.s.start(); h.now += 6_000; h.fireTimers()
++        var n = 0; m.onWrite = { if (++n > 2) throw java.io.IOException("No space left on device") }
++        try { ProjectCatalog.duplicate(m, "files/studio", "p1", "p2", 5); fail("should fail") } catch (e: java.io.IOException) {}
++        assertTrue("half copy: ${m.files.keys.filter { it.contains("/p2") }}", m.files.keys.none { it.contains("files/studio/p2") })
++    }
++}

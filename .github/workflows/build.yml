@@ -126,6 +126,16 @@ jobs:
       - name: No model name or Co-Authored-By after the base
         run: ./tools/check-commit-messages.sh
 
+  docs-names:
+    # CLAUDE.md: no model or vendor name in code or docs. Same as commit-messages: shows red, never blocks a release (it is in no "needs").
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: No model or vendor name in tracked files
+        run: ./tools/check-docs-names.sh
+
   studio-flag:
     # Both values of the Studio flag (app/build.gradle.kts, studio.enabled) build and pass the unit tests, and the debug APK proves it in both directions:
     # with the flag on the dex files hold the Studio classes, with it off none of them (the stub app.rawline.StudioEntry is all that is left).

@@ -1,0 +1,71 @@
+diff --git a/core/native/src/main/cpp/engine/engine.cpp b/core/native/src/main/cpp/engine/engine.cpp
+index e0ac295..ed4344d 100644
+--- a/core/native/src/main/cpp/engine/engine.cpp
++++ b/core/native/src/main/cpp/engine/engine.cpp
+@@ -281,10 +281,11 @@ void Engine::setLayer(int index, const uint8_t *alpha, int w, int h) {
+ void Engine::setOverlay(const uint8_t *rgbaHalfBytes, int w, int h) {
+     glDeleteTextures(1, &overlayTex_);
+     overlayTex_ = makeTex2D(GL_TEXTURE_2D, GL_LINEAR);
+-    if (!rgbaHalfBytes) { glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA16F, 1, 1); overlayW_ = 0; return; }
++    if (!rgbaHalfBytes) { glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA16F, 1, 1); overlayW_ = 0; invalidateAnalysis(); return; }
+     glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA16F, w, h);
+     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_HALF_FLOAT, rgbaHalfBytes);
+     overlayW_ = w;
++    invalidateAnalysis();   // the analysis layers include the overlay
+ }
+ 
+ void Engine::updateOverlayRegion(int x, int y, int w, int h, const uint8_t *data) {
+@@ -292,6 +293,7 @@ void Engine::updateOverlayRegion(int x, int y, int w, int h, const uint8_t *data
+     glBindTexture(GL_TEXTURE_2D, overlayTex_);
+     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+     glTexSubImage2D(GL_TEXTURE_2D, 0, x, y, w, h, GL_RGBA, GL_HALF_FLOAT, data);
++    invalidateAnalysis();
+ }
+ 
+ void Engine::setBaseCurve(const float *lut) {
+@@ -371,6 +373,11 @@ void Engine::runAnalysis(const float *p) {
+     glActiveTexture(GL_TEXTURE0);
+     glBindTexture(GL_TEXTURE_2D, srcTex_);
+     glUniform1i(lowres_.u("uSrc"), 0);
++    glActiveTexture(GL_TEXTURE1);
++    glBindTexture(GL_TEXTURE_2D, overlayTex_);
++    glUniform1i(lowres_.u("uOverlay"), 1);
++    glUniform1f(lowres_.u("uOverlayOn"), overlayW_ > 0 ? p[G_OVERLAY] : 0.f);
++    glActiveTexture(GL_TEXTURE0);
+     glUniform1f(lowres_.u("uFlipY"), 0.f);
+     setGeometryUniforms(lowres_, p);
+     float ratio = std::max(float(ow) / lw, float(oh) / lh);
+diff --git a/core/native/src/main/cpp/shaders/lowres.frag b/core/native/src/main/cpp/shaders/lowres.frag
+index 4e1e970..8bf5ad6 100644
+--- a/core/native/src/main/cpp/shaders/lowres.frag
++++ b/core/native/src/main/cpp/shaders/lowres.frag
+@@ -5,11 +5,14 @@ in vec2 vUv;
+ out vec4 oColor;
+ uniform sampler2D uSrc;
+ uniform float uLod;
++uniform sampler2D uOverlay;   // heal and remove patches, premultiplied, source space (the same layer main.frag lays over the pixel)
++uniform float uOverlayOn;
+ uniform float uSrcGain;
+ //@include geometry.glsl
+ const vec3 Y = vec3(0.28807, 0.71184, 0.0000857);
+ void main() {
+     vec3 g = srcUv(vUv);
++    if (uOverlayOn > 0.5) { vec4 o = texture(uOverlay, clamp(g.xy, 0.0, 1.0)); c = c * (1.0 - o.a) + o.rgb; }   // local tone is measured on the picture with its repairs
+     vec3 c = textureLod(uSrc, clamp(g.xy, 0.0, 1.0), uLod).rgb * uSrcGain;
+     c = max(c, 0.0);
+     oColor = vec4(dot(c, Y), min(c.r, min(c.g, c.b)), 0.0, 1.0);
+diff --git a/tools/golden/golden.cpp b/tools/golden/golden.cpp
+index cbb89f0..40bf9f1 100644
+--- a/tools/golden/golden.cpp
++++ b/tools/golden/golden.cpp
+@@ -161,6 +161,10 @@ int main(int argc, char **argv) {
+         else if (k == "ksh") p[G_GEO2 + 1] = v;
+         else if (k == "autofit") autofit = v > 0.5f;
+         else if (k == "mark") mark = v > 0.5f;
++        else if (k == "orient") {   // EXIF orientation 1..8 as RenderParams.orientationToRotFlip maps it: (rot90 clockwise, flipH)
++            static const int rotOf[9] = {0, 0, 0, 2, 2, 1, 1, 3, 3}; static const int flipOf[9] = {0, 0, 1, 0, 1, 1, 0, 1, 0};
++            int o = int(v); p[G_GEO + 3] = float(rotOf[o]); p[G_GEO + 1] = float(flipOf[o]);
++        }
+         else if (k == "lensfill") {   // strong synthetic profile (poly3, k1 = 0.06) that samples beyond the frame edge without a crop fit
+             p[G_LDIST] = 1.f - 0.06f; p[G_LDIST + 2] = 0.06f; p[G_LDIST_ON] = v;
+         }

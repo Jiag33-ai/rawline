@@ -2,7 +2,7 @@
 
 Compiled 6 Oct 2026 by the backlog thinker. Read-only audit of docs/SPEC.md, DECISIONS.md, AUDIT.md, PERF.md, UI_SPEC.md and the source at commit b16994f. Nothing here has been run on the phone, so every speed or look claim is a hypothesis until a Copy report says otherwise (project rule).
 
-Conventions: IDs are permanent (BK-001 to BK-507). Priority P0 (do first: data loss, security, measurement, or blocks other work), P1 (high value), P2 (worth doing), P3 (nice to have). Size S (under a day), M (a few days), L (a week or more). Entries inside each area are ranked P0 to P3 (IDs are therefore not in order). "Src" lines cite the source and the date it was checked; sources are listed at the end. Australian English, no em dashes.
+Conventions: IDs are permanent (BK-001 to BK-512). Priority P0 (do first: data loss, security, measurement, or blocks other work), P1 (high value), P2 (worth doing), P3 (nice to have). Size S (under a day), M (a few days), L (a week or more). Entries inside each area are ranked P0 to P3 (IDs are therefore not in order). "Src" lines cite the source and the date it was checked; sources are listed at the end. Australian English, no em dashes.
 
 # NEXT 25 TASKS (dispatch order, ready to launch workers from)
 
@@ -111,7 +111,7 @@ Rules for every worker (from CLAUDE.md and the audit passes): branch per task, m
 - Acceptance: `IngestEngine` copies a list of source URIs or files to a dated destination with a rename pattern, copies to `.part` then renames, verifies size and checksum, skips duplicates by name, size and capture time, can write a second destination, resumes after interruption, reports counts, bytes and MB/s, and writes an import report file; a fake file system test that throws after N bytes proves partial files are removed and the batch resumes; no Android UI.
 - Exit check: CI green; engine tests green.
 
-## W16 Platform compliance and small fixes (Starts: right after W28; owns MainActivity)
+## W16 Platform compliance and small fixes (DONE: merged in eec8960; the task file stays as the record)
 - Full task file: docs/backlog/tasks/W16-platform.md. Smaller than first written: the notification ask is already at the first export and columns and selection already survive rotation. Left: explicit `enableOnBackInvokedCallback` (a host test reads the real manifest and is red until the line is added), guard tests for the manifest rules and for every BackHandler in the app (also run against the real tree), the saved filter, sort, columns and scroll position on a cold start, docs/PLATFORM.md. 9 host tests pass in my harness.
 - Entries: BK-246, BK-426, BK-285, BK-120.
 - Owns: app/MainActivity.kt, app/src/main/AndroidManifest.xml, app/build.gradle.kts (one testOptions line), feature/library/LibraryScreen.kt (state), app/LibraryViewModel.kt (filter persistence), docs/PLATFORM.md.
@@ -191,23 +191,31 @@ Rules for every worker (from CLAUDE.md and the audit passes): branch per task, m
 - Owns: core/model Library.kt and LibraryView.kt, core/data DeviceScanner.kt and the DAO count, app/LibraryViewModel.kt, feature/library.
 - Exit check: CI green; Jai: first run on the phone opens on RAW photos with an All photos chip, a copied card does not make the grid jump, Copy report shows grid_resort_count.
 
-## Studio first release gate (decision, no worker yet)
-- BK-502 (P0): the CI release has the Studio switch on before the S1b fixes. Recommended: a Settings opt in (default off) or flag off until W28 and W16 merge. BK-503 (P1): full phone, endless save retries. Jai's baseline: PHONE-TEST-S1.md.
+## Studio first release gate (PM decision)
+- BK-502 (P0): no release with Studio visible until W13 (S1b fixes plus BK-503) and S1c have merged. BK-503 (P1): full phone, endless save retries. Jai's baseline: PHONE-TEST-S1.md.
 
-## W30 Commit message check (Starts: now; tools and one CI job)
-- Full task file: docs/backlog/tasks/W30-commit-message-check.md. A commit-msg hook template, a range checker for CI (only commits after 0620e2a) and a test script; 31 checks pass in throw away repositories, including a real git commit through the hook, and three mutations of the checker made the tests fail.
-- Entries: BK-501.
-- Owns: tools/commit-msg-check.sh, tools/check-commit-messages.sh, tools/commit-message-base, tools/hooks/commit-msg, tools/test-commit-msg-check.sh, one new job in .github/workflows/build.yml.
-- Exit check: CI job green on main and red on a throw away branch with a Co-Authored-By trailer.
+## W31 Studio S1d: reopen, RAW honesty, honest start failures, thumbnail off Close (Starts: after W13 and W16)
+- Full task file: docs/backlog/tasks/W31-studio-s1d.md. Start in Develop unless Studio was used in the last 30 minutes, a Continue card after a kill, RAW file notices and named decode failures, start failures that ignore a swipe away, the thumbnail written from the autosave path. 124 studio-model tests pass on the host; the app and Compose edits are specified, not compiled.
+- Entries: BK-504, BK-505, BK-506, BK-507.
+- Owns: core/studio-model Mode.kt and ResumeRules.kt, feature/studio StudioRoot, StudioHome, CanvasScreen, core/studio-render StudioSession (thumbnail timer), app/src/studioOn StudioEntry.
+- Exit check: CI green; Jai repeats PHONE-TEST-S1 steps 5 and 7.
 
-## W28 Studio S1b fixes (task file name: W13-s1b-fixes.md; W13 is already Reject-to-trash) (Starts: now, before the S1b canvas ships)
-- Full task file: docs/backlog/tasks/W13-s1b-fixes.md. Pure parts built and run: per tile stroke commit (history 10 MB instead of 96 MB on a 12 MP diagonal, bytes identical to the old bake), pen over palm with hover grace, graveyard pruning; 119 model tests pass. Native banded readback built and run through the Studio goldens (byte identical at five band sizes). Session, GL and Compose edits are exact but not compiled.
-- Entries: BK-479, BK-480, BK-481, BK-483, BK-484, BK-487.
-- Owns: core/studio-model (StrokeTiles, History, InputRouter), core/studio-render, core/native studio files, feature/studio.
-- Exit check: CI green and golden green; Jai tries the pen with the hand on the glass, rotates the phone with five layers, and pastes the Copy report.
+## W30 Commit message check (DONE: merged in 6bc276b)
+- Short DONE note: docs/backlog/tasks/W30-commit-message-check.md. Hook, range check, tests and the CI job are in main (tools/commit-msg-check.sh, tools/check-commit-messages.sh, tools/test-commit-msg-check.sh).
+- Entries: BK-501 (done).
+
+## W28 Studio S1b fixes (DONE: merged in 1fed051 and b63e9df; task file name W13-s1b-fixes.md)
+- Merged: tiled stroke commit, banded native readback, pen over palm with hover grace, GL lifecycle with a paused state, graveyard pruning, autosave on a full phone (BK-503 part 1). Reviewed in docs/backlog/reviews/review-w13.md.
+- Entries: BK-479, 480, 483 done; 481, 484, 487 partly done (leftovers are BK-510, BK-512, BK-508); BK-503 partly done (BK-511).
+
+## W32 W13 follow-ups (Starts: after W31; shares CanvasScreen and the session)
+- Full task file: docs/backlog/tasks/W32-w13-followups.md. Two patches that apply at b5b06ac (`docs/backlog/patches/w32-core.patch`, `w32-ui.patch`): hover that lapses, the retry gap from the failure, flushAndWait and the leave check, a duplicate that cleans up, the GL detach rule. 164 host tests pass for the core patch; the UI patch and the export-while-backgrounded edit are written, not compiled.
+- Entries: BK-508, BK-509, BK-510, BK-511 (BK-512 is an optional bundle, not in the task).
+- Owns: core/studio-model (InputRouter, Catalog), core/studio-render (StudioSession, StudioGl), feature/studio (CanvasScreen, ExportSheet), StudioExporter.
+- Exit check: 164 host tests green; Jai: five rotations with the three counters, pen with the hand on the glass, Back on a full phone, export with Home pressed (PHONE-TEST-S1 steps 3, 4, 8, 10).
 
 ## Review of the merged Studio S1b session code (done, read only)
-- docs/backlog/reviews/review-s1b.md: 19 findings including the Compose layer of 75cb498, BK-479 to BK-484 and BK-487 (stroke dirty region, banded readback, pen over palm, frame path, GL lifecycle, memory, rotation and touch targets). Fix before the S1b canvas ships: F1, F2, F3.
+- docs/backlog/reviews/review-s1b.md (review of W13 is review-w13.md, 10 findings, R1 and R2 are P1): 19 findings including the Compose layer of 75cb498, BK-479 to BK-484 and BK-487 (stroke dirty region, banded readback, pen over palm, frame path, GL lifecycle, memory, rotation and touch targets). Fix before the S1b canvas ships: F1, F2, F3.
 
 After these 25: baseline profile and macrobenchmarks (BK-002, BK-003, after W01 and W06), onboarding and help copy (BK-191, 192, 392, 393, 350, 394, after W17), BK-024 and BK-422 (GPU demosaic, after W21 has numbers), BK-021 and BK-445 (look refit and camera matrix from Jai's chart), BK-051/052 (undo and before/after), BK-460 and BK-466 (lens consistency), Studio S2 onward (spec milestones), then the rest of M2 to M6.
 
@@ -230,10 +238,10 @@ After these 25: baseline profile and macrobenchmarks (BK-002, BK-003, after W01 
 | K. Testing and CI | 0 | 18 | 25 | 4 | 47 |
 | L. Security, privacy, release | 4 | 9 | 8 | 1 | 22 |
 | M. Platform and Panasonic | 1 | 6 | 13 | 6 | 26 |
-| N. Studio | 6 | 30 | 17 | 2 | 55 |
-| **All** | 38 | 201 | 215 | 53 | 507 |
+| N. Studio | 6 | 32 | 19 | 3 | 60 |
+| **All** | 38 | 203 | 217 | 54 | 512 |
 
-Status of the 507 entries: 25 DONE, 42 PARTLY DONE, 10 MERGED into another entry (dedupe pass, 6 Oct 2026), 19 SPEC COVERS and 2 SPEC WINS (Studio entries settled by docs/STUDIO_SPEC.md), 1 DECLINED and 1 BLOCKED; the rest are open. Merged and done entries are kept for their history and acceptance details.
+Status of the 512 entries: 23 DONE, 46 PARTLY DONE, 10 MERGED into another entry (dedupe pass, 6 Oct 2026), 19 SPEC COVERS and 2 SPEC WINS (Studio entries settled by docs/STUDIO_SPEC.md), 1 DECLINED and 1 BLOCKED; the rest are open. Merged and done entries are kept for their history and acceptance details.
 
 ## Top 30 overall (ranked)
 
@@ -319,7 +327,7 @@ Effort units are rough working days (S 1, S-M 2, M 3, M-L 5, L 8) for one person
 | M4 Editor and AI daily workflow | 25 | 71 | Medium-high | Medium |
 | M5 Library and card import | 31 | 87 | High for workflow | Medium-high |
 | M6 Export, accessibility, polish and the stretch items | 27 | 94 | Medium | Lower |
-| M7 Studio (separate product line, scheduled after M1 to M3; the spec's own milestones S1 to S10 set the inner order) | 44 | 168 | High if wanted | Large; set by the spec |
+| M7 Studio (separate product line, scheduled after M1 to M3; the spec's own milestones S1 to S10 set the inner order) | 46 | 172 | High if wanted | Large; set by the spec |
 
 ### M1: Safety net, measurement and release hygiene
 
@@ -506,8 +514,8 @@ Dependencies: BK-263 and BK-098 before BK-099; BK-096 before BK-112 and BK-256; 
 
 | ID | P | Size | Status | Title |
 | --- | --- | --- | --- | --- |
-| BK-497 | P1 | M | DONE | The grid reorders itself while indexing finishes, because the sort key changes from file time to EXIF capture time (found by reading DeviceScanner and Indexer) |
-| BK-498 | P1 | S | DONE | First run shows everything on the phone (`device:*`), so the S24 Ultra's thousands of JPEG and HEIC photos, screenshots and chat images bury the RAW files |
+| BK-497 | P1 | M | DESIGNED | The grid reorders itself while indexing finishes, because the sort key changes from file time to EXIF capture time (found by reading DeviceScanner and Indexer) |
+| BK-498 | P1 | S | DESIGNED | First run shows everything on the phone (`device:*`), so the S24 Ultra's thousands of JPEG and HEIC photos, screenshots and chat images bury the RAW files |
 | BK-474 | P1 | S |  | Imported RAWs must keep the card file's modified time, or `Photo.keyOf` (`name/size/modified`) makes every imported copy a new photo and breaks sync with edits made on the original |
 | BK-475 | P1 | M |  | A DNG that LibRaw opens but cannot decode shows no error: `unpack` returns -2 and the user sees a blank or grey frame |
 | BK-476 | P1 | S |  | Samsung Expert RAW spike: find out what compression the S24 Ultra writes before promising DNG support |
@@ -586,11 +594,13 @@ Dependencies: BK-365 first; BK-366 and BK-367 before everything; BK-368 and BK-3
 
 | ID | P | Size | Status | Title |
 | --- | --- | --- | --- | --- |
-| BK-502 | P0 | S |  | The Develop / Studio switch ships in the CI release APK now, before the S1b fixes: decide who sees Studio first |
-| BK-503 | P1 | M |  | Studio on a nearly full phone: the autosave retries every 5 seconds forever with a toast each time, and nothing checks free space (measured on the host) |
-| BK-479 | P1 | M |  | Studio stroke commit works on one bounding box, so a thin diagonal line costs as much as a full-canvas fill (review of S1b) |
-| BK-480 | P1 | S-M |  | Studio stroke readback allocates 16 bytes per pixel of the stroke box natively (192 MB at 12 MP) |
-| BK-481 | P1 | S |  | S Pen: a palm that lands first wins and the pen is ignored (InputRouter) |
+| BK-502 | P0 | S | DECIDED | The Develop / Studio switch ships in the CI release APK now, before the S1b fixes: decide who sees Studio first |
+| BK-503 | P1 | M | PARTLY DONE | Studio on a nearly full phone: the autosave retries every 5 seconds forever with a toast each time, and nothing checks free space (measured on the host) |
+| BK-508 | P1 | S | DESIGNED | Studio rotation: `movableContentOf` probably still detaches the GL view, so a rotation rebuilds the compositor, and jobs posted in the gap wait out their timeout |
+| BK-509 | P1 | M | DESIGNED | A Studio export that is running when the app goes to the background stalls for 60 seconds and then fails with a wrong message |
+| BK-479 | P1 | M | DONE | Studio stroke commit works on one bounding box, so a thin diagonal line costs as much as a full-canvas fill (review of S1b) |
+| BK-480 | P1 | S-M | DONE | Studio stroke readback allocates 16 bytes per pixel of the stroke box natively (192 MB at 12 MP) |
+| BK-481 | P1 | S | PARTLY DONE | S Pen: a palm that lands first wins and the pen is ignored (InputRouter) |
 | BK-488 | P1 | M | DECIDED | Studio blend space: decide gamma or linear per document before the S3 blend modes are written (numbers from a host calculation) |
 | BK-489 | P1 | M |  | Studio blend modes: the W3C formulas are not what Photoshop does for several modes, and the golden is only as independent as its reference |
 | BK-490 | P1 | M-L |  | Studio transform quality: bilinear resampling aliases when shrinking and destroys fine detail when a layer is moved or rotated several times |
@@ -651,12 +661,10 @@ Dependencies: BK-365 first; BK-366 and BK-367 before everything; BK-368 and BK-3
 - BK-246 Adopt Android 16 behaviours now: predictive back and edge-to-edge (targetSdk is 37): DONE
 - BK-426 API 37 readiness checklist (edge-to-edge, predictive back, resizability) with tests on the S24 Ultra and a large-screen emulator: DONE
 - BK-120 Persist per-source scroll position, selection and sort across rotation and process death: DONE
-- BK-497 The grid reorders itself while indexing finishes, because the sort key changes from file time to EXIF capture time (found by reading DeviceScanner and Indexer): DONE
-- BK-498 First run shows everything on the phone (`device:*`), so the S24 Ultra's thousands of JPEG and HEIC photos, screenshots and chat images bury the RAW files: DONE
-- BK-504 After the app is killed in Studio it reopens in Studio on the project list, and the open project is not offered back: DONE
-- BK-505 RAW files in Studio: the picker offers a Samsung Expert RAW DNG that Android decodes with its own colour, and RW2 is not offered; failures say only "Could not read that picture": DONE
-- BK-506 The start guard counts an impatient swipe-away during the first frame as a failed Studio start: DONE
-- BK-507 Leaving a Studio project waits up to 3 seconds for a thumbnail the user did not ask for: DONE
+- BK-501 45 of 73 commits carry a model name in a Co-Authored-By trailer, against the CLAUDE.md rule "Do not name any model in commits, code or docs": DONE
+- BK-479 Studio stroke commit works on one bounding box, so a thin diagonal line costs as much as a full-canvas fill (review of S1b): DONE
+- BK-480 Studio stroke readback allocates 16 bytes per pixel of the stroke box natively (192 MB at 12 MP): DONE
+- BK-483 Studio GL lifecycle: jobs on a dead context, init failure hangs waiters, destroy blocks the main thread: DONE
 - BK-352 Undo for the last rating, flag, label or batch change (snackbar): DONE
 
 Parked with a reason: BK-141 (declined in DECISIONS.md, see BK-291), BK-109 (blocked on it). P2 and P3 entries are not scheduled; pull them in when they unblock a P0/P1 item or when a milestone finishes early.
@@ -771,7 +779,7 @@ Rule: an audit id is authoritative for the finding text and its evidence; a BK i
 - Area K: TESTING AND CI (47 entries)
 - Area L: SECURITY, PRIVACY, RELEASE AND UPDATE FLOW (22 entries)
 - Area M: PLATFORM, PANASONIC AND COMPOSE SPECIFICS (26 entries)
-- Area N: STUDIO (layer-based pixel editor, separate from Develop) (55 entries)
+- Area N: STUDIO (layer-based pixel editor, separate from Develop) (60 entries)
 
 
 ---
@@ -1948,16 +1956,16 @@ What exists: sources (camera roll via MediaStore, other albums, imported files, 
 - Size: S (Jai 5 minutes, then a worker). Files: none until the numbers exist. Risk: scope (a JXL decoder is 1 to 4 days).
 - Src: W15-card-import.md section 3.
 
-### BK-497 [P1] [DONE] The grid reorders itself while indexing finishes, because the sort key changes from file time to EXIF capture time (found by reading DeviceScanner and Indexer)
-- Status: Done in c59254e (W29): OrderGate and HeldOrder hold the grid order while the user is busy, rawOnly with the RAW photos and All photos chips, the one time What's New note, capture times read at the scan, grid_resort_count in the Copy report (host tests; ViewModel, scanner and screen compiled and linted). Left over: the phone checks and the numbers from the Copy report.
+### BK-497 [P1] [DESIGNED] The grid reorders itself while indexing finishes, because the sort key changes from file time to EXIF capture time (found by reading DeviceScanner and Indexer)
+- Status: W29-library-first-impression.md: OrderGate, DefaultView, WhatsNew and the rawOnly filter compiled and tested on the host (23 core/model tests pass); ViewModel, scanner and screen edits specified, not compiled. Not merged.
 - Finding: `DeviceScanner` inserts a row with `takenAt = MediaStore DATE_TAKEN if above 0, else the file's modified time` (MediaStore usually has no DATE_TAKEN for RW2). `Library` sorts newest first on `takenAt`. `Indexer.markIndexed` later overwrites `takenAt` with the EXIF capture time. A card copied with a file manager (all files within one minute of copy time, in copy order) therefore first shows in copy order and then re-sorts into shooting order, one batch at a time, while Jai is scrolling or has a photo selected. W15 keeps the original mtime for its own imports, but copies made any other way do not.
 - Why it matters to Jai: the first thing a photographer does after a shoot is scroll the grid; rows jumping under the thumb makes culling unreliable.
 - Acceptance: for new RW2 rows read the capture time from the first TIFF IFD (a 64 KB head read, no decode) in the scan itself, for the first screenful at once and the rest in the first indexing pass before the rows are inserted into the visible list; keep the visible order stable while the user is scrolling (apply a re-sort only when the list is idle for 1 s or on pull to refresh); a host test with 300 rows whose file times are in reverse shooting order checks the list order never changes after the first display; Copy report line `grid_resort_count`.
 - Size: M. Files: core/data DeviceScanner.kt, Indexer.kt, LibraryViewModel.kt, tests. Risk: low.
 - Src: DeviceScanner.kt lines 25 to 50, Indexer.kt markIndexed, core/model Library.kt sort.
 
-### BK-498 [P1] [DONE] First run shows everything on the phone (`device:*`), so the S24 Ultra's thousands of JPEG and HEIC photos, screenshots and chat images bury the RAW files
-- Status: Done in c59254e (W29): OrderGate and HeldOrder hold the grid order while the user is busy, rawOnly with the RAW photos and All photos chips, the one time What's New note, capture times read at the scan, grid_resort_count in the Copy report (host tests; ViewModel, scanner and screen compiled and linted). Left over: the phone checks and the numbers from the Copy report.
+### BK-498 [P1] [DESIGNED] First run shows everything on the phone (`device:*`), so the S24 Ultra's thousands of JPEG and HEIC photos, screenshots and chat images bury the RAW files
+- Status: W29-library-first-impression.md: OrderGate, DefaultView, WhatsNew and the rawOnly filter compiled and tested on the host (23 core/model tests pass); ViewModel, scanner and screen edits specified, not compiled. Not merged.
 - Finding: `LibraryViewModel.init` sets `source = "device:*"` when no source is saved, and `scanDevice` lists every image row plus every file named like a RAW. For a phone in daily use that is tens of thousands of rows, newest first; the RW2 files from last weekend sit below that day's screenshots. BK-450 covers the empty and "RAW files hidden" cases but not the default view when everything is allowed.
 - Why it matters to Jai: Rawline is a RAW editor; its first screen should be RAW photos.
 - Acceptance: the default filter on first run is "RAW photos" (a chip at the top of the grid, one tap to "All photos"), chosen when at least one RAW row exists after the first scan and otherwise "All photos" with the BK-450 hint; the choice is remembered; JPEG and HEIC stay reachable and editable (BK-275); the number of rows inserted at first scan is unchanged (this is a filter, not a different scan); Robolectric test of the default with a fake scanner returning 5000 images and 12 RAW.
@@ -2014,7 +2022,7 @@ What exists: sources (camera roll via MediaStore, other albums, imported files, 
 - Size: M. Files: EditorHost.kt, ThumbStore.kt. Risk: low-medium (storage, GPU).
 
 ### BK-120 [P2] [DONE] Persist per-source scroll position, selection and sort across rotation and process death
-- Status: Done in eec8960 (W16): filter and sort (libraryFilter), column count and the top photo are stored and restored after a cold start (LibraryFilterJson, GridRows.topPhotoId and restoreIndex, tested). Left over: the phone check.
+- Status: Done in commit eec8960: filter, sort, column count and the top photo survive a swipe away (libraryFilter, columns, libraryTop).
 - Problem: AUDIT item 4: rotation resets selection; `source` and `folder` are in prefs but scroll position, filters, columns (`mutableIntStateOf(5)` not saved) are not.
 - Acceptance: `rememberSaveable` and a `SavedStateHandle` in LibraryViewModel; columns saved in prefs; grid returns to the same photo after viewing a photo and after the process is killed.
 - Size: S. Files: LibraryScreen.kt, LibraryViewModel.kt. Risk: low.
@@ -2763,7 +2771,7 @@ Facts: Settings is a single scrolling column (version, built, LibRaw, debug over
 - Size: M. Files: every feature module. Risk: low (mechanical).
 
 ### BK-285 [P2] [DONE] Ask for notification permission when the first export starts, not at launch together with the photo permission
-- Status: Done in eec8960 (W16): NotificationRule (tested) decides the one time ask at the first export and the one line reason is shown first. Left over: the phone check.
+- Status: Done in commit eec8960: the first export notification question is a tested NotificationRule with the one line reason shown first.
 - Problem: `MainActivity` launches the media permission request and `POST_NOTIFICATIONS` request in the same `LaunchedEffect` on first launch (Android 13+), stacking two system dialogs before Jai has seen the app.
 - Acceptance: notifications are requested the first time an export is queued with a one-line reason; declining does not stop exports (the foreground service still runs; the notification is hidden by the system).
 - Size: S. Files: MainActivity.kt. Risk: low.
@@ -2877,20 +2885,23 @@ Facts: CI = golden job (Mesa llvmpipe renders vs 15 reference PNGs, model link c
 - Acceptance: a table in this file (below the milestone plan) maps each audit finding that has a counterpart to its BK id with a status; findings with no counterpart become BK entries (BK-459 to BK-469 for the engine ones) or are listed as "audit only"; when a commit cites an AU, AE or AQ id the status is updated here; the rule is written once: audit ids are authoritative for the finding text, BK ids for scheduling.
 - Size: S. Files: BACKLOG.md. Risk: low.
 
-### BK-479 [P1] Studio stroke commit works on one bounding box, so a thin diagonal line costs as much as a full-canvas fill (review of S1b)
+### BK-479 [P1] [DONE] Studio stroke commit works on one bounding box, so a thin diagonal line costs as much as a full-canvas fill (review of S1b)
+- Status: Merged in 1fed051 (tiled commit, banded native readback, GL lifecycle with a paused state); checked in review-w13.md, host tests pass.
 - Finding: `Dirty.rect` returns one box around all stamps. On commit the session reads the whole box back from the GPU, bakes it per pixel on the CPU (an `Rgba` object per pixel in `Brush.bake`), cuts before and after copies and pushes the box to the GPU. A corner to corner line on a 12 MP layer is a 12 MP box: about 96 MB of history for one stroke (the 200 MB cap holds two), and the model thread is busy while the next stroke starts.
 - Why it matters to Jai: after a long stroke the next one starts late, and undo history shrinks to a handful of steps.
 - Acceptance: dirty tiles (W26 `TileGrid.keysFor` per stamp), delta per touched tile, bake only tiles that had coverage, bake without per-pixel objects; host test with a diagonal stroke on 4000 x 3000 asserts commit time and `deltaBytes` stay proportional to painted area; Copy report `studio_commit_ms`.
 - Size: M. Files: core/studio-model Brush.kt, History.kt, StudioSession.commitStroke. Risk: medium (history format).
 - Src: review-s1b.md F1.
 
-### BK-480 [P1] Studio stroke readback allocates 16 bytes per pixel of the stroke box natively (192 MB at 12 MP)
+### BK-480 [P1] [DONE] Studio stroke readback allocates 16 bytes per pixel of the stroke box natively (192 MB at 12 MP)
+- Status: Merged in 1fed051 (tiled commit, banded native readback, GL lifecycle with a paused state); checked in review-w13.md, host tests pass.
 - Finding: `Compositor::readStroke` builds `std::vector<float>(w*h*4)` and copies channel 0; Kotlin adds `FloatArray(w*h)`. A big stroke can fail with bad_alloc, which is caught and shown as "Could not finish that stroke", and the stroke is lost.
 - Acceptance: read and bake in bands of 256 rows with one reusable band buffer, no box sized float array; golden with a 4096 x 3072 box passes; peak RSS recorded.
 - Size: S-M. Files: core/native studio_compositor.cpp, jni_studio.cpp, StudioSession. Risk: low.
 - Src: review-s1b.md F2.
 
-### BK-481 [P1] S Pen: a palm that lands first wins and the pen is ignored (InputRouter)
+### BK-481 [P1] [PARTLY DONE] S Pen: a palm that lands first wins and the pen is ignored (InputRouter)
+- Status: Pen over palm merged in 1fed051. Left over: a missed hover exit leaves fingers off for good (BK-510, W32 patch tested).
 - Finding: in state STROKING a stylus DOWN is dropped (`if (e.kind == STYLUS) return out`), so a resting palm that started a stroke keeps drawing while the pen does nothing. The documented rule is that a stylus seen means fingers paint nothing.
 - Acceptance: stylus DOWN while a finger stroke runs cancels it (no history entry) and starts the pen stroke; pen hover (Compose `PointerType.Stylus` enter) sets a "pen near" flag that ignores finger DOWN until 600 ms after exit; router tests with a fake clock; phone test writing with the hand resting on the glass.
 - Size: S. Files: core/studio-model InputRouter.kt and tests, the canvas pointer handler. Risk: low.
@@ -3020,19 +3031,22 @@ Facts: CI = golden job (Mesa llvmpipe renders vs 15 reference PNGs, model link c
 - Size: M. Files: core/native studio_compositor, StudioGl.kt. Risk: medium.
 - Src: review-s1b.md F4, F5, F13.
 
-### BK-483 [P2] Studio GL lifecycle: jobs on a dead context, init failure hangs waiters, destroy blocks the main thread
+### BK-483 [P2] [DONE] Studio GL lifecycle: jobs on a dead context, init failure hangs waiters, destroy blocks the main thread
+- Status: Merged in 1fed051 (tiled commit, banded native readback, GL lifecycle with a paused state); checked in review-w13.md, host tests pass.
 - Finding: (a) GLSurfaceView drains queued events before it recreates a lost context and `glReady` only turns false in `onSurfaceCreated`, so jobs can run with no current context; (b) a failed `StudioNative.init` leaves the pending queue stuck and `upload` waits 20 s; (c) `onDetachedFromWindow` waits up to 500 ms on the main thread and leaks the native compositor when the GL thread is busy.
 - Acceptance: `glReady=false` on pause and until the context is valid; drop the queue on init failure so `start()` reports ERROR in under 1 s (fake executor test); destroy posted to the GL thread without waiting; a live native handle counter in the Copy report; phone test: lock the screen 30 s, unlock, draw.
 - Size: S-M. Files: StudioGl.kt, StudioSession. Risk: medium (verify on device).
 - Src: review-s1b.md F7, F8, F9.
 
-### BK-484 [P2] Studio memory ceilings add up and the undo graveyard is never pruned against history
+### BK-484 [P2] [PARTLY DONE] Studio memory ceilings add up and the undo graveyard is never pruned against history
+- Status: Graveyard pruned against history (1fed051). Left over: the 256 MB cap can still evict a layer whose delete is undoable (BK-512, review-w13.md R8).
 - Finding: worst case heap at 12 MP: history 200 MB, graveyard 256 MB, active layer 48 MB, save snapshot 48 MB, unsaved layers; deleted layers stay in the graveyard after history has dropped their delete entry; the autosave copy of the active layer runs on the model thread right after a stroke.
 - Acceptance: prune the graveyard to layer ids named by remaining history entries; debounce autosave to stroke end plus 1.5 s idle (5 s ceiling, flush on pause stays immediate); memory test with 10 layers of 12 MP, five deleted, undo, under a stated bound.
 - Size: M. Files: StudioSession.kt, History.kt, RawlineApplication. Risk: low.
 - Src: review-s1b.md F6, F10, F11.
 
-### BK-487 [P2] Studio canvas Compose: rotation rebuilds the GL view and re-uploads every layer, a system cancel may commit a stroke, several touch targets are under 48 dp
+### BK-487 [P2] [PARTLY DONE] Studio canvas Compose: rotation rebuilds the GL view and re-uploads every layer, a system cancel may commit a stroke, several touch targets are under 48 dp
+- Status: Movable GL surface and 48 dp targets merged in 1fed051, system cancel fixed. Left over: whether a rotation still detaches the view is unproven (BK-508, counters and a detach rule in W32).
 - Finding: Portrait and Landscape each place the `AndroidView` at a different call site, so rotating destroys the compositor and re-uploads all layers (about 0.5 GB for ten 12 MP layers) and loses zoom and pan; `canvasInput` treats cancelled pointers as up; the layer chips are 24 dp tall and the colour chips 40 dp.
 - Acceptance: one `StudioGlView` kept across layouts (`movableContentOf`), view transform kept on rotation, `studio_texture_mb` unchanged after a rotation; a stroke cancelled by the system leaves no history entry (device test with the notification shade); every tap target at least 48 dp with TalkBack descriptions on the chips.
 - Size: S-M. Files: feature/studio CanvasScreen.kt, CanvasInput.kt, LayersPanel.kt, StudioGl.kt. Risk: low.
@@ -3220,7 +3234,7 @@ Facts: release APK is signed with a keystore committed to the repo (`app/rawline
 # AREA M: PLATFORM, PANASONIC AND COMPOSE SPECIFICS
 
 ### BK-246 [P0] [DONE] Adopt Android 16 behaviours now: predictive back and edge-to-edge (targetSdk is 37)
-- Status: Done in eec8960 (W16): enableOnBackInvokedCallback on the application, and PlatformRulesTest reads the manifest and every BackHandler (red before the manifest edit, green after); docs/PLATFORM.md carries the back order. Left over: the phone back checks and a tablet emulator run.
+- Status: Done in commit eec8960: predictive back on, guard tests (manifest rules, BackHandler inventory) and docs/PLATFORM.md.
 - Problem: apps targeting 36 and up get predictive back animations by default and cannot opt out of edge-to-edge; `onBackPressed` is not called. The app uses `BackHandler` in places (LibraryScreen, LoupeScreen, EditorScreen, MaskTray, EditorHost) and a custom nav: the system back-to-home animation may preview the wrong destination or `BackHandler` ordering may break (for example crop X vs Back).
 - Acceptance: `android:enableOnBackInvokedCallback="true"` explicit, every screen uses `PredictiveBackHandler` or `BackHandler` consistently, back from editor shows the loupe as the revealed screen, crop X vs Back precedence tested on the phone; insets verified on gesture and 3 button navigation, display cutout, and landscape.
 - Size: M. Files: AndroidManifest.xml, MainActivity.kt, EditorHost.kt, LibraryScreen.kt, LoupeScreen.kt, EditorScreen.kt. Risk: medium.
@@ -3332,7 +3346,7 @@ Facts: release APK is signed with a keystore committed to the repo (`app/rawline
 - Size: S. Files: core/cache/GlInfo.kt. Risk: low.
 
 ### BK-426 [P2] [DONE] API 37 readiness checklist (edge-to-edge, predictive back, resizability) with tests on the S24 Ultra and a large-screen emulator
-- Status: Done in eec8960 (W16): enableOnBackInvokedCallback on the application, and PlatformRulesTest reads the manifest and every BackHandler (red before the manifest edit, green after); docs/PLATFORM.md carries the back order. Left over: the phone back checks and a tablet emulator run.
+- Status: Done in commit eec8960: predictive back on, guard tests (manifest rules, BackHandler inventory) and docs/PLATFORM.md.
 - Facts: targetSdk is already 37. Edge-to-edge cannot be opted out of (since API 36) and predictive back animations are on by default; Android 17 (API 37) removes the developer opt-out for orientation and resizability restrictions on large screens (sw 600 dp and wider), according to the Android Developers blog post "Prepare your app for the resizability and orientation changes in Android 17" (February 2026, checked 6 Oct 2026). The S24 Ultra is a phone and is not affected by the large-screen rule; the Studio spec says phone portrait and landscape only.
 - Acceptance: the manifest has no `screenOrientation` lock and no `resizeableActivity=false` (verify and keep a test that fails if one is added); a one-time run on a large-screen emulator (tablet profile) to confirm that nothing crashes or becomes unusable (letterboxed is acceptable, crashes are not); the edge-to-edge insets are tested on gesture and three-button navigation; the predictive back list from BK-246 is ticked off; the checklist is stored in docs/PLATFORM.md and re-run when the next API level's behaviour changes are published.
 - Size: S-M. Files: AndroidManifest.xml, docs, tests. Risk: low.
@@ -3422,7 +3436,8 @@ Status of the spec: docs/STUDIO_SPEC.md exists (commit 6d62008). Where an entry 
 - Acceptance: S1 becomes S1a (model, blend reference, compositor, golden `studio_blend3`, host tests), S1b (canvas, brush, eraser, layers panel, autosave) and S1c (home, `ModeHost`, `studio.db`, flatten export, report timers), each with its own exit check and release; every later milestone gets a 1.5 times buffer for phone-only feedback loops (Jai tests on the phone and pastes a report, which costs days, not hours); the plan states the first phone measurement point (end of S1b) and what happens if the numbers miss (re-plan before S2).
 - Size: S. Files: docs/STUDIO_SPEC.md (plan section). Risk: low. Spec wins on scope; this only challenges the schedule.
 
-### BK-502 [P0] The Develop | Studio switch ships in the CI release APK now, before the S1b fixes: decide who sees Studio first
+### BK-502 [P0] [DECIDED] The Develop | Studio switch ships in the CI release APK now, before the S1b fixes: decide who sees Studio first
+- Status: PM decision 6 Oct 2026: the next release with Studio visible waits for W13 (S1b fixes plus BK-503) and S1c. No Studio visible release before those land.
 - Finding: `.github/workflows/build.yml` builds the release with `-PstudioEnabled=true` and checks it with `check-studio-apk.sh ... true`. So the next release puts Studio in front of Jai with the known S1b problems open (review-s1b.md F1 to F3: a long stroke can fail with an out-of-memory message and lose the stroke, a resting palm beats the pen), and S1c's start guard only catches crashes before the first frame.
 - Acceptance (recommended): the release carries the Studio code but the switch is hidden until Settings has a "Studio (preview)" switch turned on (default off, stored in the preferences, read by `ModeState` as the flag is today); a host test that with the switch off `startMode()` is Develop and `switchVisible` is false; the Copy report prints the setting. Alternative: change the workflow to `-PstudioEnabled=false` until W28 and W16 have merged and run PHONE-TEST-S1 again. Either way the PM decides before the next release.
 - Size: S. Files: .github/workflows/build.yml or feature/settings and StudioEntry.kt, core/studio-model Mode.kt, tests. Risk: low.
@@ -3581,12 +3596,29 @@ Status of the spec: docs/STUDIO_SPEC.md exists (commit 6d62008). Where an entry 
 - Tests: accessibility checklist run on the phone (spec 2.19) with a written result per item; soak script (BK-181) with the Studio loop (paint, undo, layer ops, save) and the thermal log (BK-332); `onTrimMemory` simulation; font scale 1.0, 1.3 and 2.0 screenshots (BK-208, BK-170); reduced motion honoured (BK-171); recorded-stroke performance regression (BK-381); PERF.md rows filled from reports; snapshot create under 100 ms and history thumbnails.
 - Size: M. Files: tests, docs. Risk: low-medium.
 
-### BK-503 [P1] Studio on a nearly full phone: the autosave retries every 5 seconds forever with a toast each time, and nothing checks free space (measured on the host)
+### BK-503 [P1] [PARTLY DONE] Studio on a nearly full phone: the autosave retries every 5 seconds forever with a toast each time, and nothing checks free space (measured on the host)
+- Status: Merged in b63e9df and 1fed051: free space rule, retry schedule 5, 10, 20, 40, 60 s with a stop after 10 tries, one message, NO_SPACE state, pre-checks, no half written first save, leave dialog. Left over (W32, review-w13.md R4 to R6): leaving waits for the save, a failed duplicate cleans up, the retry gap counts from the failure.
 - Finding: with writes failing, a host test that advances the clock 200 times by 5.1 s (17 minutes) records 201 failed saves and 200 toasts ("Could not save. Will try again."), each retry re-encoding the changed layers (CPU and heat for nothing). `grep` finds no free space check anywhere in Studio (`usableSpace`, `StatFs`), so new project, duplicate and a photo import start without one, and the first failed save of a new project can leave a half written folder. Closing with the save state FAILED leaves the project unsaved with no warning.
 - Why it matters to Jai: the first public sign of trouble on a phone with 20 GB of photos is a Studio that drains the battery and then loses an hour of painting.
 - Acceptance: back off the retry (5, 10, 20, 40, then 60 s) and stop after 10 tries until something changes (new edit or space freed); one persistent line in the status strip ("Not saved: the phone is almost full") instead of a toast per try; free space checked before new project, duplicate, photo import and export (need the estimated project size plus 200 MB) with the message "Not enough space. Free about N MB and try again."; leaving with unsaved changes asks "Leave without saving? Your last changes are not saved."; a failed first save removes its half written folder; host tests with the fake file system (failWrites) for the retry count (at most 12 in 17 minutes), the single notice and the cleanup.
 - Size: M. Files: StudioSession.kt, ProjectStore.kt, ProjectCatalog, CanvasScreen.kt, StudioRoot.kt, tests. Risk: low.
 - Src: probe on the live StudioSession (docs/backlog/probes/FullDiskProbe.kt); StudioSession.onSaveFailed.
+
+### BK-508 [P1] [DESIGNED] Studio rotation: `movableContentOf` probably still detaches the GL view, so a rotation rebuilds the compositor, and jobs posted in the gap wait out their timeout
+- Status: W32-w13-followups.md: patch for the detach rule applies, counters and layout fix specified; not compiled.
+- Finding: `CanvasScreen` says the GL view is moved between the portrait and landscape layouts without being detached. Moving an `AndroidView` between call sites removes and re-adds the child view, which fires `onDetachedFromWindow` and stops the GL thread and its context. `StudioGl.viewDetached` then does nothing (unless released), `glReady` stays true, and a job posted in the gap goes to a dead queue and never runs or drops (review-w13.md R1).
+- Why it matters to Jai: a rotation with a big project re-uploads every layer (a visible pause) and a stroke or thumbnail started during it can hang for seconds; a second risk is a "child already has a parent" crash that I could not rule out without a device.
+- Acceptance: `viewDetached` clears `glReady` when not released (patch in W32); counters `studio_gl_attach`, `studio_gl_detach`, `studio_gl_create` in the Copy report; phone: five rotations show create 1, or the surface is rebuilt at one call site and then they do; drawing right after each rotation works.
+- Size: S for the patch and counters, M if the layout must be restructured. Files: StudioGl.kt, CanvasScreen.kt. Risk: low for the patch.
+- Src: review-w13.md R1; CanvasScreen.kt, StudioGl.kt read 6 Oct 2026 at b5b06ac. Status: designed in W32 (patch applies, not compiled).
+
+### BK-509 [P1] [DESIGNED] A Studio export that is running when the app goes to the background stalls for 60 seconds and then fails with a wrong message
+- Status: W32-w13-followups.md section 5.2: keep awake and wait for the foreground, specified only; PM decided option (a) now, the service stays with S9.
+- Finding: export strips are `gpuCall`s with a 60 s timeout; `onPause` sets `glReady = false` (correct for a context that may be lost) so the strips wait in `pending`; a phone call, notification or screen timeout in the middle of a 12 MP PNG export ends in "Export failed. The canvas may be too large for the memory that is free." and the partial file is discarded (review-w13.md R2).
+- Why it matters to Jai: the first export of a big painting is the one he walks away from.
+- Acceptance: keep the screen on while exporting; strips wait for the foreground (up to 10 minutes) and retry once; an honest message when the wait ran out; later, export on its own context in a service with S9 (BK-410). Phone: Home at 30 percent, back after 20 s: the export finishes.
+- Size: M. Files: ExportSheet.kt, StudioExporter.kt, StudioGl.kt, StudioSession.kt. Risk: medium (GL thread timing). PM decision 6 Oct 2026: option (a) now, in W32; the service with its own context stays with S9.
+- Src: review-w13.md R2; ExportSheet.kt, StudioSession.renderView read 6 Oct 2026. Status: designed in W32 section 5.2 (specified only).
 
 ### BK-379 [P2] [SPEC COVERS] Filters on tiles: halo handling, large radius blur cost, preview on a proxy, and cancel
 - Status: Spec 2.9 (S9): the filter list, selection as a mix mask, previews at viewport resolution.
@@ -3658,40 +3690,60 @@ Status of the spec: docs/STUDIO_SPEC.md exists (commit 6d62008). Where an entry 
 - Size: S. Files: tools/golden/golden.cpp only. Risk: low; do it right after W22 and before W23 to remove the conflict.
 - Src: W22 and W23 patch ordering test.
 
-### BK-501 [P2] [DESIGNED] 45 of 73 commits carry a model name in a Co-Authored-By trailer, against the CLAUDE.md rule "Do not name any model in commits, code or docs"
-- Status: W30-commit-message-check.md: hook, range check and tests run on the host (31 checks, mutation tested); the CI job is written as a snippet. Not merged.
-- Finding: `git log --grep=Sonnet` lists 45 commits, all up to 0620e2a (before the Studio work); commits since then carry only the `Claude-Session` link. A worker's tool prompt can ask for a `Co-Authored-By` line naming a model; the project rule in CLAUDE.md takes precedence over that prompt.
-- Acceptance: history is left alone (it is published); a CI step (and a local commit-msg hook in tools/) fails a commit whose message matches a model name list (Claude model names, GPT, Gemini and similar) except the `Claude-Session` trailer; `final-check.sh` item 6 prints the count; DISPATCH.md tells workers to leave the model trailer out.
+### BK-501 [P2] [DONE] 45 of 73 commits carry a model name in a Co-Authored-By trailer, against the CLAUDE.md rule "Do not name any model in commits, code or docs"
+- Status: Done in commit 6bc276b: tools/commit-msg-check.sh, tools/check-commit-messages.sh and the CI job.
+- Finding: `git log` shows 45 commits whose Co-Authored-By trailer names a model, all up to 0620e2a (before the Studio work); commits since then carry only the `Claude-Session` link. A worker's tool prompt can ask for a `Co-Authored-By` line naming a model; the project rule in CLAUDE.md takes precedence over that prompt.
+- Acceptance: history is left alone (it is published); a CI step (and a local commit-msg hook in tools/) fails a commit whose message matches a list of AI model and vendor names kept in tools/ except the `Claude-Session` trailer; `final-check.sh` item 6 prints the count; DISPATCH.md tells workers to leave the model trailer out.
 - Size: S. Files: .github/workflows/build.yml, tools/commit-msg-check.sh. Risk: low.
-- Src: `git log --grep=Sonnet`, CLAUDE.md rules.
+- Src: `git log` trailers, CLAUDE.md rules. Status: done in commit 6bc276b (tools/commit-msg-check.sh, tools/check-commit-messages.sh, the CI job).
 
-### BK-504 [P2] [DONE] After the app is killed in Studio it reopens in Studio on the project list, and the open project is not offered back
-- Status: Done in 318015e (W31, Studio S1d): start mode window, OpenMark and the Continue card, RAW and DNG messages in both pickers, a swipe away is not a failed start, the thumbnail from the autosave path with Close never waiting (host tests; Compose and app edits compiled and linted). Left over: the phone checks (docs/STUDIO_STATUS.md).
+### BK-504 [P2] [DESIGNED] After the app is killed in Studio it reopens in Studio on the project list, and the open project is not offered back
+- Status: W31-studio-s1d.md: the rules compiled and tested on the host (124 studio-model tests); app, Compose and picker edits specified, not compiled. Not merged.
 - Finding: `ModeState` restores the last mode, so a user who tried Studio once and was killed there opens Rawline in Studio every time until they switch; `StudioRoot`'s `open` is plain `remember`, so a process death returns to the project list, not the canvas, and nothing says which project was open.
 - Acceptance: start in Develop unless the last session ended on the Studio home or canvas less than 30 minutes ago; the Studio home shows a "Continue <name>" card first when the last session ended with a project open (cleared by a normal Close); PHONE-TEST-S1 step 7 passes.
 - Size: S. Files: Mode.kt, StudioRoot.kt, StudioHome.kt, tests. Risk: low.
 - Src: Mode.kt startMode, StudioRoot.kt.
 
-### BK-505 [P2] [DONE] RAW files in Studio: the picker offers a Samsung Expert RAW DNG that Android decodes with its own colour, and RW2 is not offered; failures say only "Could not read that picture"
-- Status: Done in 318015e (W31, Studio S1d): start mode window, OpenMark and the Continue card, RAW and DNG messages in both pickers, a swipe away is not a failed start, the thumbnail from the autosave path with Close never waiting (host tests; Compose and app edits compiled and linted). Left over: the phone checks (docs/STUDIO_STATUS.md).
+### BK-505 [P2] [DESIGNED] RAW files in Studio: the picker offers a Samsung Expert RAW DNG that Android decodes with its own colour, and RW2 is not offered; failures say only "Could not read that picture"
+- Status: W31-studio-s1d.md: the rules compiled and tested on the host (124 studio-model tests); app, Compose and picker edits specified, not compiled. Not merged.
 - Finding: `PhotoImport.decode` uses `ImageDecoder`, so a DNG goes through Android's raw rendering (not Rawline's pipeline) and looks different from the same file in Develop; an RW2 is not an image type to MediaStore, so the photo picker usually does not list it. The hand-off from Develop (W26) is the intended way.
 - Acceptance: until the hand-off exists the home says in one line where RAW files come from ("RAW photos open from Develop"); a picked DNG shows a notice "Rendered by Android, so colours can differ from Develop" on the layer; the decode failure message names the cause (unsupported format, too large, damaged); PHONE-TEST-S1 step 5 records the real behaviour.
 - Size: S. Files: StudioRoot.kt, PhotoImport.kt, StudioHome.kt. Risk: low.
 - Src: PhotoImport.kt, StudioRoot.kt photo launcher.
 
-### BK-506 [P3] [DONE] The start guard counts an impatient swipe-away during the first frame as a failed Studio start
-- Status: Done in 318015e (W31, Studio S1d): start mode window, OpenMark and the Continue card, RAW and DNG messages in both pickers, a swipe away is not a failed start, the thumbnail from the autosave path with Close never waiting (host tests; Compose and app edits compiled and linted). Left over: the phone checks (docs/STUDIO_STATUS.md).
+### BK-510 [P2] [DESIGNED] A missed pen hover exit leaves finger drawing off until the pen is hovered again (proven on the host)
+- Status: W32 patch: 3 router tests pass on the host. Not merged.
+- Finding: `InputRouter.onHover(near = true)` set the "pen near" deadline to the end of time; only a hover exit clears it. A probe against the live router shows a finger DOWN an hour after a lost exit is ignored (review-w13.md R3).
+- Acceptance: near hover keeps the rule for 2 s from the last hover event; an exit gives the 600 ms grace; three router tests (in W32).
+- Size: S. Files: InputRouter.kt. Risk: low.
+- Src: probe on the live router (scratchpad/w13rev/RouterProbe.kt). Status: designed in W32, tests pass on the host.
+
+### BK-511 [P2] [DESIGNED] BK-503 leftovers: leaving does not wait for the save, a failed duplicate leaves a damaged copy, and the retry gap counts from the start of the save
+- Status: W32 patch: 4 session tests pass on the host (164 tests in all); the CanvasScreen edit is not compiled. Not merged.
+- Finding: `leave()` calls the non-blocking `flush()` and goes, so a save that fails because the phone filled up since the last good one is reported after the screen has gone (R4); `Catalog.duplicate` leaves its half copied folder behind when a write fails (R5, proven); the retry gap is measured from `lastSaveStart`, so a slow failing save uses its pause up (R6, proven).
+- Acceptance: `flushAndWait(5 s)` and a stay-and-ask path; a failed duplicate removes its folder; `lastFailureAt` as the gap base; four session tests (in W32).
+- Size: S. Files: StudioSession.kt, CanvasScreen.kt, Catalog.kt. Risk: low.
+- Src: review-w13.md R4 to R6; probes on the live session. Status: designed in W32 (host parts tested, 164 tests; CanvasScreen edit not compiled).
+
+### BK-506 [P3] [DESIGNED] The start guard counts an impatient swipe-away during the first frame as a failed Studio start
+- Status: W31-studio-s1d.md: the rules compiled and tested on the host (124 studio-model tests); app, Compose and picker edits specified, not compiled. Not merged.
 - Finding: `StartGuard` increments on every Studio start and resets only when the home has drawn two frames. Two quick app kills while the home loads (a slow cold start on a busy phone) flip the next start to Develop with the notice "Studio did not start twice".
 - Acceptance: count a start as failed only if the process died from a crash (the existing `ApplicationExitInfo` reader reports the reason) or took over 10 s; test with a fake exit reason list.
 - Size: S. Files: Mode.kt, RawlineApplication (ExitReasons), tests. Risk: low.
 - Src: Mode.kt StartGuard.
 
-### BK-507 [P3] [DONE] Leaving a Studio project waits up to 3 seconds for a thumbnail the user did not ask for
-- Status: Done in 318015e (W31, Studio S1d): start mode window, OpenMark and the Continue card, RAW and DNG messages in both pickers, a swipe away is not a failed start, the thumbnail from the autosave path with Close never waiting (host tests; Compose and app edits compiled and linted). Left over: the phone checks (docs/STUDIO_STATUS.md).
+### BK-507 [P3] [DESIGNED] Leaving a Studio project waits up to 3 seconds for a thumbnail the user did not ask for
+- Status: W31-studio-s1d.md: the rules compiled and tested on the host (124 studio-model tests); app, Compose and picker edits specified, not compiled. Not merged.
 - Finding: `CanvasScreen.leave` renders the project thumbnail and waits at most 3 s before closing, with a spinner. The limit is real but every Close can cost it on a big project.
 - Acceptance: write the thumbnail from the autosave path (after a quiet 2 s) so Close is immediate; `studio_leave_ms` in the Copy report; phone: Close under 500 ms on a 12 MP project (measure, no claim before).
 - Size: S. Files: CanvasScreen.kt, StudioSession.kt. Risk: low.
 - Src: CanvasScreen.kt leave.
+
+### BK-512 [P3] W13 review bundle: leave dialog layout at large fonts, graveyard cap evicting a restorable layer, native readback never compared on a device, export space check on the wrong volume
+- Finding: R7 (three dialog buttons in one row), R8 (the 256 MB graveyard cap can evict a layer whose delete is still undoable, and the toast comes at the wrong moment), R9 (banded native readback is checked on the CPU side only), R10 (the free space check looks at app storage even when the export goes to a card or a document provider); see review-w13.md.
+- Acceptance: vertical 48 dp button stack; graveyard evicts non-restorable layers first and the toast names the undo; an instrumented round trip stroke, commit, undo, redo on a 4000 x 3000 layer; the export check skips non-app targets.
+- Size: S-M. Files: CanvasScreen.kt, StudioSession.kt, ExportSheet.kt, tests. Risk: low.
+- Src: review-w13.md R7 to R10. Status: open, not in W32.
 
 
 ---

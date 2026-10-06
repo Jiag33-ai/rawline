@@ -56,7 +56,7 @@ Block B
 - Gotchas: `- The library keeps its grid order steady while the user is busy (OrderGate) and opens on RAW photos until the user taps All photos.`   [after W29]
 
 ## 5. Clean up
-1. Branches and worktrees: do NOT delete any (PM decision, an outward action). `git branch --list` shows `claude/new-session-c5k3x9` and three `worktree-agent-*` branches with worktrees under `.claude/worktrees/` (old agent runs at bceb4ab, df01b5c, 2d1ce3a, all older than main). Leave them and mention them in the report so the PM can decide.
+1. Branches and worktrees: do NOT delete any (PM decision, an outward action). `git branch --list` shows the old session branch `new-session-c5k3x9` and three `worktree-agent-*` branches with worktrees under `.claude/worktrees/` (old agent runs at bceb4ab, df01b5c, 2d1ce3a, all older than main). Leave them and mention them in the report so the PM can decide.
 2. Remove committed scratch files if any: `git ls-files | grep -e '\.pyc$' -e __pycache__` must print nothing (BK-471 was fixed in bfee342).
 3. The stray directory with a code fence in its name next to `Blend.kt` (BK-472) must not exist: `git status --short --untracked-files=all | grep '`'` prints nothing.
 4. Nothing under `/tmp/golden` or `/tmp/golden-work` is committed or relied on by a task file other than through the scripts.

@@ -105,7 +105,7 @@ Rules for every worker (from CLAUDE.md and the audit passes): branch per task, m
 - Acceptance: `IngestEngine` copies a list of source URIs or files to a dated destination with a rename pattern, copies to `.part` then renames, verifies size and checksum, skips duplicates by name, size and capture time, can write a second destination, resumes after interruption, reports counts, bytes and MB/s, and writes an import report file; a fake file system test that throws after N bytes proves partial files are removed and the batch resumes; no Android UI.
 - Exit check: CI green; engine tests green.
 
-## W16 Platform compliance and small fixes (Starts: right after W28; owns MainActivity)
+## W16 Platform compliance and small fixes (DONE: merged in eec8960; the task file stays as the record)
 - Full task file: docs/backlog/tasks/W16-platform.md. Smaller than first written: the notification ask is already at the first export and columns and selection already survive rotation. Left: explicit `enableOnBackInvokedCallback` (a host test reads the real manifest and is red until the line is added), guard tests for the manifest rules and for every BackHandler in the app (also run against the real tree), the saved filter, sort, columns and scroll position on a cold start, docs/PLATFORM.md. 9 host tests pass in my harness.
 - Entries: BK-246, BK-426, BK-285, BK-120.
 - Owns: app/MainActivity.kt, app/src/main/AndroidManifest.xml, app/build.gradle.kts (one testOptions line), feature/library/LibraryScreen.kt (state), app/LibraryViewModel.kt (filter persistence), docs/PLATFORM.md.
@@ -185,23 +185,31 @@ Rules for every worker (from CLAUDE.md and the audit passes): branch per task, m
 - Owns: core/model Library.kt and LibraryView.kt, core/data DeviceScanner.kt and the DAO count, app/LibraryViewModel.kt, feature/library.
 - Exit check: CI green; Jai: first run on the phone opens on RAW photos with an All photos chip, a copied card does not make the grid jump, Copy report shows grid_resort_count.
 
-## Studio first release gate (decision, no worker yet)
-- BK-502 (P0): the CI release has the Studio switch on before the S1b fixes. Recommended: a Settings opt in (default off) or flag off until W28 and W16 merge. BK-503 (P1): full phone, endless save retries. Jai's baseline: PHONE-TEST-S1.md.
+## Studio first release gate (PM decision)
+- BK-502 (P0): no release with Studio visible until W13 (S1b fixes plus BK-503) and S1c have merged. BK-503 (P1): full phone, endless save retries. Jai's baseline: PHONE-TEST-S1.md.
 
-## W30 Commit message check (Starts: now; tools and one CI job)
-- Full task file: docs/backlog/tasks/W30-commit-message-check.md. A commit-msg hook template, a range checker for CI (only commits after 0620e2a) and a test script; 31 checks pass in throw away repositories, including a real git commit through the hook, and three mutations of the checker made the tests fail.
-- Entries: BK-501.
-- Owns: tools/commit-msg-check.sh, tools/check-commit-messages.sh, tools/commit-message-base, tools/hooks/commit-msg, tools/test-commit-msg-check.sh, one new job in .github/workflows/build.yml.
-- Exit check: CI job green on main and red on a throw away branch with a Co-Authored-By trailer.
+## W31 Studio S1d: reopen, RAW honesty, honest start failures, thumbnail off Close (Starts: after W13 and W16)
+- Full task file: docs/backlog/tasks/W31-studio-s1d.md. Start in Develop unless Studio was used in the last 30 minutes, a Continue card after a kill, RAW file notices and named decode failures, start failures that ignore a swipe away, the thumbnail written from the autosave path. 124 studio-model tests pass on the host; the app and Compose edits are specified, not compiled.
+- Entries: BK-504, BK-505, BK-506, BK-507.
+- Owns: core/studio-model Mode.kt and ResumeRules.kt, feature/studio StudioRoot, StudioHome, CanvasScreen, core/studio-render StudioSession (thumbnail timer), app/src/studioOn StudioEntry.
+- Exit check: CI green; Jai repeats PHONE-TEST-S1 steps 5 and 7.
 
-## W28 Studio S1b fixes (task file name: W13-s1b-fixes.md; W13 is already Reject-to-trash) (Starts: now, before the S1b canvas ships)
-- Full task file: docs/backlog/tasks/W13-s1b-fixes.md. Pure parts built and run: per tile stroke commit (history 10 MB instead of 96 MB on a 12 MP diagonal, bytes identical to the old bake), pen over palm with hover grace, graveyard pruning; 119 model tests pass. Native banded readback built and run through the Studio goldens (byte identical at five band sizes). Session, GL and Compose edits are exact but not compiled.
-- Entries: BK-479, BK-480, BK-481, BK-483, BK-484, BK-487.
-- Owns: core/studio-model (StrokeTiles, History, InputRouter), core/studio-render, core/native studio files, feature/studio.
-- Exit check: CI green and golden green; Jai tries the pen with the hand on the glass, rotates the phone with five layers, and pastes the Copy report.
+## W30 Commit message check (DONE: merged in 6bc276b)
+- Short DONE note: docs/backlog/tasks/W30-commit-message-check.md. Hook, range check, tests and the CI job are in main (tools/commit-msg-check.sh, tools/check-commit-messages.sh, tools/test-commit-msg-check.sh).
+- Entries: BK-501 (done).
+
+## W28 Studio S1b fixes (DONE: merged in 1fed051 and b63e9df; task file name W13-s1b-fixes.md)
+- Merged: tiled stroke commit, banded native readback, pen over palm with hover grace, GL lifecycle with a paused state, graveyard pruning, autosave on a full phone (BK-503 part 1). Reviewed in docs/backlog/reviews/review-w13.md.
+- Entries: BK-479, 480, 483 done; 481, 484, 487 partly done (leftovers are BK-510, BK-512, BK-508); BK-503 partly done (BK-511).
+
+## W32 W13 follow-ups (Starts: after W31; shares CanvasScreen and the session)
+- Full task file: docs/backlog/tasks/W32-w13-followups.md. Two patches that apply at b5b06ac (`docs/backlog/patches/w32-core.patch`, `w32-ui.patch`): hover that lapses, the retry gap from the failure, flushAndWait and the leave check, a duplicate that cleans up, the GL detach rule. 164 host tests pass for the core patch; the UI patch and the export-while-backgrounded edit are written, not compiled.
+- Entries: BK-508, BK-509, BK-510, BK-511 (BK-512 is an optional bundle, not in the task).
+- Owns: core/studio-model (InputRouter, Catalog), core/studio-render (StudioSession, StudioGl), feature/studio (CanvasScreen, ExportSheet), StudioExporter.
+- Exit check: 164 host tests green; Jai: five rotations with the three counters, pen with the hand on the glass, Back on a full phone, export with Home pressed (PHONE-TEST-S1 steps 3, 4, 8, 10).
 
 ## Review of the merged Studio S1b session code (done, read only)
-- docs/backlog/reviews/review-s1b.md: 19 findings including the Compose layer of 75cb498, BK-479 to BK-484 and BK-487 (stroke dirty region, banded readback, pen over palm, frame path, GL lifecycle, memory, rotation and touch targets). Fix before the S1b canvas ships: F1, F2, F3.
+- docs/backlog/reviews/review-s1b.md (review of W13 is review-w13.md, 10 findings, R1 and R2 are P1): 19 findings including the Compose layer of 75cb498, BK-479 to BK-484 and BK-487 (stroke dirty region, banded readback, pen over palm, frame path, GL lifecycle, memory, rotation and touch targets). Fix before the S1b canvas ships: F1, F2, F3.
 
 After these 25: baseline profile and macrobenchmarks (BK-002, BK-003, after W01 and W06), onboarding and help copy (BK-191, 192, 392, 393, 350, 394, after W17), BK-024 and BK-422 (GPU demosaic, after W21 has numbers), BK-021 and BK-445 (look refit and camera matrix from Jai's chart), BK-051/052 (undo and before/after), BK-460 and BK-466 (lens consistency), Studio S2 onward (spec milestones), then the rest of M2 to M6.
 

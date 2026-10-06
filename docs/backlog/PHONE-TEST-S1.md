@@ -22,9 +22,9 @@ Report if: strokes are late or jumpy, the brush stops drawing, undo does the wro
 
 ## 3. The pen (1 minute)
 1. In the project use the S Pen: write your name slowly, then fast.
-2. Now rest the side of your hand on the glass first, then write with the pen.
+2. Now rest the side of your hand on the glass first, then write with the pen. Then take the pen away off the side of the screen (not over it), wait two seconds and paint with a finger: it should paint again.
 Expected: the pen draws, your hand does not. Press harder and the line gets thicker.
-Report which of these happened: the palm drew lines; the pen did nothing while the hand was down; both fine. (A known problem: the palm may win. Say what you saw.)
+Report which of these happened: the palm drew lines; the pen did nothing while the hand was down; both fine. (The palm fix is in since the last update; say what you saw.)
 
 ## 4. A photo and an export (2 minutes)
 1. Close the project. Tap new project from a photo and pick a JPEG.
@@ -32,6 +32,7 @@ Report which of these happened: the palm drew lines; the pen did nothing while t
 3. Open the menu (three dots) and choose Export, JPEG, then export.
 Expected: a progress bar, then a message that it finished. Open the Gallery: the picture is in Pictures/Rawline with the drawing on it and the right way up.
 Report if: the export fails, the picture is black or the wrong way up, or the colours look different from the screen.
+4. Only for a big project (a 12 megapixel photo, PNG): start the export, press Home when the bar is about a third along, wait 20 seconds and open Rawline again. Expected: the export carries on and finishes. Today (before W32) it may stop and say it failed; report which, and how long you waited.
 
 ## 5. A RAW file (1 minute)
 1. Close the project. Tap new project from a photo.
@@ -53,9 +54,10 @@ Expected: the app opens (in Studio, where you left it) on the project list, not 
 Report if: the project is missing, the stroke is missing, or you see a message about damage or recovery. (A line "Recovered from autosave" is fine; say if you saw it.)
 
 ## 8. Turning the phone (30 seconds)
-1. Open a project, zoom in on the canvas, then turn the phone to landscape and back.
-Expected: the drawing stays, nothing flashes black, and ideally the zoom stays.
-Report if: the canvas goes blank for more than a second, the zoom jumps back, or the project closes.
+1. Open a project with two or more layers, zoom in on the canvas, then turn the phone to landscape and back. Do this five times, drawing one short stroke right after each turn.
+Expected: the drawing stays, nothing flashes black, the zoom stays, and every stroke shows up and can be undone.
+Report if: the canvas goes blank for more than a second (note how long), a stroke right after a turn does not appear or the app stalls, the zoom jumps back, or the project closes.
+2. After the five turns open Settings, Copy report. Once the follow-up build (W32) is installed the Studio section lists three counters: `studio_gl_attach`, `studio_gl_detach` and `studio_gl_create`. Paste them. One create and no detach means the canvas is not rebuilt on a turn; six creates means it is, and that is the fix I then make.
 
 ## 9. Optional, only if you have a minute: switching while drawing
 1. In Develop start an export of three photos. Switch to Studio, open a project and start drawing.
@@ -66,7 +68,8 @@ Report if: anything else is lost, or the app crashes.
 ## 10. Optional, only if the phone is nearly full (under 500 MB free)
 1. Create a project from a photo and draw for a few minutes. Watch the top of the canvas.
 Expected: a clear single message that the project is not saved because the phone is nearly full; nothing flashing every few seconds.
-Report: what the message said and how often it appeared; whether the phone got warm.
+2. Then press Back at once after a stroke. Expected: a question "Leave without saving?" with Stay, Export and Leave; Stay keeps you on the canvas.
+Report: what the message said and how often it appeared; whether the phone got warm; whether the question appeared.
 (If your phone has plenty of space, skip this: do not fill it on purpose.)
 
 ## 11. Send the report (1 minute)

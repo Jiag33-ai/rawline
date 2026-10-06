@@ -1,6 +1,6 @@
 # W28 Studio S1b fixes, file W13-s1b-fixes.md (review-s1b.md F1 to F3 and the quick P2s)
 
-Status at writing: main 7cd1b06 (S1c host parts merged). Spec for what is wrong: review-s1b.md. Entries: BK-479, BK-480, BK-481, BK-483, BK-484, BK-487 (and F5, F13). The pure Kotlin below (StrokeTiles, the history and router changes) compiled with Kotlin 2.4.10 together with the real `core/studio-model` sources and ran on the host JVM: all 119 model tests pass (the 93 that exist plus 26 new), with the model test resources on the classpath. The native banded readback was built and run through the real Studio golden harness on Mesa llvmpipe: all existing goldens still PASS and the coverage read is byte-identical to the unbanded read at bands of 1, 7, 64, 256 and 1000 rows. NOT compiled or run: the StudioSession, StudioGl and Compose changes in sections 5 to 7. They are written as exact edits with acceptance tests; the worker must compile and run `:core:studio-render:test`.
+Status at writing: main 7cd1b06 (S1c host parts merged). Spec for what is wrong: review-s1b.md. Entries: BK-479, BK-480, BK-481, BK-483, BK-484, BK-487, BK-503 (and F5, F13). The pure Kotlin below (StrokeTiles, the history and router changes) compiled with Kotlin 2.4.10 together with the real `core/studio-model` sources and ran on the host JVM: all 119 model tests pass (the 93 that exist plus 26 new), with the model test resources on the classpath. The native banded readback was built and run through the real Studio golden harness on Mesa llvmpipe: all existing goldens still PASS and the coverage read is byte-identical to the unbanded read at bands of 1, 7, 64, 256 and 1000 rows. NOT compiled or run: the StudioSession, StudioGl and Compose changes in sections 5 to 7. They are written as exact edits with acceptance tests; the worker must compile and run `:core:studio-render:test`.
 
 ## 1. Order of work (each step ends green)
 1. Apply `model.patch` (History, InputRouter) and add `StrokeTiles.kt` and the tests (section 3 and 4). Run `./gradlew :core:studio-model:testDebugUnitTest`.
@@ -18,7 +18,7 @@ Status at writing: main 7cd1b06 (S1c host parts merged). Spec for what is wrong:
 - D5 Graveyard: after every history change and every trim the session keeps only the encoded pixels of layers named by `history.restorableLayerIds()` (those an undo or redo can bring back).
 - D6 GL: jobs queue while the context is not known to be valid (paused or init failed) and drop at once on a failed init; the compositor is destroyed only when the screen is really leaving, never on rotation; the view is created once and moved between layouts.
 - D7 Touch targets: every tappable thing is at least 48 dp, visual size unchanged.
-- D8 Not in this task: the frame path without CPU readback (BK-482, a compositor change of its own), the `StudioSession` autosave debounce can go in with step 3 only if the worker has time (small: stroke end plus 1.5 s idle, 5 s ceiling).
+- D8 BK-503 (autosave on a full phone) is section 10, added by the PM. Not in this task: the frame path without CPU readback (BK-482, a compositor change of its own), the `StudioSession` autosave debounce can go in with step 3 only if the worker has time (small: stroke end plus 1.5 s idle, 5 s ceiling).
 
 ## 3. Kotlin, compiled and tested
 ### core/studio-model patch (History.kt and InputRouter.kt)
@@ -540,3 +540,367 @@ Tests to add to `StudioSessionTest` (fake GPU harness already exists): (a) a dia
 - Per tile history entries must keep the existing fuzz test green (`HistoryTest.fuzzUndoAllThenRedoAllIsByteIdentical` uses single deltas; add the same fuzz with `commitStrokeTiles`).
 - The palm grace of 600 ms can make a quick finger tap right after pen use feel dead; the constant is one line (`PALM_GRACE_MS`) and Jai can judge it with the pen in hand.
 - `movableContentOf` with an `AndroidView` keeps the view across layouts but not across Activity recreation; the debug activity declares configChanges, the real Studio entry (S1c) must too.
+
+## 10. BK-503: Studio on a nearly full phone (added by PM decision; built and run on the host)
+Measured first: with writes failing, the live session code retried 201 times and showed 200 toasts in 17 minutes of simulated time (`probes/FullDiskProbe.kt`), each retry re-encoding the changed layers. Nothing in Studio checked free space. After the change below the same run gives at most 11 tries, one message, and the state `FULL`. All 33 tests pass against the real `StudioSession` with the fake GPU (the 22 that exist, one of them updated for the new error text, plus 11 new), and the 104 studio-model tests still pass. The Compose edits at the end are not compiled.
+
+Decisions: D9 retry gaps 5, 10, 20, 40, then 60 s, and after 10 failures in a row the session stops until the user edits again or the app pauses (`flush()` tries once more). D10 One message per failure streak ("Not saved: the phone is almost full." for a full volume, else "Could not save. Will try again."); after that only the status line shows (`SaveState.FULL`: "not saved: the phone is almost full"). D11 A new project that never reached the disk deletes its half written folder when it gives up. D12 Free space is checked before a new project (start), before a photo layer is added, before a duplicate (which also removes a half copy when it fails) and before an export: need = estimated size plus 200 MB, message "Not enough space. Free about N MB and try again." with N rounded up to 50 MB and never 0. D13 `Fs.freeBytes()` (no argument, default unknown) is the one seam; if the W13 worker has already added it (the working tree had it at 12:30Z), skip those two hunks of the patch and keep the rest.
+
+Patch (applies to 8d45621 with `patch -p1`, no failed hunks; rebase over the in-flight W13 edits as needed):
+```diff
+--- a/core/studio-model/src/main/kotlin/app/rawline/core/studio/model/ProjectStore.kt
++++ b/core/studio-model/src/main/kotlin/app/rawline/core/studio/model/ProjectStore.kt
+@@ -22,6 +22,8 @@
+     fun size(path: String): Long
+     /** Deletes [path] and everything under it. */
+     fun deleteTree(path: String)
++    /** Bytes that can still be written on the volume holding this file system. Unknown (and so never a reason to refuse) when not overridden. */
++    fun freeBytes(): Long = Long.MAX_VALUE
+ }
+ 
+ /** Straight RGBA8 pixels of one layer. */
+--- a/core/studio-model/src/main/kotlin/app/rawline/core/studio/model/JavaFs.kt
++++ b/core/studio-model/src/main/kotlin/app/rawline/core/studio/model/JavaFs.kt
+@@ -27,4 +27,5 @@
+     override fun dirs(dir: String): List<String> = f(dir).listFiles()?.filter { it.isDirectory }?.map { it.name } ?: emptyList()
+     override fun size(path: String): Long = f(path).takeIf { it.isFile }?.length() ?: 0L
+     override fun deleteTree(path: String) { f(path).deleteRecursively() }
++    override fun freeBytes(): Long = generateSequence(base) { it.parentFile }.firstOrNull { it.exists() }?.usableSpace ?: Long.MAX_VALUE
+ }
+--- a/core/studio-model/src/main/kotlin/app/rawline/core/studio/model/Catalog.kt
++++ b/core/studio-model/src/main/kotlin/app/rawline/core/studio/model/Catalog.kt
+@@ -37,11 +37,19 @@
+     fun duplicate(fs: Fs, root: String, id: String, newId: String, nowMs: Long): ProjectRow {
+         require(!fs.exists("$root/$newId/project.json") && fs.dirs(root).none { it == newId }) { "project $newId exists" }
+         val src = "$root/$id"; val dst = "$root/$newId"
+-        for (n in fs.list(src)) if (!n.endsWith(".tmp")) fs.write("$dst/$n", fs.read("$src/$n")!!)
+-        for (n in fs.list("$src/layers")) if (!n.endsWith(".tmp")) fs.write("$dst/layers/$n", fs.read("$src/layers/$n")!!)
+-        val store = ProjectStore(fs, dst)
+-        val doc = store.open().document
+-        store.save(doc.copy(id = newId, name = (doc.name + " copy").take(60), modified = nowMs), { null }, emptySet())
++        val need = SpaceRule.needForCopy((fs.list(src).map { "$src/$it" } + fs.list("$src/layers").map { "$src/layers/$it" }).sumOf { fs.size(it) })
++        val free = fs.freeBytes()
++        if (!SpaceRule.enough(free, need)) throw java.io.IOException(SpaceRule.message(free, need))
++        try {
++            for (n in fs.list(src)) if (!n.endsWith(".tmp")) fs.write("$dst/$n", fs.read("$src/$n")!!)
++            for (n in fs.list("$src/layers")) if (!n.endsWith(".tmp")) fs.write("$dst/layers/$n", fs.read("$src/layers/$n")!!)
++            val store = ProjectStore(fs, dst)
++            val doc = store.open().document
++            store.save(doc.copy(id = newId, name = (doc.name + " copy").take(60), modified = nowMs), { null }, emptySet())
++        } catch (t: Throwable) {
++            runCatching { fs.deleteTree(dst) }   // a copy that did not finish is not left behind as a damaged project
++            throw t
++        }
+         return row(fs, dst, newId)
+     }
+ 
+--- a/core/studio-render/src/main/kotlin/app/rawline/core/studio/render/StudioState.kt
++++ b/core/studio-render/src/main/kotlin/app/rawline/core/studio/render/StudioState.kt
+@@ -16,7 +16,7 @@
+ }
+ 
+ enum class SaveState(val label: String) {
+-    SAVED("saved"), DIRTY("changes not saved yet"), SAVING("saving"), FAILED("last save failed, will try again"),
++    SAVED("saved"), DIRTY("changes not saved yet"), SAVING("saving"), FAILED("last save failed, will try again"), FULL("not saved: the phone is almost full"),
+ }
+ 
+ class UiMessage(val id: Long, val text: String)
+--- a/core/studio-render/src/main/kotlin/app/rawline/core/studio/render/StudioSession.kt
++++ b/core/studio-render/src/main/kotlin/app/rawline/core/studio/render/StudioSession.kt
+@@ -18,6 +18,8 @@
+ import app.rawline.core.studio.model.Placement
+ import app.rawline.core.studio.model.ProjectStore
+ import app.rawline.core.studio.model.RawPixels
++import app.rawline.core.studio.model.SaveBackoff
++import app.rawline.core.studio.model.SpaceRule
+ import app.rawline.core.studio.model.Step
+ import app.rawline.core.studio.model.StrokePoint
+ import app.rawline.core.studio.model.StrokeReference
+@@ -83,6 +85,11 @@
+     private var lastSaveStart = Long.MIN_VALUE / 2
+     private var lastModified = initial.modified
+     private var saveFailed = false
++    private var saveFailures = 0                       // failed saves in a row (BK-503)
++    private var gaveUp = false                          // stopped retrying until the user edits or the app pauses
++    private var lastFailureFull = false
++    private var everSaved = false
++    private val onDiskAtStart = onDisk
+     private var view = CanvasView()
+     private var surfaceW = 0
+     private var surfaceH = 0
+@@ -111,6 +118,7 @@
+     /** Loads every layer to the GPU (waits for the GL context), then publishes READY. A new project is saved at once so it exists on disk. */
+     fun start() = model {
+         try {
++            if (!onDisk) { val need = SpaceRule.needForNewProject(history.document.layers.filterIsInstance<Layer.Pixel>().map { it.width to it.height }); val free = fs.freeBytes(); if (!SpaceRule.enough(free, need)) throw IllegalStateException(SpaceRule.message(free, need)) }
+             uploadAll()
+             _state.update { it.copy(phase = Phase.READY) }
+             publish()
+@@ -199,6 +207,7 @@
+     /** A photo or other picture as a new layer on top, centred on the canvas. [px] is already scaled to fit by the caller. */
+     fun addPhotoLayer(px: RawPixels, name: String) = model {
+         guarded {
++            if (!spaceAllows(SpaceRule.needForLayer(px.w, px.h))) return@guarded
+             val d = history.document
+             val l = Layer.Pixel(LayerCommon(newId(), name.take(40).ifEmpty { "Photo" }, x = (d.width - px.w) / 2, y = (d.height - px.h) / 2), px.w, px.h)
+             addLayerInternal(d, l, px)
+@@ -480,6 +489,8 @@
+         applyDocument(next, if (px != null) mapOf(l.common.id to px) else emptyMap(), l.common.id)
+     }
+ 
++    private fun spaceAllows(need: Long): Boolean { val free = fs.freeBytes(); if (SpaceRule.enough(free, need)) return true; toast(SpaceRule.message(free, need)); return false }
++
+     private fun guardAllows(d: Document, extra: Pair<Int, Int>): Boolean {
+         val sizes = d.layers.filterIsInstance<Layer.Pixel>().map { it.width to it.height } + extra
+         val ok = MemoryGuard.allows(sizes, surfaceW.takeIf { it > 0 } ?: MemoryGuard.DEFAULT_OUT_W, surfaceH.takeIf { it > 0 } ?: MemoryGuard.DEFAULT_OUT_H)
+@@ -639,6 +650,7 @@
+ 
+     private fun markDirty(now: Boolean = false) {
+         needsSave = true
++        if (gaveUp) { gaveUp = false; saveFailures = 0 }   // the user edited again (or the app paused): one more try
+         if (saving) { saveAgain = true; if (now) saveAgainNow = true; publishSave(); return }
+         val wait = if (now) 0L else lastSaveStart + SAVE_EVERY_MS - env.clock()
+         if (wait <= 0L) startSave()
+@@ -676,7 +688,7 @@
+                 env.model.execute { onSaved(saved, snaps) }
+             } catch (t: Throwable) {
+                 env.error("studio save: ${t.javaClass.simpleName}: ${t.message}")
+-                env.model.execute { onSaveFailed(changed, snaps) }
++                env.model.execute { onSaveFailed(changed, snaps, t) }
+             }
+         }
+     }
+@@ -684,17 +696,31 @@
+     private fun onSaved(saved: Document, snaps: Map<String, RawPixels>) {
+         for (l in saved.layers) if (l is Layer.Pixel) files[l.common.id] = l.pixelsFile
+         for ((id, px) in snaps) { inFlight.remove(id); if (unsaved[id] === px) unsaved.remove(id) }
+-        saving = false; saveFailed = false
++        saving = false; saveFailed = false; saveFailures = 0; gaveUp = false; everSaved = true
+         if (saveAgain || needsSave || dirty.isNotEmpty()) { val urgent = saveAgainNow; saveAgain = false; saveAgainNow = false; markDirty(now = urgent) } else publishSave()
+         gauges()
+     }
+ 
+-    private fun onSaveFailed(changed: Set<String>, snaps: Map<String, RawPixels>) {
++    private fun onSaveFailed(changed: Set<String>, snaps: Map<String, RawPixels>, cause: Throwable? = null) {
+         for ((id, px) in snaps) { inFlight.remove(id); if (id != activeId) unsaved.putIfAbsent(id, px) }
+         dirty += changed
+         saving = false; saveFailed = true
+-        toast("Could not save. Will try again.")
+-        markDirty()   // the next try waits for the five second spacing
++        saveFailures++
++        lastFailureFull = SpaceRule.isNoSpace(cause)
++        if (saveFailures == 1) toast(if (lastFailureFull) "Not saved: the phone is almost full." else "Could not save. Will try again.")   // one message per streak, then only the status line
++        needsSave = true
++        if (SaveBackoff.giveUp(saveFailures)) { gaveUp = true; discardIfNeverSaved(); publishSave(); return }
++        publishSave()
++        if (!timerArmed) {
++            timerArmed = true
++            env.later(SaveBackoff.delayMs(saveFailures)) { env.model.execute { timerArmed = false; if (needsSave && !saving && !released && !gaveUp) startSave() } }
++        }
++    }
++
++    /** A project that never reached the disk (its first saves all failed) leaves no half written folder behind. */
++    private fun discardIfNeverSaved() {
++        if (everSaved || onDiskAtStart) return
++        env.saver.execute { runCatching { if (!fs.exists("$root/project.json") && !fs.exists("$root/project.json.new") && !fs.exists("$root/project.json.bak")) fs.deleteTree(root) } }
+     }
+ 
+     // ---- plumbing ---------------------------------------------------------------------------------------------------------------------
+@@ -730,7 +756,7 @@
+     private fun publishZoom() { _state.update { it.copy(zoomPercent = Math.round(view.zoom * 100f)) } }
+ 
+     private fun saveStateNow() = when {
+-        saveFailed -> SaveState.FAILED
++        saveFailed -> if (lastFailureFull) SaveState.FULL else SaveState.FAILED
+         saving -> SaveState.SAVING
+         needsSave || dirty.isNotEmpty() -> SaveState.DIRTY
+         else -> SaveState.SAVED
+--- a/core/studio-render/src/test/kotlin/app/rawline/core/studio/render/StudioSessionTest.kt
++++ b/core/studio-render/src/test/kotlin/app/rawline/core/studio/render/StudioSessionTest.kt
+@@ -33,13 +33,18 @@
+     var failWrites = false
+     override fun exists(path: String) = files.containsKey(path)
+     override fun read(path: String) = files[path]
+-    override fun write(path: String, data: ByteArray) { if (failWrites) throw java.io.IOException("disk full"); files[path] = data.copyOf() }
++    override fun write(path: String, data: ByteArray) { if (failWrites || writes++ >= failWriteAfter) throw java.io.IOException(failMessage); files[path] = data.copyOf() }
+     override fun rename(from: String, to: String) { files[to] = files.remove(from) ?: throw IllegalStateException("no $from") }
+     override fun delete(path: String) { files.remove(path) }
+     override fun list(dir: String) = files.keys.filter { it.startsWith("$dir/") && !it.substring(dir.length + 1).contains('/') }.map { it.substring(dir.length + 1) }
+     override fun dirs(dir: String) = files.keys.filter { it.startsWith("$dir/") && it.substring(dir.length + 1).contains('/') }.map { it.substring(dir.length + 1).substringBefore('/') }.distinct()
+     override fun size(path: String) = files[path]?.size?.toLong() ?: 0L
+     override fun deleteTree(path: String) { files.keys.removeAll { it == path || it.startsWith("$path/") } }
++    var free = Long.MAX_VALUE
++    override fun freeBytes() = free
++    var failWriteAfter = Int.MAX_VALUE   // writes that still succeed before every further write fails
++    var writes = 0
++    var failMessage = "No space left on device"
+ }
+ 
+ /** A GPU on the host: textures are byte arrays, a stroke buffer is the reference coverage of the stamps. */
+@@ -242,7 +247,7 @@
+         h.s.start()
+         h.s.setBrush(Brush(diameter = 6.0, pressureSize = false))
+         h.now += 10_000
+-        h.fs.failWrites = true
++        h.fs.failWrites = true; h.fs.failMessage = "permission denied"
+         h.stroke(listOf(5f to 5f, 30f to 5f))
+         assertEquals(SaveState.FAILED, h.st.save)
+         assertTrue(h.errors.any { it.contains("studio save") })
+```
+### core/studio-model/.../SaveRules.kt (new)
+```kotlin
+package app.rawline.core.studio.model
+
+/** Review hole BK-503: what a project does when the phone is nearly full. Pure rules, so the host tests can run them. */
+
+/** Retry spacing after a failed autosave: 5, 10, 20, 40, then 60 s; after [MAX_TRIES] failures in a row the session stops until the user edits again or the app pauses. */
+object SaveBackoff {
+    private val STEPS = longArrayOf(5_000, 10_000, 20_000, 40_000, 60_000)
+    const val MAX_TRIES = 10
+    fun delayMs(failures: Int): Long = STEPS[(failures - 1).coerceIn(0, STEPS.size - 1)]
+    fun giveUp(failures: Int): Boolean = failures >= MAX_TRIES
+}
+
+object SpaceRule {
+    const val MARGIN = 200L * 1024 * 1024
+    private const val MB = 1024L * 1024
+
+    /** A new project is saved once as lossless layer files: assume no compression (worst case) plus the margin. */
+    fun needForNewProject(layerSizes: List<Pair<Int, Int>>): Long = layerSizes.sumOf { it.first.toLong() * it.second * 4 } + MARGIN
+    fun needForLayer(w: Int, h: Int): Long = w.toLong() * h * 4 + MARGIN
+    fun needForCopy(projectBytes: Long): Long = projectBytes + MARGIN
+    fun needForExport(w: Int, h: Int): Long = w.toLong() * h * 4 / 2 + MARGIN   // a JPEG or PNG is far under raw size; half is a safe upper bound
+
+    fun enough(freeBytes: Long, needBytes: Long) = freeBytes >= needBytes
+
+    /** "Not enough space. Free about 300 MB and try again." The figure is the shortfall rounded up to 50 MB. */
+    fun message(freeBytes: Long, needBytes: Long): String {
+        val short = (needBytes - freeBytes).coerceAtLeast(0)
+        val mb = (((short + 50 * MB - 1) / (50 * MB)) * 50).coerceAtLeast(50)
+        return "Not enough space. Free about $mb MB and try again."
+    }
+
+    /** True for the errors a full volume gives (ENOSPC text on Android and Linux, a plain "disk full" from a wrapper), looking through the causes. */
+    fun isNoSpace(t: Throwable?): Boolean {
+        var e = t; var n = 0
+        while (e != null && n++ < 6) {
+            val m = (e.message ?: "").lowercase()
+            if (m.contains("enospc") || m.contains("no space left") || m.contains("disk full") || m.contains("not enough space") || m.contains("quota")) return true
+            e = e.cause
+        }
+        return false
+    }
+}
+```
+### core/studio-render/src/test/.../FullPhoneTest.kt (new)
+```kotlin
+package app.rawline.core.studio.render
+
+import app.rawline.core.studio.model.*
+import org.junit.Assert.*
+import org.junit.Test
+
+class FullPhoneTest {
+    private fun blank(w: Int = 64, h: Int = 48) = Document("p1", "Test", w, h, layers = listOf(Layer.Pixel(LayerCommon("a", "a"), w, h)), created = 1, modified = 1)
+    private fun white(w: Int = 64, h: Int = 48) = RawPixels(w, h, ByteArray(w * h * 4) { 255.toByte() })
+    private fun paint(h: Harness) { h.s.setBrush(Brush(diameter = 6.0, pressureSize = false)); h.now += 10_000; h.stroke(listOf(5f to 5f, 30f to 5f)) }
+
+    @Test fun aGenericFailureIsNotCalledFull() {
+        val mem = MemFs(); mem.failMessage = "permission denied"; val h = Harness(fs = mem, doc = blank(), pixels = mapOf("a" to white()))
+        h.s.start(); mem.failWrites = true; paint(h)
+        assertEquals(SaveState.FAILED, h.st.save); assertEquals("Could not save. Will try again.", h.st.message!!.text)
+    }
+    @Test fun aFullPhoneIsNamedInTheStatusAndTheMessage() {
+        val mem = MemFs(); val h = Harness(fs = mem, doc = blank(), pixels = mapOf("a" to white()))
+        h.s.start(); mem.failWrites = true; paint(h)
+        assertEquals(SaveState.FULL, h.st.save); assertEquals("Not saved: the phone is almost full.", h.st.message!!.text)
+    }
+    @Test fun aPhoneThatStaysFullGetsAFewTriesNotAnEndlessLoop() {
+        val mem = MemFs(); val h = Harness(fs = mem, doc = blank(), pixels = mapOf("a" to white()))
+        h.s.start(); mem.failWrites = true; paint(h)
+        var toasts = 0; var last = -1L
+        for (i in 1..200) { h.now += 61_000; h.fireTimers(); val m = h.st.message; if (m != null && m.id != last) { toasts++; last = m.id } }
+        val tries = h.errors.count { it.contains("studio save") }
+        assertTrue("tries $tries", tries <= SaveBackoff.MAX_TRIES + 1)
+        assertEquals(1, toasts)
+        assertEquals(SaveState.FULL, h.st.save)
+    }
+    @Test fun theRetryGapsGrowAndStop() {
+        assertEquals(listOf(5_000L, 10_000L, 20_000L, 40_000L, 60_000L, 60_000L), (1..6).map { SaveBackoff.delayMs(it) })
+        assertFalse(SaveBackoff.giveUp(9)); assertTrue(SaveBackoff.giveUp(10))
+        val mem = MemFs(); val h = Harness(fs = mem, doc = blank(), pixels = mapOf("a" to white()))
+        h.s.start(); h.timers.clear(); mem.failWrites = true; paint(h)
+        val gaps = ArrayList<Long>()
+        gaps += h.timers.map { it.first }                                        // armed after the first failure (left in place so it can fire)
+        repeat(12) { h.now += 61_000; val due = ArrayList(h.timers); h.timers.clear(); due.forEach { it.second.run() }; gaps += h.timers.map { it.first } }
+        assertEquals(listOf(5_000L, 10_000L, 20_000L, 40_000L, 60_000L, 60_000L, 60_000L, 60_000L, 60_000L), gaps.take(9))
+        assertEquals("nothing is armed after the tenth failure", 9, gaps.size)
+    }
+    @Test fun anEditAfterGivingUpTriesAgainAndASuccessResetsTheStreak() {
+        val mem = MemFs(); val h = Harness(fs = mem, doc = blank(), pixels = mapOf("a" to white()))
+        h.s.start(); mem.failWrites = true; paint(h)
+        for (i in 1..40) { h.now += 61_000; h.fireTimers() }
+        val frozen = h.errors.count { it.contains("studio save") }
+        for (i in 1..5) { h.now += 61_000; h.fireTimers() }
+        assertEquals("no more tries while nothing changes", frozen, h.errors.count { it.contains("studio save") })
+        mem.failWrites = false
+        h.now += 10_000; h.stroke(listOf(10f to 20f, 40f to 20f))    // the user paints again
+        h.now += 6_000; h.fireTimers()
+        assertEquals(SaveState.SAVED, h.st.save)
+        assertArrayEquals(h.gl.gpu.tex[0]!!.rgba, h.layerPixels("a"))
+    }
+    @Test fun pausingTriesOnceMoreAfterGivingUp() {
+        val mem = MemFs(); val h = Harness(fs = mem, doc = blank(), pixels = mapOf("a" to white()))
+        h.s.start(); mem.failWrites = true; paint(h)
+        for (i in 1..40) { h.now += 61_000; h.fireTimers() }
+        val before = h.errors.count { it.contains("studio save") }
+        mem.failWrites = false; h.s.flush()
+        assertEquals(SaveState.SAVED, h.st.save); assertTrue(before >= SaveBackoff.MAX_TRIES)
+    }
+    @Test fun aNewProjectThatNeverSavedLeavesNoFolder() {
+        val mem = MemFs(); val h = Harness(fs = mem, doc = blank(), pixels = mapOf("a" to white()), onDisk = false)
+        mem.failWrites = true
+        h.s.start()
+        for (i in 1..40) { h.now += 61_000; h.fireTimers() }
+        assertTrue("left: ${mem.files.keys}", mem.files.keys.none { it.startsWith(Harness.ROOT) })
+    }
+    @Test fun aNewProjectNeedsRoomAndSaysHowMuch() {
+        val mem = MemFs(); mem.free = 100L * 1024 * 1024
+        val h = Harness(fs = mem, doc = blank(2000, 1500), pixels = mapOf("a" to white(2000, 1500)), onDisk = false)
+        h.s.start()
+        assertEquals(Phase.ERROR, h.st.phase)
+        assertTrue(h.st.error!!, h.st.error!!.startsWith("Not enough space. Free about ") && h.st.error!!.endsWith(" MB and try again."))
+        assertTrue(mem.files.isEmpty())
+    }
+    @Test fun anAddedPhotoIsRefusedWhenThereIsNoRoom() {
+        val mem = MemFs(); val h = Harness(fs = mem, doc = blank(), pixels = mapOf("a" to white()))
+        h.s.start(); mem.free = 10L * 1024 * 1024
+        h.s.addPhotoLayer(white(500, 400), "Photo")
+        assertEquals(1, h.st.document.layers.size)
+        assertTrue(h.st.message!!.text.startsWith("Not enough space."))
+    }
+    @Test fun spaceRuleMessagesAndErrorDetection() {
+        assertEquals("Not enough space. Free about 50 MB and try again.", SpaceRule.message(0, 1))
+        assertEquals("Not enough space. Free about 300 MB and try again.", SpaceRule.message(0, 300L * 1024 * 1024))
+        assertEquals("Not enough space. Free about 50 MB and try again.", SpaceRule.message(500, 500))   // never says 0
+        assertTrue(SpaceRule.isNoSpace(java.io.IOException("write failed: ENOSPC (No space left on device)")))
+        assertTrue(SpaceRule.isNoSpace(RuntimeException("x", java.io.IOException("disk full"))))
+        assertFalse(SpaceRule.isNoSpace(java.io.IOException("permission denied"))); assertFalse(SpaceRule.isNoSpace(null))
+        assertTrue(SpaceRule.enough(10, 10)); assertFalse(SpaceRule.enough(9, 10))
+    }
+    @Test fun aDuplicateThatRunsOutOfRoomLeavesNoHalfCopy() {
+        val mem = MemFs(); val fsRoot = "studio"
+        val h = Harness(fs = mem, doc = blank(), pixels = mapOf("a" to white()))
+        h.s.start(); h.now += 6_000; h.fireTimers()
+        // the harness project lives under files/studio/p1; copy it with a file system that fails after two writes
+        mem.writes = 0; mem.failWriteAfter = 2
+        try { ProjectCatalog.duplicate(mem, "files/studio", "p1", "p2", 5); fail("should fail") } catch (e: java.io.IOException) {}
+        assertTrue("half copy left: ${mem.files.keys.filter { it.contains("/p2") }}", mem.files.keys.none { it.contains("files/studio/p2") })
+        mem.failWriteAfter = Int.MAX_VALUE
+        mem.free = 1L * 1024 * 1024
+        try { ProjectCatalog.duplicate(mem, "files/studio", "p1", "p3", 5); fail("should refuse") } catch (e: java.io.IOException) { assertTrue(e.message!!.startsWith("Not enough space.")) }
+        assertTrue(mem.files.keys.none { it.contains("files/studio/p3") })
+    }
+}
+```
+Compose edits (not compiled): (1) `CanvasScreen.leave`: when `state.save` is `FAILED` or `FULL` show a dialog "Leave without saving?" with the text "Your last changes are not saved." and the buttons "Stay" and "Leave"; Leave calls the existing path. (2) `StudioRoot` new from photo and `ExportSheet`: before starting call `SpaceRule.enough(projects.fs().freeBytes(), SpaceRule.needForExport(w, h))` (export) or rely on the session's start check (new project), and show `SpaceRule.message(...)`. (3) The status strip already prints `state.save.label`; make the FULL label red like FAILED. (4) `StudioHomeViewModel.duplicate` already reports "Could not duplicate the project."; show the IOException message when it starts with "Not enough space." Acceptance for BK-503: the tests above; phone step 10 of PHONE-TEST-S1 (only on a nearly full phone).

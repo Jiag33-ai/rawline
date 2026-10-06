@@ -1,0 +1,60 @@
+diff --git a/core/studio-render/src/main/kotlin/app/rawline/core/studio/render/StudioGl.kt b/core/studio-render/src/main/kotlin/app/rawline/core/studio/render/StudioGl.kt
+index e1e5b56..f812a1f 100644
+--- a/core/studio-render/src/main/kotlin/app/rawline/core/studio/render/StudioGl.kt
++++ b/core/studio-render/src/main/kotlin/app/rawline/core/studio/render/StudioGl.kt
+@@ -97,6 +97,7 @@ class StudioGl(private val perf: StudioPerf) : GLSurfaceView.Renderer, GpuExecut
+      */
+     fun viewDetached(v: GLSurfaceView) {
+         if (released) destroy(v)
++        else synchronized(pending) { glReady = false }   // the GL thread is going and its queue with it: jobs wait in [pending] until the next surface (review R1)
+     }
+ 
+     /** The GL thread stops in the view's detach, so the compositor is torn down first while that thread can still run it. */
+diff --git a/feature/studio/src/main/kotlin/app/rawline/feature/studio/CanvasScreen.kt b/feature/studio/src/main/kotlin/app/rawline/feature/studio/CanvasScreen.kt
+index 02cd32e..4829758 100644
+--- a/feature/studio/src/main/kotlin/app/rawline/feature/studio/CanvasScreen.kt
++++ b/feature/studio/src/main/kotlin/app/rawline/feature/studio/CanvasScreen.kt
+@@ -122,15 +122,21 @@ fun StudioCanvasScreen(session: StudioSession, gl: StudioGl, projects: StudioPro
+     }
+     var exportOpen by rememberSaveable { mutableStateOf(false) }
+     var leaving by remember { mutableStateOf(false) }
++    var confirmLeave by remember { mutableStateOf(false) }
+     // Leaving: save what is unsaved, then write the project's thumbnail for the home (a worker renders it through the compositor while the surface still exists), then go.
+     // The thumbnail is best effort: it gets 3 seconds, and a failure only means the home shows the old one.
+-    val leave: () -> Unit = {
++    // [force] is the dialog's "Leave": it skips the save check (the person has been told). Otherwise leaving waits for the save to finish and stays on the screen if it did not work (review R4).
++    val leave: (Boolean) -> Unit = { force ->
+         if (!leaving) {
+             leaving = true
+-            session.flush()
+             val projectId = state.document.id
+             val ready = state.phase == Phase.READY
+             scope.launch {
++                if (ready && !force) {
++                    // flushAndWait sleeps in short steps: worker thread only
++                    val saved = withContext(Dispatchers.IO) { session.flushAndWait(5_000) }
++                    if (saved != app.rawline.core.studio.render.SaveState.SAVED) { leaving = false; confirmLeave = true; return@launch }
++                } else session.flush()
+                 if (ready) {
+                     // async + await, so the 3 second limit works even though the render itself blocks a worker; a late result is dropped (the session is released by then)
+                     val work = async(Dispatchers.IO) {
+@@ -147,9 +153,8 @@ fun StudioCanvasScreen(session: StudioSession, gl: StudioGl, projects: StudioPro
+         }
+     }
+     // BK-503: leaving while the last save failed would lose the changes (the project stays in memory only while this screen is open): ask first, and offer Export.
+-    var confirmLeave by remember { mutableStateOf(false) }
+     val unsaved = state.save == app.rawline.core.studio.render.SaveState.FAILED || state.save == app.rawline.core.studio.render.SaveState.NO_SPACE
+-    val tryLeave: () -> Unit = { if (unsaved && state.phase == Phase.READY) confirmLeave = true else leave() }
++    val tryLeave: () -> Unit = { if (unsaved && state.phase == Phase.READY) confirmLeave = true else leave(false) }
+     BackHandler(enabled = !leaving) { if (exportOpen) exportOpen = false else if (layersOpen) layersOpen = false else tryLeave() }
+ 
+     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+@@ -185,7 +190,7 @@ fun StudioCanvasScreen(session: StudioSession, gl: StudioGl, projects: StudioPro
+         onDismissRequest = { confirmLeave = false },
+         title = { Text("Leave without saving?") },
+         text = { Text("Your last changes are not saved. Export keeps a picture of what you have.") },
+-        confirmButton = { LrTextButton(onClick = { confirmLeave = false; leave() }) { Text("Leave") } },
++        confirmButton = { LrTextButton(onClick = { confirmLeave = false; leave(true) }) { Text("Leave") } },
+         dismissButton = {
+             Row {
+                 LrTextButton(onClick = { confirmLeave = false }) { Text("Stay") }

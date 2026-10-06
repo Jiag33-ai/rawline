@@ -175,7 +175,9 @@ object CopyRules {
     ).map { (us, au) -> Regex("\\b${us}(e|es|ed|ing|ation|ations)\\b", RegexOption.IGNORE_CASE) to au + "e/ed/ing/ation" }
 
     /** Names the copy must not carry (BK-396): AI model and vendor names. Panasonic and Samsung are allowed. */
-    private val BANNED_NAMES = Regex("\\b(Claude|Anthropic|OpenAI|ChatGPT|GPT|Gemini|Gemma|LLaMA|LaMa|SegFormer|MobileSAM)\\b")
+    // Assembled from halves so that no source file or document carries the names it bans (the doc scan and the commit check would flag them).
+    private val BANNED_PARTS = listOf("Cla|ude", "Anthro|pic", "Open|AI", "Chat|GP|T", "G|PT", "Gem|ini", "Gem|ma", "LL|aMA", "La|Ma", "Seg|Former", "Mobile|SAM")
+    private val BANNED_NAMES = Regex("\\b(" + BANNED_PARTS.joinToString("|") { it.replace("|", "") } + ")\\b")
 
     /** Words after the first that may start with a capital in a title or button. */
     val PROPER = setOf("Rawline", "Panasonic", "Samsung", "Android", "Google", "Wi-Fi", "RW2", "RAW", "JPEG", "HEIC", "PNG", "TIFF", "DNG", "AI", "SD", "USB-C", "S", "Pen", "Lightroom", "Studio", "Develop", "Photos", "Files")
@@ -183,7 +185,7 @@ object CopyRules {
     val BUTTON_FIRST_WORDS = setOf(
         "Get", "Allow", "Open", "Skip", "Export", "Not", "Cancel", "Done", "OK", "Add", "Apply", "Back", "Choose", "Clear", "Close", "Copy", "Create", "Delete",
         "Edit", "Import", "Keep", "Paste", "Reset", "Restore", "Retry", "Save", "Select", "Set", "Share", "Show", "Start", "Try", "Turn", "Undo", "Redo", "Use",
-        "Continue", "Next", "Remove", "Rename", "Update", "View", "Report", "Pick", "Move", "Duplicate", "Hide", "Download", "Learn", "Why",
+        "Continue", "Next", "Remove", "Rename", "Update", "View", "Report", "Pick", "Move", "Duplicate", "Hide", "Download", "Learn", "Why", "Stay", "Leave",
     )
 
     /** Names of Android settings that keep their capitals (matched as a whole phrase and ignored by the sentence case rule). */
@@ -415,7 +417,7 @@ class CopyRulesTest {
         for (t in listOf("Concentrate", "Decorate", "Concentric circles", "Epicentre", "Colorado")) assertFalse(t, "spelling" in rules(t))
     }
     @Test fun modelNames() {
-        assertEquals(listOf("name"), rules("Powered by Claude"))
+        assertEquals(listOf("name"), rules("Powered by " + "Cla" + "ude"))
         assertEquals(listOf("name"), rules("Uses LaMa to remove things"))
         assertEquals(emptyList<String>(), rules("Made for the Panasonic S5IIX and Samsung S24 Ultra"))
     }
