@@ -29,13 +29,20 @@ Method: static read of the repo by the main session, three read-only reviewers (
 - Tests: export settings round trip, TIFF header and row checks, model link and checksum checks.
 - CI: Gradle and SDK caching, write permission only on the job that publishes.
 
+## Fixed in the third pass (render, engine, ML; static reads, verified by build, unit tests and goldens)
+- Masks: every bitmap layer now lives in one fixed 1024 by 1024 array texture and is resampled on upload, so adding a layer of a different size (brush after rotate, AI mask) no longer blanks the others. The non core `glGetTexLevelParameteriv` call is gone. A context restore re-uploads each layer at its own size. New golden scene `layers2` (two layers, two sizes, both visible); the old engine fails it.
+- Editor: saved layer bytes are deflated (a full set is well under a megabyte instead of about 48 MB); slot and bytes change in one locked block.
+- AI models: release is serialised with inference on the ai-model thread, and a late run after release throws instead of building a new interpreter and GPU delegate that leaks.
+- Editor teardown: every queued GL block re-checks the engine when it runs; blocks still waiting at release (or running after the engine is gone) are dropped and free any decoded raw they own; release is idempotent and no longer blocks the main thread.
+- Heal and remove: the patch source was rendered with the baseline look and the main pass applied the baseline again on top. Patches are now rendered without it. No existing golden changes (the harness has no heal path); covered by a unit test.
+- Native: JNI entry points catch C++ exceptions and return an error value; array pin failures are checked.
+
 ## Still open (ranked)
 1. Restore from backup: old backup overwrites newer ratings, whole zip entries read into memory, not transactional.
 2. Edit key `name|size|modified` collides for identical files in different folders.
 3. DeviceScanner prunes every row on an empty or partial listing; no downgrade path in Room.
-4. `setLayer` with a new size wipes other mask layers; C++ exceptions elsewhere in the engine can still escape JNI.
-5. Touch targets under 48 dp (needs a look on the phone so layouts do not shift); rotation resets library selection; checkbox and toggle semantics.
-6. CI: no lint step, actions not pinned to commit hashes, the public sideload key signs builds when secrets are absent.
-7. Tests: nothing for library, loupe or core/ui screens.
-8. Crop "Help" button does nothing.
-9. The People model link is not versioned, so it cannot be hash-pinned.
+4. Touch targets under 48 dp (needs a look on the phone so layouts do not shift); rotation resets library selection; checkbox and toggle semantics.
+5. CI: no lint step, actions not pinned to commit hashes, the public sideload key signs builds when secrets are absent.
+6. Tests: nothing for library, loupe or core/ui screens.
+7. Crop "Help" button does nothing.
+8. The People model link is not versioned, so it cannot be hash-pinned.
