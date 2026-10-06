@@ -37,12 +37,21 @@ Method: static read of the repo by the main session, three read-only reviewers (
 - Heal and remove: the patch source was rendered with the baseline look and the main pass applied the baseline again on top. Patches are now rendered without it. No existing golden changes (the harness has no heal path); covered by a unit test.
 - Native: JNI entry points catch C++ exceptions and return an error value; array pin failures are checked.
 
+## Fixed in the fourth pass (data, export, tooling; static reads, verified by unit tests and build only, nothing run on a phone)
+- Restore: old backup no longer overwrites newer ratings, flags or labels (`updatedAt` on meta, Room v4, newer wins; backups without times only fill gaps).
+- Restore: zip entries are streamed with per-entry and total caps, names are allowlisted (no path tricks), JSON and PNG headers are checked, all database writes are one transaction, image files are moved in only after it commits. Tested with crafted zips (including a 70 MB entry that compresses to under 1 MB).
+- Room: schema export on and committed, host-side migration tests (2 to 3, 3 to 4, 4 to 3), explicit downgrade that keeps every row. Wipe only from version 1 (photos index only).
+- Export service: `onTimeout` and `onDestroy` put the running job back to waiting and stop cleanly; type is mediaProcessing on Android 15+ (dataSync before); the app resets jobs stuck at running and restarts the queue when it opens.
+- Export: retry no longer accepts a running job; JPEG EXIF is written to a private file before it is copied to the destination (no "rw" reopen of the document); Share no longer deletes files another app may be reading (own folder per share, old ones cleared after an hour).
+- Tooling: `tools/env.sh` is path independent and setup-sdk.sh no longer rewrites it; a local version code can be set with `RAWLINE_VERSION_CODE` or `-PversionCode=N` (CI unchanged).
+- Edit key collision (item 1 below) was reviewed and left as is, with the reasoning in docs/DECISIONS.md; the key is now built in one place.
+- Not verified: the mediaProcessing service type, `onTimeout`, and the EXIF-then-copy path need a real Android 15+ phone and a SAF destination (Copy report).
+
 ## Still open (ranked)
-1. Restore from backup: old backup overwrites newer ratings, whole zip entries read into memory, not transactional.
-2. Edit key `name|size|modified` collides for identical files in different folders.
-3. DeviceScanner prunes every row on an empty or partial listing; no downgrade path in Room.
-4. Touch targets under 48 dp (needs a look on the phone so layouts do not shift); rotation resets library selection; checkbox and toggle semantics.
-5. CI: no lint step, actions not pinned to commit hashes, the public sideload key signs builds when secrets are absent.
-6. Tests: nothing for library, loupe or core/ui screens.
-7. Crop "Help" button does nothing.
-8. The People model link is not versioned, so it cannot be hash-pinned.
+1. Edit key `name|size|modified` collides for identical files in different folders and is orphaned when the modified time changes (decision and plan in docs/DECISIONS.md).
+2. DeviceScanner prunes every row on an empty or partial listing.
+3. Touch targets under 48 dp (needs a look on the phone so layouts do not shift); rotation resets library selection; checkbox and toggle semantics.
+4. CI: no lint step, actions not pinned to commit hashes, the public sideload key signs builds when secrets are absent.
+5. Tests: nothing for library, loupe or core/ui screens.
+6. Crop "Help" button does nothing.
+7. The People model link is not versioned, so it cannot be hash-pinned.

@@ -29,6 +29,8 @@ data class ExportProgress(val total: Int = 0, val done: Int = 0, val current: St
 class ExportRunner(private val context: Context, private val graph: Graph) {
     val progress = MutableStateFlow(ExportProgress())
     @Volatile var cancelled = false
+    /** Set when the service is being stopped (time limit or destroyed): the running job goes back to waiting instead of being cancelled. */
+    @Volatile var stopRequested = false
 
     private val exporter = Exporter(context, graph.maskStore, graph.patchStore) { h, a, p -> Denoiser(context, graph.modelStore).let { d -> try { d.run(h, a, p) } finally { d.release() } } }
 
@@ -45,13 +47,27 @@ class ExportRunner(private val context: Context, private val graph: Graph) {
 
     fun cancelCurrent() { cancelled = true }
 
+    /** Stops the queue cleanly: the current job is abandoned and returns to waiting, nothing is marked cancelled or failed. */
+    fun stopForLater() { stopRequested = true; cancelled = true }
+
+    /**
+     * Call from the foreground at app start. A job left at "running" by a killed process would otherwise stay there forever,
+     * so put it back to waiting (only when no service is alive to own it), then restart the service if anything is waiting.
+     */
+    suspend fun recoverAfterStart() {
+        val dao = graph.db.exports()
+        if (!ExportService.isRunning) dao.resetRunning()
+        if (dao.nextWaiting() != null) startService()
+    }
+
     /** Works through waiting jobs one at a time (blocking; runs on the service's thread). Returns how many files were written. */
     fun processQueue(): Int {
         val dao = graph.db.exports()
+        File(context.cacheDir, "export-tmp").listFiles()?.forEach { it.delete() }   // leftovers from a killed process
         runBlocking { dao.resetRunning() }
         var written = 0
         var n = 0
-        while (true) {
+        while (!stopRequested) {
             val job = runBlocking { dao.nextWaiting() } ?: break
             n++
             cancelled = false
@@ -69,11 +85,13 @@ class ExportRunner(private val context: Context, private val graph: Graph) {
                     val now = System.currentTimeMillis()
                     if (now - lastWrite > 400) { lastWrite = now; runBlocking { dao.progress(job.id, f) } }
                 }
-                if (cancelled) runBlocking { dao.finish(job.id, 4, "Cancelled", null, 0f) }
+                if (stopRequested) { runBlocking { dao.finish(job.id, 0, null, null, 0f) }; break }
+                else if (cancelled) runBlocking { dao.finish(job.id, 4, "Cancelled", null, 0f) }
                 else if (uri != null) { written++; runBlocking { dao.finish(job.id, 2, null, uri.toString(), 1f) } }
                 else runBlocking { dao.finish(job.id, 3, "Could not write the file", null, 0f) }
             } catch (e: Throwable) {
                 app.rawline.core.cache.PerfLog.error("export ${photo.name}: ${e.message}")
+                if (stopRequested) { runBlocking { dao.finish(job.id, 0, null, null, 0f) }; break }
                 runBlocking { dao.finish(job.id, 3, e.message ?: e.javaClass.simpleName, null, 0f) }
             }
         }
@@ -83,7 +101,11 @@ class ExportRunner(private val context: Context, private val graph: Graph) {
 
     /** Renders to a cache file for the share sheet. */
     fun exportForShare(p: Photo, s: ExportSettings): File? {
-        val dir = File(context.cacheDir, "share").apply { mkdirs(); listFiles()?.forEach { it.delete() } }
+        // Never delete a file another app may still be reading: only clear shares older than an hour, and give each share its own folder.
+        val root = File(context.cacheDir, "share").apply { mkdirs() }
+        val cutoff = System.currentTimeMillis() - 60 * 60 * 1000L
+        root.listFiles()?.forEach { if (it.lastModified() < cutoff) it.deleteRecursively() }
+        val dir = File(root, "s" + System.currentTimeMillis() + "-" + System.nanoTime() % 100000).apply { mkdirs() }
         val f = File(dir, fileName(p, s, 1))
         cancelled = false  // a cancel aimed at an earlier queue job must not abort this share
         f.outputStream().use { out -> write(p, s.copy(destination = null), out, f.toURI().toString(), null) ?: return null }
@@ -93,14 +115,28 @@ class ExportRunner(private val context: Context, private val graph: Graph) {
 
     private fun exportOne(p: Photo, s: ExportSettings, n: Int, onFraction: (Float) -> Unit): Uri? {
         val name = fileName(p, s, n)
+        if (s.format == ExportFormat.JPEG && s.metadata != MetadataMode.NONE) {
+            // Render to a private file, write the EXIF there (ExifInterface needs a real, seekable file; many document
+            // providers refuse an "rw" reopen), then copy the finished file to the destination.
+            val tmp = File.createTempFile("export", ".jpg", File(context.cacheDir, "export-tmp").apply { mkdirs() })
+            try {
+                if (tmp.outputStream().use { write(p, s, it, name, onFraction) } == null) return null
+                runCatching { writeExif(ExifInterface(tmp.path), p, s) }.onFailure { app.rawline.core.cache.PerfLog.error("export EXIF ${p.name}: ${it.message}") }
+                val (out, uri) = openTarget(s, name, s.format.mime) ?: throw IllegalStateException("No place to save")
+                try { out.use { o -> tmp.inputStream().use { it.copyTo(o) } } } catch (e: Throwable) { discard(uri); throw e }
+                publish(uri)
+                return uri
+            } finally { tmp.delete() }
+        }
         val (out, uri) = openTarget(s, name, s.format.mime) ?: throw IllegalStateException("No place to save")
         val ok = try { out.use { stream -> write(p, s, stream, name, onFraction) } } catch (e: Throwable) { discard(uri); throw e }
         if (ok == null) { discard(uri); return null }
-        if (s.format == ExportFormat.JPEG && s.metadata != MetadataMode.NONE) runCatching {
-            context.contentResolver.openFileDescriptor(uri, "rw")?.use { pfd -> writeExif(ExifInterface(pfd.fileDescriptor), p, s) }
-        }
-        if (uri.authority == MediaStore.AUTHORITY) runCatching { context.contentResolver.update(uri, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null) }
+        publish(uri)
         return uri
+    }
+
+    private fun publish(uri: Uri) {
+        if (uri.authority == MediaStore.AUTHORITY) runCatching { context.contentResolver.update(uri, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null) }
     }
 
     private fun discard(uri: Uri) {

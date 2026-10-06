@@ -125,6 +125,8 @@ private fun RawlineRoot() {
     LaunchedEffect(Unit) {
         if (!permission) mediaPermission.launch(vm.mediaPermission)
         if (android.os.Build.VERSION.SDK_INT >= 33) notifPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        // jobs left running by a killed process go back to waiting, and the queue restarts if anything is waiting
+        runCatching { graph.exportRunner.recoverAfterStart() }
     }
     LaunchedEffect(message) {
         message?.let { if (it.isNotEmpty() && nav.currentDestination?.route != "settings") { toast = it; vm.message.value = null } }

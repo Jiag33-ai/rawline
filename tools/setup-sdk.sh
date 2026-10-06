@@ -17,8 +17,13 @@ fi
 yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$SDK" --licenses >/dev/null || true
 "$SDK/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$SDK" \
   "platform-tools" "platforms;$PLATFORM" "build-tools;$BUILD_TOOLS" "ndk;$NDK" "cmake;$CMAKE"
-cat > "$ROOT/tools/env.sh" <<ENV
-export ANDROID_HOME="$SDK"
-export ANDROID_SDK_ROOT="$SDK"
+# tools/env.sh is tracked and path independent; only recreate it if it is missing, and never rewrite it when it exists.
+if [ ! -f "$ROOT/tools/env.sh" ]; then
+  cat > "$ROOT/tools/env.sh" <<'ENV'
+_rawline_root="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
+export ANDROID_HOME="$_rawline_root/.android-sdk"
+export ANDROID_SDK_ROOT="$ANDROID_HOME"
+unset _rawline_root
 ENV
+fi
 echo "SDK ready at $SDK"

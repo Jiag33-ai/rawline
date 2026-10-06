@@ -6,6 +6,9 @@ plugins {
 }
 
 val buildNumber = (System.getenv("GITHUB_RUN_NUMBER") ?: "0").toInt()
+// CI: the run number, as before. A local build is 1 unless asked otherwise (RAWLINE_VERSION_CODE or -PversionCode=N), for
+// example to install over a newer sideloaded build. Not automatic: a large local number would block later CI builds.
+val versionCodeOverride = (System.getenv("RAWLINE_VERSION_CODE") ?: providers.gradleProperty("versionCode").orNull)?.toIntOrNull()
 
 android {
     namespace = "app.rawline"
@@ -14,7 +17,7 @@ android {
         applicationId = "app.rawline"
         minSdk = 31
         targetSdk = 37
-        versionCode = maxOf(buildNumber, 1)
+        versionCode = versionCodeOverride?.takeIf { it > 0 } ?: maxOf(buildNumber, 1)
         versionName = "0.1.$buildNumber"
         buildConfigField("int", "BUILD_NUMBER", "$buildNumber")
         buildConfigField("String", "BUILD_DATE", "\"${LocalDate.now()}\"")
