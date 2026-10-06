@@ -104,6 +104,8 @@ class StudioSession(
     private var saveAgain = false
     private var saveAgainNow = false
     private var timerArmed = false
+    private var firstEditAt = -1L                                // BK-484: clock of the first edit not yet saved; the 5 s ceiling counts from here
+    private var lastEditAt = -1L                                 // clock of the newest edit; a save waits for IDLE_MS after it
     private var lastSaveStart = Long.MIN_VALUE / 2
     private var lastFailureAt = Long.MIN_VALUE / 2               // when the last save failed: the retry gap counts from here, not from when that save began
     private var lastModified = initial.modified
@@ -725,6 +727,9 @@ class StudioSession(
     /** Test hook: bytes the undo history holds. */
     internal fun historyBytes(): Long = history.deltaBytes
 
+    /** Test hook: encoded bytes the graveyard holds. */
+    internal fun graveyardBytes(): Long = graveyard.values.sumOf { it.size.toLong() }
+
     /** Test hook: how many removed layers still have their pixels kept. */
     internal fun graveyardSize(): Int = graveyard.size
 
@@ -953,7 +958,7 @@ class StudioSession(
     /** A change to save (an edit, a pause, leaving). After a run of failures an edit allows a few more slow tries and a pause or leaving allows one. */
     private fun markDirty(now: Boolean = false) {
         needsSave = true
-        if (!now) noteEdit()
+        if (!now) { noteEdit(); val t = env.clock(); if (firstEditAt < 0) firstEditAt = t; lastEditAt = t }
         if (retryHalted) { retryHalted = false; failStreak = if (now) SpaceCheck.MAX_TRIES - 1 else SpaceCheck.MAX_TRIES - 3 }
         scheduleSave(now)
     }
@@ -996,8 +1001,12 @@ class StudioSession(
 
     private fun scheduleSave(now: Boolean) {
         if (saving) { saveAgain = true; if (now) saveAgainNow = true; publishSave(); return }
-        val spacing = if (saveFailed) SpaceCheck.retryDelayMs(failStreak) else SAVE_EVERY_MS
-        val wait = if (now) 0L else (if (saveFailed) lastFailureAt else lastSaveStart) + spacing - env.clock()
+        val wait = when {
+            now -> 0L
+            saveFailed -> lastFailureAt + SpaceCheck.retryDelayMs(failStreak) - env.clock()
+            firstEditAt < 0 -> lastSaveStart + SAVE_EVERY_MS - env.clock()
+            else -> minOf(lastEditAt + IDLE_MS, firstEditAt + SAVE_EVERY_MS) - env.clock()   // stroke end plus 1.5 s idle, 5 s ceiling
+        }
         if (wait <= 0L) startSave()
         else {
             publishSave()
@@ -1009,7 +1018,7 @@ class StudioSession(
     }
 
     private fun startSave() {
-        needsSave = false; saving = true; saveAgain = false
+        needsSave = false; saving = true; saveAgain = false; firstEditAt = -1L; lastEditAt = -1L
         lastSaveStart = env.clock()
         lastModified = maxOf(env.clock(), lastModified + 1)
         val base = history.document
@@ -1216,7 +1225,8 @@ class StudioSession(
 
     companion object {
         /** Autosave spacing while changes keep coming (decision D8). */
-        const val SAVE_EVERY_MS = 5_000L
+        const val SAVE_EVERY_MS = 5_000L   // ceiling from the first unsaved edit
+        const val IDLE_MS = 1_500L
         /** Tile directory of the saved selection (schema v2). */
         const val SELECTION_DIR = "sel"
     }

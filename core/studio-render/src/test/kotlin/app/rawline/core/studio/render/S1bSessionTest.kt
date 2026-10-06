@@ -134,6 +134,7 @@ class FullDiskTest {
         val filesBefore = HashMap(mem.files)
         mem.free = 1_000_000
         h.stroke(listOf(5f to 5f, 30f to 5f))
+        h.now += 1_500; h.fireTimers()
         assertEquals(SaveState.NO_SPACE, h.st.save)
         assertEquals(SpaceCheck.SAVE_FAILED_FULL, h.st.message?.text)
         assertEquals(filesBefore.keys, mem.files.keys)           // nothing written

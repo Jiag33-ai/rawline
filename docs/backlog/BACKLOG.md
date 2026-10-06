@@ -3038,6 +3038,7 @@ Facts: CI = golden job (Mesa llvmpipe renders vs 15 reference PNGs, model link c
 - Finding: `StudioNative.render` reads the whole screen into a byte array and `Display.draw` uploads it again; JNI `GetByteArrayElements` may copy it twice more. Expected 20 to 40 ms per frame on Adreno; not measured.
 - Acceptance: display pass inside the compositor drawing to the default framebuffer; until then a direct ByteBuffer and only the dirty rectangle while a stroke is live; `studio_frame_ms` and `studio_input_to_pixel_ms` in the Copy report before and after.
 - Size: M. Files: core/native studio_compositor, StudioGl.kt. Risk: medium.
+- Status: not started. A direct ByteBuffer changes the JNI `render` signature, so it needs the device to check; left with the display pass.
 - Src: review-s1b.md F4, F5, F13.
 
 ### BK-483 [P2] [DONE] Studio GL lifecycle: jobs on a dead context, init failure hangs waiters, destroy blocks the main thread
@@ -3048,7 +3049,7 @@ Facts: CI = golden job (Mesa llvmpipe renders vs 15 reference PNGs, model link c
 - Src: review-s1b.md F7, F8, F9.
 
 ### BK-484 [P2] [PARTLY DONE] Studio memory ceilings add up and the undo graveyard is never pruned against history
-- Status: Graveyard pruned against history (1fed051). Left over: the 256 MB cap can still evict a layer whose delete is undoable (BK-512, review-w13.md R8).
+- Status: Graveyard pruned against history (1fed051). Debounce (1.5 s idle, 5 s ceiling, pause immediate) and the 10 layer memory test (at 1/100 scale, bound in STUDIO_STATUS.md) are in, host tested only. Left over: the active layer copy for the save still runs on the model thread; the 256 MB cap can still evict a layer whose delete is undoable (BK-512, review-w13.md R8).
 - Finding: worst case heap at 12 MP: history 200 MB, graveyard 256 MB, active layer 48 MB, save snapshot 48 MB, unsaved layers; deleted layers stay in the graveyard after history has dropped their delete entry; the autosave copy of the active layer runs on the model thread right after a stroke.
 - Acceptance: prune the graveyard to layer ids named by remaining history entries; debounce autosave to stroke end plus 1.5 s idle (5 s ceiling, flush on pause stays immediate); memory test with 10 layers of 12 MP, five deleted, undo, under a stated bound.
 - Size: M. Files: StudioSession.kt, History.kt, RawlineApplication. Risk: low.

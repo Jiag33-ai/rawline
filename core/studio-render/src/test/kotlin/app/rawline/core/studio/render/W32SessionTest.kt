@@ -14,6 +14,7 @@ class W32SessionTest {
         m.failWrites = true; m.onWrite = { h.now += 7_000 }               // every save takes 7 s of fake time before it fails
         val before = h.errors.count { it.contains("studio save") }
         h.stroke(listOf(5f to 5f, 30f to 5f))
+        h.now += 1_500; h.fireTimers()
         val tries = h.errors.count { it.contains("studio save") } - before
         assertEquals("one try, then a timer: no immediate second try", 1, tries)
         assertEquals(1, h.timers.size)

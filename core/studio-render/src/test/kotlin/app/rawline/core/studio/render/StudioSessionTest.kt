@@ -236,24 +236,26 @@ class StudioSessionTest {
         assertEquals(0, h.gl.last!!.layers.size)                      // hidden layers are not drawn
     }
 
-    @Test fun anAutosaveRunsAtOnceThenAtMostEveryFiveSecondsAndLosesNothing() {
+    @Test fun anAutosaveWaitsForQuietWithAFiveSecondCeilingAndLosesNothing() {
         val h = Harness(doc = blankDoc(), pixels = mapOf("a" to white(64, 48)))
         h.s.start()
         h.s.setBrush(Brush(diameter = 6.0, hardness = 1.0, pressureSize = false)); h.s.setColour(Rgb(0f, 0f, 1f))
         h.now += 10_000
-        h.stroke(listOf(5f to 5f, 30f to 5f))                           // more than 5 s since the first save: saved at once
+        h.stroke(listOf(5f to 5f, 30f to 5f))                           // BK-484: saved 1.5 s after the stroke ended, not at once
+        assertEquals(SaveState.DIRTY, h.st.save)
+        h.now += 1_500; h.fireTimers()
         assertEquals(SaveState.SAVED, h.st.save)
         assertArrayEquals(h.gl.gpu.tex[0]!!.rgba, h.layerPixels("a"))
         h.now += 1_000
-        h.stroke(listOf(5f to 25f, 30f to 25f))                         // 1 s later: waits
+        h.stroke(listOf(5f to 25f, 30f to 25f))                         // 1 s later: waits for 1.5 s of quiet
         assertEquals(SaveState.DIRTY, h.st.save)
         assertEquals(1, h.timers.size)
-        assertTrue(h.timers[0].first in 3_900L..4_000L)                // the remainder of the five seconds
+        assertEquals(1_500L, h.timers[0].first)                        // the idle time
         h.stroke(listOf(5f to 35f, 30f to 35f))
         assertEquals(1, h.timers.size)                                  // one timer, not one per stroke
         val killedCopy = MemFs().also { it.files.putAll(h.fs.files) }  // the app is killed now: the project opens to the last save, not the two strokes since
         assertNotNull(ProjectStore(killedCopy, Harness.ROOT).open())
-        h.now += 4_000; h.fireTimers()
+        h.now += 1_500; h.fireTimers()
         assertEquals(SaveState.SAVED, h.st.save)
         assertArrayEquals(h.gl.gpu.tex[0]!!.rgba, h.layerPixels("a"))
         assertTrue(h.reports.any { it.first == "studio_autosave_ms" })
@@ -277,6 +279,7 @@ class StudioSessionTest {
         h.now += 10_000
         h.fs.failWrites = true
         h.stroke(listOf(5f to 5f, 30f to 5f))
+        h.now += 1_500; h.fireTimers()
         assertEquals(SaveState.FAILED, h.st.save)
         assertTrue(h.errors.any { it.contains("studio save") })
         assertEquals(app.rawline.core.studio.model.SpaceCheck.SAVE_FAILED_OTHER, h.st.message!!.text)
@@ -442,7 +445,7 @@ class StudioSessionTest {
         val h = Harness(doc = blankDoc(), pixels = mapOf("a" to white(64, 48)))
         h.s.start()
         h.s.setBrush(Brush(diameter = 6.0, pressureSize = false))
-        h.now += 10_000; h.stroke(listOf(5f to 5f, 30f to 5f))
+        h.now += 10_000; h.stroke(listOf(5f to 5f, 30f to 5f)); h.now += 1_500; h.fireTimers()
         val strokedPixels = h.layerPixels("a")
         h.fs.files["files/studio/p1/project.json"] = "{ torn".toByteArray()
         val r = ProjectStore(h.fs, Harness.ROOT).open()
