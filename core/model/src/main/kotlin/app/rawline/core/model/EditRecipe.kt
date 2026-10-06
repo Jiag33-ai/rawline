@@ -92,6 +92,17 @@ object Look {
     const val CURRENT = V2
     /** A version this build cannot render (written by a newer build) is shown with the newest look it knows rather than refused. */
     fun supported(v: Int) = v.coerceIn(V1, CURRENT)
+
+    /** The Copy report line: how many saved edits are on each look, counted from their stored JSON (a row that cannot be read is counted apart). */
+    fun report(storedJson: List<String>): String {
+        val counts = IntArray(CURRENT + 1)
+        var unreadable = 0
+        for (j in storedJson) {
+            val v = try { supported(org.json.JSONObject(j).optInt("lookVersion", V1)) } catch (e: Exception) { 0 }
+            if (v == 0) unreadable++ else counts[v]++
+        }
+        return "Edits by look: " + (V1..CURRENT).joinToString(", ") { "look $it ${counts[it]}" } + if (unreadable > 0) ", unreadable $unreadable" else ""
+    }
 }
 
 data class EditRecipe(

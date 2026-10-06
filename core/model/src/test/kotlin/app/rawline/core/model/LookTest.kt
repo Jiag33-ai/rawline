@@ -62,3 +62,17 @@ class LookTest {
         assertEquals(Look.V1, again.lookVersion)
     }
 }
+
+class LookReportTest {
+    @Test fun theCopyReportCountsEditsByLook() {
+        val old = "{\"schemaVersion\":1,\"adjust\":{\"exposure\":0.4}}"        // no key: look 1
+        val one = EditRecipe(lookVersion = Look.V1, adjust = Adjust(exposure = 0.1f)).toJson()
+        val two = EditRecipe(adjust = Adjust(exposure = 0.2f)).toJson()
+        assertEquals("Edits by look: look 1 2, look 2 2", Look.report(listOf(old, one, two, two)))
+    }
+
+    @Test fun anUnreadableRowIsCountedApartAndAnEmptyCatalogueReadsZero() {
+        assertEquals("Edits by look: look 1 0, look 2 1, unreadable 1", Look.report(listOf("not json", EditRecipe().toJson())))
+        assertEquals("Edits by look: look 1 0, look 2 0", Look.report(emptyList()))
+    }
+}

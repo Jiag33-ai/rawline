@@ -21,7 +21,8 @@ object ReportBuilder {
             "${c.total} photos in the library (${c.raw} RAW), ${c.edited} edited\n" +
                 "Indexing: ${c.total - c.pending - c.noPreview} done, ${c.pending} waiting, ${c.noPreview} unreadable\n" +
                 "The photo grid is showing $shownPhotos ($shownLabel)\n" +
-                "grid_resort_count: $gridResorts (times the order of photos already on screen changed this session)"
+                "grid_resort_count: $gridResorts (times the order of photos already on screen changed this session)\n" +
+                app.rawline.core.model.Look.report(graph.db.edits().all().map { it.json })
         }.getOrElse { "unavailable (${it.javaClass.simpleName})" }
         sections += "Export queue" to runCatching {
             val counts = graph.db.exports().statusCounts().associate { it.status to it.n }
