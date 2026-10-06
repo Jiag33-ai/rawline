@@ -15,6 +15,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.rawline.core.cache.PerfLog
 import app.rawline.core.data.IndexProgress
+import app.rawline.core.data.RecipeRead
 import app.rawline.core.model.EditRecipe
 import app.rawline.core.model.LibraryFilter
 import app.rawline.core.model.PasteScope
@@ -194,20 +195,35 @@ class LibraryViewModel(private val app: Application) : AndroidViewModel(app) {
 
     // ---- copy, paste and sync of edits ----
     fun copyEdits(p: Photo) = viewModelScope.launch {
-        copied.value = catalog.loadRecipe(p) ?: EditRecipe()
-        message.value = "Copied edits from ${p.name}"
+        when (val r = catalog.readRecipe(p)) {
+            is RecipeRead.Ok -> { copied.value = r.recipe; message.value = "Copied edits from ${p.name}" }
+            RecipeRead.Missing -> { copied.value = EditRecipe(); message.value = "Copied edits from ${p.name}" }
+            RecipeRead.Unreadable -> message.value = "The edit on ${p.name} could not be read, so nothing was copied"
+        }
     }
 
     fun pasteEdits(targets: List<Photo>, scopes: Set<PasteScope>) = viewModelScope.launch {
         val src = copied.value ?: return@launch
-        targets.forEach { t -> catalog.saveRecipe(t, RecipeMerge.paste(catalog.loadRecipe(t) ?: EditRecipe(), src, scopes)) }
-        message.value = "Pasted onto ${targets.size} photos"
+        message.value = applyToTargets(targets, "Pasted onto") { base -> RecipeMerge.paste(base, src, scopes) }
     }
 
     fun syncEdits(from: Photo, to: List<Photo>) = viewModelScope.launch {
-        val src = catalog.loadRecipe(from) ?: EditRecipe()
-        to.forEach { t -> catalog.saveRecipe(t, RecipeMerge.paste(catalog.loadRecipe(t) ?: EditRecipe(), src, RecipeMerge.QUICK)) }
-        message.value = "Synced ${to.size} photos from ${from.name}"
+        val src = when (val r = catalog.readRecipe(from)) {
+            is RecipeRead.Ok -> r.recipe
+            RecipeRead.Missing -> EditRecipe()
+            RecipeRead.Unreadable -> { message.value = "The edit on ${from.name} could not be read, so nothing was synced"; return@launch }
+        }
+        message.value = applyToTargets(to, "Synced") { base -> RecipeMerge.paste(base, src, RecipeMerge.QUICK) } + " from ${from.name}"
+    }
+
+    /** Merges into each target's saved edit. A target whose saved edit cannot be read is left alone, never overwritten with defaults. */
+    private suspend fun applyToTargets(targets: List<Photo>, verb: String, merge: (EditRecipe) -> EditRecipe): String {
+        var done = 0; var skipped = 0
+        targets.forEach { t ->
+            val base = when (val r = catalog.readRecipe(t)) { is RecipeRead.Ok -> r.recipe; RecipeRead.Missing -> EditRecipe(); RecipeRead.Unreadable -> { skipped++; return@forEach } }
+            catalog.saveRecipe(t, merge(base)); done++
+        }
+        return "$verb $done photos" + if (skipped > 0) ", skipped $skipped with an unreadable edit" else ""
     }
 
     // ---- export queue ----

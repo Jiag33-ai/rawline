@@ -18,7 +18,10 @@ class Catalog(private val context: Context, private val db: RawlineDb, private v
     private val photos = db.photos()
     private val edits = db.edits()
 
-    suspend fun loadRecipe(p: Photo): EditRecipe? = edits.get(p.key)?.let { runCatching { EditRecipe.fromJson(it.json) }.getOrNull() }
+    suspend fun loadRecipe(p: Photo): EditRecipe? = (readRecipe(p) as? RecipeRead.Ok)?.recipe
+
+    /** Like [loadRecipe] but tells "no edit saved" apart from "saved but unreadable". Use this wherever the result is acted on. */
+    suspend fun readRecipe(p: Photo): RecipeRead = RecipeRead.parse(edits.get(p.key)?.json)
 
     suspend fun saveRecipe(p: Photo, r: EditRecipe) {
         // A stored recipe we could not read (for example written by a newer build) must not be deleted just because

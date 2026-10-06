@@ -8,8 +8,8 @@ import android.provider.DocumentsContract
 import android.provider.MediaStore
 import androidx.exifinterface.media.ExifInterface
 import app.rawline.core.data.ExportJobEntity
+import app.rawline.core.data.forExport
 import app.rawline.core.ml.Denoiser
-import app.rawline.core.model.EditRecipe
 import app.rawline.core.model.Photo
 import app.rawline.core.render.ExportFormat
 import app.rawline.core.render.ExportSettings
@@ -144,7 +144,8 @@ class ExportRunner(private val context: Context, private val graph: Graph) {
     }
 
     private fun write(p: Photo, s: ExportSettings, out: OutputStream, label: String, onFraction: ((Float) -> Unit)?): Unit? {
-        val recipe = runBlocking { graph.catalog.loadRecipe(p) } ?: EditRecipe()
+        // An edit that exists but cannot be read must fail the export, not produce an unedited photo.
+        val recipe = runBlocking { graph.catalog.readRecipe(p) }.forExport(p.name)
         val res = exporter.render(p, recipe, s, if (s.format == ExportFormat.TIFF16) out else null, { onFraction?.invoke(it) }, { cancelled }) ?: return null
         val bmp = res.bitmap ?: return Unit
         when (s.format) {
