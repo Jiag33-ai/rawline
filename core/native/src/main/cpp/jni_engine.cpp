@@ -253,16 +253,23 @@ JNIEXPORT jboolean JNICALL Java_app_rawline_core_nativelib_Native_engineRenderRe
     });
 }
 
-// 16 bit linear sRGB half floats (for TIFF export): out has pw*ph*4 shorts.
-JNIEXPORT jboolean JNICALL Java_app_rawline_core_nativelib_Native_engineRenderRegionHalf(
+// 16 bit export: out has pw*ph*3 values (unsigned 16 bit, stored in shorts), display encoded in the chosen output space.
+// The engine must be in high precision mode (engineSetHighPrecision) before the first render.
+JNIEXPORT jboolean JNICALL Java_app_rawline_core_nativelib_Native_engineRenderRegion16(
     JNIEnv *env, jobject, jlong h, jfloatArray params, jint pw, jint ph, jfloat x, jfloat y, jfloat w, jfloat hgt, jshortArray out) {
-    return guarded<jboolean>("engineRenderRegionHalf", JNI_FALSE, [&]() -> jboolean {
-        if (!fits(env, out, pw, ph, 4)) return false;
+    return guarded<jboolean>("engineRenderRegion16", JNI_FALSE, [&]() -> jboolean {
+        if (!fits(env, out, pw, ph, 3)) return false;
         ParamsRef pr(env, params);
         jshort *o = env->GetShortArrayElements(out, nullptr);
         if (!o) return JNI_FALSE;
         auto unpin = defer([&] { env->ReleaseShortArrayElements(out, o, 0); });
-        return reinterpret_cast<Engine *>(h)->renderRegion(pr.p, pw, ph, {x, y, w, hgt}, nullptr, true, reinterpret_cast<uint16_t *>(o));
+        return reinterpret_cast<Engine *>(h)->renderRegion16(pr.p, pw, ph, {x, y, w, hgt}, reinterpret_cast<uint16_t *>(o));
+    });
+}
+
+JNIEXPORT void JNICALL Java_app_rawline_core_nativelib_Native_engineSetHighPrecision(JNIEnv *, jobject, jlong h, jboolean on) {
+    guardedV("engineSetHighPrecision", [&]() {
+        reinterpret_cast<Engine *>(h)->setHighPrecision(on);
     });
 }
 

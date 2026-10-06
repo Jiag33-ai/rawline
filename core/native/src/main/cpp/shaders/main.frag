@@ -26,6 +26,8 @@ uniform vec3 uTcaR;          // lens chromatic aberration scale polynomials (v, 
 uniform vec3 uTcaB;
 uniform vec3 uLensVig;       // lens vignetting k1 k2 k3
 uniform vec3 uLensFlags;     // tca on, vignetting on
+uniform mat3 uToSrgb;        // working space (ProPhoto, D50) to linear sRGB (colour and luminance range masks compare in display terms)
+uniform sampler2D uBase;     // base tone curve, 256 wide (the same table the output pass uses)
 
 //@include geometry.glsl
 
@@ -34,6 +36,17 @@ const vec3 Y = vec3(0.28807, 0.71184, 0.0000857);
 vec4 B(int block, int k) { return texelFetch(uBlocks, ivec2(k, block), 0); }
 
 float luma(vec3 c) { return dot(c, Y); }
+
+float srgbOetf(float x) { return x <= 0.0031308 ? 12.92 * x : 1.055 * pow(x, 1.0 / 2.4) - 0.055; }
+// What the screen shows for a working-space colour: sRGB encoded, through the base curve. Same chain as out.frag, and the same
+// domain the colour picker (EditorSession.sample) reads back, so a picked colour selects itself.
+vec3 toDisplay(vec3 c) {
+    vec3 lin = max(uToSrgb * c, 0.0);
+    vec3 v = clamp(vec3(srgbOetf(lin.r), srgbOetf(lin.g), srgbOetf(lin.b)), 0.0, 1.0);
+    return vec3(texture(uBase, vec2((v.r * 255.0 + 0.5) / 256.0, 0.5)).r,
+                texture(uBase, vec2((v.g * 255.0 + 0.5) / 256.0, 0.5)).r,
+                texture(uBase, vec2((v.b * 255.0 + 0.5) / 256.0, 0.5)).r);
+}
 
 vec3 toGamma(vec3 c) { return pow(max(c, 0.0), vec3(1.0 / 2.2)); }
 vec3 toLinear(vec3 c) { return pow(max(c, 0.0), vec3(2.2)); }
@@ -67,6 +80,13 @@ float curveLookup(int block, int ch, float x) {
     return texture(uCurves, vec2((u + 0.5) / 256.0, v)).r;
 }
 
+// Grading tint for a hue: the hue's colour minus its own luma, so choosing a hue shifts colour and never brightness
+// (hsv2rgb(h,1,1) - 0.5 has a channel sum of +0.5 for yellow, green and cyan and -0.5 for red, blue and magenta).
+vec3 tintColour(float hue) {
+    vec3 t = hsv2rgb(vec3(hue, 1.0, 1.0));
+    return t - dot(t, vec3(0.2126, 0.7152, 0.0722));
+}
+
 vec3 grade(vec3 g, int block) {
     // g is gamma encoded. Three-way colour grading.
     vec4 sh = B(block, 10), mi = B(block, 11), hi = B(block, 12), gl = B(block, 13), bl = B(block, 14);
@@ -79,17 +99,17 @@ vec3 grade(vec3 g, int block) {
     float wh = smoothstep(hiE - spread, hiE + spread, l);
     float wm = clamp(1.0 - ws - wh, 0.0, 1.0);
     vec3 tint = vec3(0.0);
-    vec3 ts = hsv2rgb(vec3(sh.x, 1.0, 1.0)) - 0.5;
-    vec3 tm = hsv2rgb(vec3(mi.x, 1.0, 1.0)) - 0.5;
-    vec3 th = hsv2rgb(vec3(hi.x, 1.0, 1.0)) - 0.5;
-    vec3 tg = hsv2rgb(vec3(gl.x, 1.0, 1.0)) - 0.5;
+    vec3 ts = tintColour(sh.x);
+    vec3 tm = tintColour(mi.x);
+    vec3 th = tintColour(hi.x);
+    vec3 tg = tintColour(gl.x);
     tint += ts * sh.y * ws + tm * mi.y * wm + th * hi.y * wh + tg * gl.y;
     float lum = sh.z * ws + mi.z * wm + hi.z * wh + gl.z;
     return max(g + tint * 0.35 + lum * 0.25, 0.0);
 }
 
 // Applies one adjustment block. 'bs','bl','bd' are the local analysis samples at this pixel.
-vec3 adjust(vec3 c, int block, float bs, float bl, float bd) {
+vec3 adjust(vec3 c, int block, float bs, float bl, float bd, out float gainTone) {
     vec4 b0 = B(block, 0), b1 = B(block, 1), b2 = B(block, 2), b3 = B(block, 3);
     float exposure = b0.x, contrast = b0.y, highlights = b0.z, shadows = b0.w;
     float whites = b1.x, blacks = b1.y, temp = b1.z, tint = b1.w;
@@ -110,6 +130,7 @@ vec3 adjust(vec3 c, int block, float bs, float bl, float bd) {
     float wHi = smoothstep(0.45, 0.95, baseG);
     float tone = exp2(sh * 1.6 * wSh + hl * 1.6 * wHi);
     c *= tone;
+    gainTone = gain * tone;   // lets a mask block measure its local contrast against a baseline that includes this block's tone change
 
     // Texture (fine) and clarity (broad) local contrast from the blurred layers.
     float Ym = max(luma(c), 1.0e-5);
@@ -127,8 +148,9 @@ vec3 adjust(vec3 c, int block, float bs, float bl, float bd) {
             float t = max(1.0 - d * 0.95 * dm, 0.15);
             c = (c - A * (1.0 - t)) / t;
         } else {
-            float t = 1.0 - d * 0.5;
-            c = c * t + A * (1.0 - t) * dm * -d;
+            // Adding haze: pull every channel towards the airlight A (t is 1 at d = 0 and 0.5 at d = -1). Blacks lift, contrast falls.
+            float t = 1.0 + d * 0.5;
+            c = c * t + A * (1.0 - t);
         }
     }
 
@@ -206,11 +228,11 @@ float maskAlpha(int m, vec2 p, float asp, vec3 c) {
         } else if (type == 3) {     // bitmap layer
             v = texture(uLayers, vec3(p, a.w)).r;
         } else if (type == 4) {     // colour range: q.rgb target (gamma), q.a range, r.x softness
-            vec3 g = toGamma(c);
+            vec3 g = toDisplay(c);
             float d = distance(g, q.rgb);
             v = 1.0 - smoothstep(q.a * (1.0 - r.x), q.a + 1.0e-4, d);
         } else if (type == 5) {     // luminance range: q.x lo, q.y hi, q.z falloff
-            float l = pow(max(luma(c), 0.0), 1.0 / 2.2);
+            float l = dot(toDisplay(c), vec3(0.2126, 0.7152, 0.0722));
             // zero falloff is a hard edge: smoothstep with equal edges is undefined, so use step there
             float fz = max(q.z, 1.0e-4);
             v = smoothstep(q.x - fz, q.x, l) * (1.0 - smoothstep(q.y, q.y + fz, l));
@@ -240,25 +262,33 @@ void main() {
         c.r = textureLod(uSrc, clamp(0.5 + (guv - 0.5) * sr, 0.0, 1.0), uLod).r;
         c.b = textureLod(uSrc, clamp(0.5 + (guv - 0.5) * sb, 0.0, 1.0), uLod).b;
     }
-    if (uLensFlags.y > 0.5) {
-        float rv = length(sd) / (0.5 * length(uSrcSize));
-        float r2v = rv * rv;
-        float corr = 1.0 + uLensVig.x * r2v + uLensVig.y * r2v * r2v + uLensVig.z * r2v * r2v * r2v;
-        c /= max(corr, 0.12);
-    }
+    // Heal and remove patches are rendered from the source as it is (no lens gain, no CA correction), so they are laid over it
+    // here, before the vignetting gain, and take the same gain as the pixels around them.
     if (uOverlayOn > 0.5) {
         vec4 o = texture(uOverlay, clamp(g.xy, 0.0, 1.0));
         c = c * (1.0 - o.a) + o.rgb;
     }
+    float vgain = 1.0;   // total vignetting correction at this pixel; the local analysis layers need it too
+    if (uLensFlags.y > 0.5) {
+        float rv = length(sd) / (0.5 * length(uSrcSize));
+        float r2v = rv * rv;
+        float corr = 1.0 + uLensVig.x * r2v + uLensVig.y * r2v * r2v + uLensVig.z * r2v * r2v * r2v;
+        float lg = 1.0 / max(corr, 0.12);
+        c *= lg; vgain *= lg;
+    }
     // Manual vignetting correction
     vec2 d = (p - 0.5) * vec2(uAspect, 1.0);
-    c *= 1.0 / max(1.0 - uGeo2.w * dot(d, d) * 2.0, 0.2);
+    float mg = 1.0 / max(1.0 - uGeo2.w * dot(d, d) * 2.0, 0.2);
+    c *= mg; vgain *= mg;
 
     vec2 lu = clamp(g.xy, 0.0, 1.0);
     vec2 ap = vec2(p);
     // Analysis layers are stored in output-image space.
-    float bs = texture(uBs, p).x, bl = texture(uBl, p).x, bd = texture(uBd, p).y;
-    c = adjust(c, 0, bs, bl, bd);
+    // The layers are blurred copies of the uncorrected source; the vignetting gain is smooth, so scaling them by this pixel's gain
+    // makes them the blur of the corrected picture. Without it a corner of a lens corrected photo reads as detail against a dark base.
+    float bs = texture(uBs, p).x * vgain, bl = texture(uBl, p).x * vgain, bd = texture(uBd, p).y * vgain;
+    float gt0;
+    c = adjust(c, 0, bs, bl, bd, gt0);
     vec2 pf = uCrop.xy + p * uCrop.zw;
     vec2 bdim = baseDims();
     float asp = bdim.x / bdim.y;
@@ -266,8 +296,11 @@ void main() {
         if (m >= uNumMasks) break;
         float a = maskAlpha(m, pf, asp, c);
         if (a > 0.001) {
-            vec3 adj = adjust(c, 1 + m, bs, bl, bd);
+            // c already carries the global (and earlier mask) exposure and tone: measure local contrast against the same baseline
+            float gtm;
+            vec3 adj = adjust(c, 1 + m, bs * gt0, bl * gt0, bd * gt0, gtm);
             c = mix(c, adj, a);
+            gt0 = mix(gt0, gt0 * gtm, a);
         }
         if (m == uShowMask) c = mix(c, vec3(0.9, 0.05, 0.05) * max(luma(c), 0.02) * 4.0 + vec3(0.25, 0.0, 0.0), a * 0.55);
     }

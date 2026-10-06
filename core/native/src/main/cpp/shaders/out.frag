@@ -16,7 +16,8 @@ uniform vec4 uView;          // visible region in image-normalised coords (for v
 uniform float uAspect;
 uniform float uPxScale;      // output pixels per reference pixel (keeps radii consistent between preview and export)
 uniform mat3 uToSrgb;        // working space (ProPhoto, D50) to linear sRGB
-uniform float uOutLinear;    // 1 = target is a float buffer (16 bit export): same encoding, no 8 bit rounding
+uniform sampler2D uBase32;   // the base tone curve as float32 (read with texelFetch), used when uHiPrec is on
+uniform float uHiPrec;       // 1 = 16 bit export: float32 targets and a float32 curve, so the half float table adds no banding
 uniform float uChecker;      // 1 = draw a mid grey where the image is empty
 uniform float uMark;         // 1 = draw pure magenta where the image is empty (tests: proves no outside-image pixel survives)
 
@@ -104,9 +105,18 @@ void main() {
     vec3 lin = max(uToSrgb * c, 0.0);
     vec3 v = clamp(srgbOetf3(lin), 0.0, 1.0);
     // Base tone curve (calibrated against the camera JPEG look); identity is plain sRGB.
-    v = vec3(texture(uBase, vec2((v.r * 255.0 + 0.5) / 256.0, 0.5)).r,
-             texture(uBase, vec2((v.g * 255.0 + 0.5) / 256.0, 0.5)).r,
-             texture(uBase, vec2((v.b * 255.0 + 0.5) / 256.0, 0.5)).r);
+    if (uHiPrec > 0.5) {
+        vec3 x = v * 255.0;
+        ivec3 i0 = min(ivec3(x), ivec3(254));
+        vec3 f = x - vec3(i0);
+        v = vec3(mix(texelFetch(uBase32, ivec2(i0.r, 0), 0).r, texelFetch(uBase32, ivec2(i0.r + 1, 0), 0).r, f.r),
+                 mix(texelFetch(uBase32, ivec2(i0.g, 0), 0).r, texelFetch(uBase32, ivec2(i0.g + 1, 0), 0).r, f.g),
+                 mix(texelFetch(uBase32, ivec2(i0.b, 0), 0).r, texelFetch(uBase32, ivec2(i0.b + 1, 0), 0).r, f.b));
+    } else {
+        v = vec3(texture(uBase, vec2((v.r * 255.0 + 0.5) / 256.0, 0.5)).r,
+                 texture(uBase, vec2((v.g * 255.0 + 0.5) / 256.0, 0.5)).r,
+                 texture(uBase, vec2((v.b * 255.0 + 0.5) / 256.0, 0.5)).r);
+    }
     if (inside < 0.5 && uChecker > 0.5) v = vec3(0.16);
     if (inside < 0.5 && uMark > 0.5) v = vec3(1.0, 0.0, 1.0);
     oColor = vec4(v, 1.0);

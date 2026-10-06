@@ -31,7 +31,10 @@ object Native {
     external fun engineOutputSize(h: Long, params: FloatArray): IntArray
     external fun engineRender(h: Long, params: FloatArray, vx: Int, vy: Int, vw: Int, vh: Int, x: Float, y: Float, w: Float, hgt: Float)
     external fun engineRenderRegion(h: Long, params: FloatArray, pw: Int, ph: Int, x: Float, y: Float, w: Float, hgt: Float, out: ByteArray): Boolean
-    external fun engineRenderRegionHalf(h: Long, params: FloatArray, pw: Int, ph: Int, x: Float, y: Float, w: Float, hgt: Float, out: ShortArray): Boolean
+    /** 16 bit export: pw*ph*3 unsigned 16 bit values (held in shorts), display encoded. Needs [engineSetHighPrecision] first. */
+    external fun engineRenderRegion16(h: Long, params: FloatArray, pw: Int, ph: Int, x: Float, y: Float, w: Float, hgt: Float, out: ShortArray): Boolean
+    /** Float32 intermediate and output targets and curve for the 16 bit export; call before the first render. */
+    external fun engineSetHighPrecision(h: Long, on: Boolean)
     external fun engineInvalidate(h: Long)
     external fun engineSetOutputSpace(h: Long, space: Int)   // 0 sRGB, 1 Display P3
     external fun engineUpdateOverlay(h: Long, x: Int, y: Int, w: Int, hgt: Int, rgbaHalf: ShortArray)

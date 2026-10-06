@@ -19,9 +19,10 @@ inline uint16_t floatToHalf(float f) {
         if ((mant >> (shift - 1)) & 1u) h++;
         return uint16_t(sign | h);
     }
-    uint32_t h = sign | (uint32_t(exp) << 10) | (mant >> 13);
+    uint32_t h = (uint32_t(exp) << 10) | (mant >> 13);
     if (mant & 0x1000u) h++;   // round to nearest
-    return uint16_t(h);
+    if (h >= 0x7C00u) h = 0x7BFFu;   // the carry from the largest binade (65520 and up) would land on Inf: clamp to the largest finite half
+    return uint16_t(sign | h);
 }
 
 inline float halfToFloat(uint16_t h) {

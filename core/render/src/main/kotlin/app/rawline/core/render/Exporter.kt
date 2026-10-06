@@ -72,6 +72,8 @@ class Exporter(
             engine = Native.engineCreate()
             Native.engineInit(engine)?.let { throw IllegalStateException("GPU init failed: $it") }
             Native.engineSetOutputSpace(engine, if (s.colorSpace == ColorSpaceOut.DISPLAY_P3) 1 else 0)
+            // 16 bit TIFF: float32 intermediate and output targets and a float32 curve, quantised once in native code
+            if (s.format == ExportFormat.TIFF16) Native.engineSetHighPrecision(engine, true)
 
             handle = decode(photo)
             if (handle == 0L) throw IllegalStateException("Could not decode ${photo.name}")
@@ -111,24 +113,22 @@ class Exporter(
             var tw = size[0]; var th = size[1]
             if (s.longEdge in 1 until max(tw, th)) { val f = s.longEdge.toFloat() / max(tw, th); tw = max(1, (tw * f).roundToInt()); th = max(1, (th * f).roundToInt()) }
 
-            val tile = 2048
+            val tile = if (s.format == ExportFormat.TIFF16) TIFF_TILE else 2048
             val tilesX = (tw + tile - 1) / tile; val tilesY = (th + tile - 1) / tile
             var done = 0
             if (s.format == ExportFormat.TIFF16) {
                 val out = tiff ?: throw IllegalArgumentException("TIFF needs an output stream")
-                val writer = Tiff16Writer(out, tw, th, s.copyright.takeIf { s.metadata != MetadataMode.NONE })
+                val icc = if (s.colorSpace == ColorSpaceOut.DISPLAY_P3) IccProfiles.displayP3() else IccProfiles.srgb()
+                val writer = Tiff16Writer(out, tw, th, s.copyright.takeIf { s.metadata != MetadataMode.NONE }, icc)
+                val rgb = ShortArray(min(tile, tw) * min(tile, th) * 3)   // one tile of 16 bit RGB, reused
                 for (ty in 0 until tilesY) {
                     val y0 = ty * tile; val bh = min(tile, th - y0)
                     val band = ShortArray(tw * bh * 3)
                     for (tx in 0 until tilesX) {
                         if (cancelled()) return null
                         val x0 = tx * tile; val bw = min(tile, tw - x0)
-                        val half = ShortArray(bw * bh * 4)
-                        if (!Native.engineRenderRegionHalf(engine, params, bw, bh, x0.toFloat() / tw, y0.toFloat() / th, bw.toFloat() / tw, bh.toFloat() / th, half)) throw IllegalStateException("Render failed")
-                        for (y in 0 until bh) for (x in 0 until bw) {
-                            val si = (y * bw + x) * 4; val di = (y * tw + x0 + x) * 3
-                            for (c in 0 until 3) band[di + c] = (android.util.Half.toFloat(half[si + c]).coerceIn(0f, 1f) * 65535f + 0.5f).toInt().toShort()
-                        }
+                        if (!Native.engineRenderRegion16(engine, params, bw, bh, x0.toFloat() / tw, y0.toFloat() / th, bw.toFloat() / tw, bh.toFloat() / th, rgb)) throw IllegalStateException("Render failed")
+                        for (y in 0 until bh) System.arraycopy(rgb, y * bw * 3, band, (y * tw + x0) * 3, bw * 3)
                         done++; onProgress(0.4f + 0.6f * done / (tilesX * tilesY))
                     }
                     writer.writeRows(band, bh)
@@ -163,6 +163,8 @@ class Exporter(
 
     class Result(val bitmap: Bitmap?, val width: Int, val height: Int)
 
+    private companion object { const val TIFF_TILE = 1024 }   // smaller tiles keep the 16 bit band (6000 px wide: 37 MB) and tile buffers modest
+
     private fun outputSharpening(s: ExportSettings): Float {
         val base = when (s.sharpenFor) { SharpenFor.NONE -> return 0f; SharpenFor.SCREEN -> 18f; SharpenFor.PRINT -> 32f }
         return base * when (s.sharpenAmount) { SharpenAmount.LOW -> 0.6f; SharpenAmount.STANDARD -> 1f; SharpenAmount.HIGH -> 1.6f }
@@ -179,19 +181,20 @@ class Exporter(
 }
 
 /** Minimal uncompressed 16 bit RGB TIFF (little endian, one strip per call). */
-class Tiff16Writer(private val out: OutputStream, private val w: Int, private val h: Int, private val copyright: String?) {
+class Tiff16Writer(private val out: OutputStream, private val w: Int, private val h: Int, private val copyright: String?, private val icc: ByteArray? = null) {
     private var rowsWritten = 0
 
     init {
         // Header + IFD are written up front: the pixel data comes right after them.
-        val entries = 12 + (if (copyright.isNullOrEmpty()) 0 else 1)
+        val entries = 12 + (if (copyright.isNullOrEmpty()) 0 else 1) + (if (icc != null) 1 else 0)
         val ifdSize = 2 + entries * 12 + 4
         val extraStart = 8 + ifdSize
         val copy = copyright?.takeIf { it.isNotEmpty() }?.toByteArray(Charsets.US_ASCII)?.let { var b = it + 0; if (b.size % 2 == 1) b += 0; b }
         val bitsOffset = extraStart
         val resOffset = bitsOffset + 6
         val copyOffset = resOffset + 16
-        val dataStart = copyOffset + (copy?.size ?: 0)
+        val iccOffset = copyOffset + (copy?.size ?: 0)
+        val dataStart = iccOffset + (icc?.size ?: 0)   // the profile is padded to an even size by its builder (4 byte multiple)
         val b = ByteBuffer.allocate(dataStart).order(ByteOrder.LITTLE_ENDIAN)
         b.put('I'.code.toByte()).put('I'.code.toByte()).putShort(42).putInt(8)
         b.putShort(entries.toShort())
@@ -200,17 +203,25 @@ class Tiff16Writer(private val out: OutputStream, private val w: Int, private va
         e(273, 4, 1, dataStart); e(277, 3, 1, 3); e(278, 4, 1, h); e(279, 4, 1, w * h * 6)
         e(282, 5, 1, resOffset); e(283, 5, 1, resOffset + 8); e(284, 3, 1, 1)
         if (copy != null) e(33432, 2, copy.size, copyOffset)
+        if (icc != null) e(34675, 7, icc.size, iccOffset)   // InterColorProfile
         b.putInt(0)
         b.putShort(16).putShort(16).putShort(16)
         b.putInt(300).putInt(1).putInt(300).putInt(1)
         if (copy != null) b.put(copy)
+        if (icc != null) b.put(icc)
         out.write(b.array())
     }
 
     fun writeRows(rgb: ShortArray, rows: Int) {
-        val bb = ByteBuffer.allocate(rgb.size * 2).order(ByteOrder.LITTLE_ENDIAN)
-        bb.asShortBuffer().put(rgb)
-        out.write(bb.array())
+        // a 64 KB buffer instead of a second copy of the whole band (74 MB for a 6000 px wide 2048 row band)
+        val bb = ByteBuffer.allocate(64 * 1024).order(ByteOrder.LITTLE_ENDIAN)
+        var i = 0
+        while (i < rgb.size) {
+            val n = min(bb.capacity() / 2, rgb.size - i)
+            bb.clear(); bb.asShortBuffer().put(rgb, i, n)
+            out.write(bb.array(), 0, n * 2)
+            i += n
+        }
         rowsWritten += rows
     }
 

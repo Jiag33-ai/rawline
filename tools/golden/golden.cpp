@@ -136,7 +136,8 @@ int main(int argc, char **argv) {
         {"exposure", S_EXPOSURE}, {"contrast", S_CONTRAST}, {"highlights", S_HIGHLIGHTS}, {"shadows", S_SHADOWS},
         {"whites", S_WHITES}, {"blacks", S_BLACKS}, {"temp", S_TEMP}, {"tint", S_TINT}, {"vibrance", S_VIBRANCE},
         {"saturation", S_SATURATION}, {"texture", S_TEXTURE}, {"clarity", S_CLARITY}, {"dehaze", S_DEHAZE}};
-    bool autofit = false, mark = false;
+    bool autofit = false, mark = false, useMaskExposure = false;
+    float maskExposure = 0.f;
     for (int i = 5; i < argc; i++) {
         std::string a = argv[i];
         size_t eq = a.find('=');
@@ -196,6 +197,32 @@ int main(int argc, char **argv) {
             m[16] = 3; m[17] = 0; m[18] = 0; m[19] = 1; // component 1: bitmap, layer 1, add
             p[G_NUM_MASKS] = 1;
             p[kOffBlocks + kBlockFloats + S_EXPOSURE] = v;
+        } else if (k == "maskclarity") {
+            p[kOffBlocks + kBlockFloats + S_CLARITY] = v;   // clarity inside mask 0 (any mask key defines the mask)
+        } else if (k == "ghue") {
+            p[kOffBlocks + S_GRADE_GLOBAL] = v;          // global colour grade hue (0..1)
+        } else if (k == "gsat") {
+            p[kOffBlocks + S_GRADE_GLOBAL + 1] = v;      // global colour grade saturation (0..1)
+        } else if (k == "overlay") {   // flat heal patch (linear grey value v, premultiplied, alpha 1) over the left half of the source
+            const int ow = 64, oh = 64;
+            std::vector<uint16_t> ov(size_t(ow) * oh * 4, 0);
+            for (int y = 0; y < oh; y++) for (int x = 0; x < ow / 2; x++) {
+                uint16_t *d = &ov[(size_t(y) * ow + x) * 4];
+                d[0] = d[1] = d[2] = floatToHalf(v); d[3] = floatToHalf(1.f);
+            }
+            eng.setOverlay(reinterpret_cast<const uint8_t *>(ov.data()), ow, oh);
+            p[G_OVERLAY] = 1.f;
+        } else if (k == "maskexposure") {
+            maskExposure = v;   // exposure of mask 0 for the colour and luminance range masks
+        } else if (k == "maskcolor" || k == "maskluma") {   // colour range (r,g,b,range,softness in display terms) or luminance range (lo,hi,falloff)
+            float a0 = 0, a1 = 0, a2 = 0, a3 = 0, a4 = 0;
+            sscanf(a.c_str() + eq + 1, "%f,%f,%f,%f,%f", &a0, &a1, &a2, &a3, &a4);
+            float *m = p.data() + kOffMasks;
+            m[0] = 1; m[1] = 1; m[2] = 0; m[3] = 0;
+            if (k == "maskcolor") { m[4] = 4; m[8] = a0; m[9] = a1; m[10] = a2; m[11] = a3; m[12] = a4; }
+            else { m[4] = 5; m[8] = a0; m[9] = a1; m[10] = a2; }
+            p[G_NUM_MASKS] = 1;
+            useMaskExposure = true;
         } else if (k == "maskrad") {
             float *m = p.data() + kOffMasks;
             m[0] = 1; m[1] = 1; m[2] = 0; m[3] = 0;
@@ -206,6 +233,7 @@ int main(int argc, char **argv) {
             p[kOffBlocks + kBlockFloats + S_EXPOSURE] = v;
         }
     }
+    if (useMaskExposure) p[kOffBlocks + kBlockFloats + S_EXPOSURE] = maskExposure;
     fprintf(stderr, "SRC %d %d %d\n", img.width, img.height, ori);
     if (autofit) {
         fitCrop(p.data(), float(img.width), float(img.height));
@@ -222,12 +250,20 @@ int main(int argc, char **argv) {
         if (!eng.renderRegion(p.data(), W, H, {0, 0, 1, 1}, rgba.data())) { fprintf(stderr, "render gl error\n"); return 7; }
         fprintf(stderr, "render %dx%d: %.1f ms (llvmpipe, CPU)\n", W, H, now() - a);
     }
-    if (getenv("GOLDEN_HALF")) {   // float render target: values must match the 8 bit render within rounding
-        std::vector<uint16_t> hf(size_t(W) * H * 4);
-        if (!eng.renderRegion(p.data(), W, H, {0, 0, 1, 1}, nullptr, true, hf.data())) { fprintf(stderr, "half render failed\n"); return 8; }
+    if (getenv("GOLDEN_HALF")) {   // 16 bit path (float32 targets, float32 curve): must match the 8 bit render within rounding
+        eng.setHighPrecision(true);
+        std::vector<uint16_t> hf(size_t(W) * H * 3);
+        if (!eng.renderRegion16(p.data(), W, H, {0, 0, 1, 1}, hf.data())) { fprintf(stderr, "16 bit render failed\n"); return 8; }
         double maxd = 0;
-        for (size_t i = 0; i < size_t(W) * H; i++) for (int c = 0; c < 3; c++) maxd = std::max(maxd, std::abs(rl::halfToFloat(hf[i * 4 + c]) * 255.0 - rgba[i * 4 + c]));
-        fprintf(stderr, "float target max diff vs 8 bit: %.2f levels\n", maxd);
+        for (size_t i = 0; i < size_t(W) * H; i++) for (int c = 0; c < 3; c++) maxd = std::max(maxd, std::abs(hf[i * 3 + c] / 257.0 - rgba[i * 4 + c]));
+        fprintf(stderr, "16 bit target max diff vs 8 bit: %.2f levels\n", maxd);
+        if (maxd > 1.01) { fprintf(stderr, "16 bit path disagrees with the 8 bit path\n"); return 8; }
+        std::vector<uint8_t> seen(65536, 0);
+        size_t distinct = 0;
+        for (size_t i = 0; i < size_t(W) * H * 3; i++) if (!seen[hf[i]]) { seen[hf[i]] = 1; distinct++; }
+        fprintf(stderr, "16 bit distinct values: %zu\n", distinct);
+        if (distinct < 1000) { fprintf(stderr, "16 bit output has only %zu distinct values: not 16 bit\n", distinct); return 9; }
+        eng.setHighPrecision(false);
     }
     if (mark) {
         size_t bad = 0;

@@ -74,6 +74,21 @@ void proPhotoToSrgb(float out[9]) {
         for (int c = 0; c < 3; c++) out[c * 3 + r] = float(m[r * 3 + c]);
 }
 
+struct ColourMats { float srgb[9], p3[9]; };
+
+// Computed once (C++11 magic static: safe when the editor and an export thread render at the same time).
+const ColourMats &colourMats() {
+    static const ColourMats m = [] {
+        ColourMats r{};
+        proPhotoToSrgb(r.srgb);
+        // ProPhoto (D50) -> linear Display P3, column major
+        const double d[9] = {1.63277, -0.37961, -0.252809, -0.153699, 1.166619, -0.013002, 0.010388, -0.062789, 1.052053};
+        for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) r.p3[j * 3 + i] = float(d[i * 3 + j]);
+        return r;
+    }();
+    return m;
+}
+
 }  // namespace
 
 bool Engine::build(Prog &p, const char *vs, const char *fs, std::string &err) {
@@ -129,6 +144,10 @@ bool Engine::init(std::string &error) {
         for (int i = 0; i < kCurveSize; i++) id[i] = floatToHalf(i / 255.0f);
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kCurveSize, 1, GL_RED, GL_HALF_FLOAT, id.data());
     }
+    // The same table at full float precision for the 16 bit export. NEAREST so it stays complete on drivers without
+    // float32 filtering; the shader interpolates between two texelFetch reads itself.
+    baseTex32_ = makeTex2D(GL_TEXTURE_2D, GL_NEAREST);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_R32F, kCurveSize, 1);
     // 1x1 array texture until a real layer arrives.
     layersTex_ = makeTex2D(GL_TEXTURE_2D_ARRAY, GL_LINEAR);
     glTexStorage3D(GL_TEXTURE_2D_ARRAY, 1, GL_R8, kLayerTex, kLayerTex, kMaxLayers);
@@ -150,18 +169,20 @@ void Engine::ensureTarget(Target &t, int w, int h, GLenum fmt) {
     if (t.tex && t.w == w && t.h == h && t.fmt == fmt) return;
     freeTarget(t);
     t.w = w; t.h = h; t.fmt = fmt;
-    t.tex = makeTex2D(GL_TEXTURE_2D, GL_LINEAR);
+    // float32 textures are only filterable with an extension; targets are read with texelFetch or exact texel coordinates there
+    t.tex = makeTex2D(GL_TEXTURE_2D, fmt == GL_RGBA32F ? GL_NEAREST : GL_LINEAR);
     glTexStorage2D(GL_TEXTURE_2D, 1, fmt, w, h);
     glGenFramebuffers(1, &t.fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, t.fbo);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, t.tex, 0);
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) targetsOk_ = false;   // renders then report failure instead of a silent black frame
 }
 
 void Engine::release() {
     if (!ready_) return;
     for (Target *t : {&l0_, &bs_, &bl_, &bd_, &tmp_, &e_, &outT_}) freeTarget(*t);
-    GLuint texs[] = {srcTex_, blocksTex_, masksTex_, curvesTex_, layersTex_, overlayTex_, baseTex_};
-    glDeleteTextures(7, texs);
+    GLuint texs[] = {srcTex_, blocksTex_, masksTex_, curvesTex_, layersTex_, overlayTex_, baseTex_, baseTex32_};
+    glDeleteTextures(8, texs);
     glDeleteProgram(lowres_.id); glDeleteProgram(blur_.id); glDeleteProgram(main_.id); glDeleteProgram(out_.id);
     glDeleteVertexArrays(1, &vao_);
     srcTex_ = 0; srcW_ = srcH_ = 0;
@@ -234,6 +255,8 @@ void Engine::setBaseCurve(const float *lut) {
     for (int i = 0; i < kCurveSize; i++) h[i] = floatToHalf(lut[i]);
     glBindTexture(GL_TEXTURE_2D, baseTex_);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kCurveSize, 1, GL_RED, GL_HALF_FLOAT, h.data());
+    glBindTexture(GL_TEXTURE_2D, baseTex32_);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kCurveSize, 1, GL_RED, GL_FLOAT, lut);
 }
 
 void Engine::outputSize(const float *p, int &w, int &h) const {
@@ -330,10 +353,10 @@ void Engine::runAnalysis(const float *p) {
     blurPass(bd_, tmp_, true, 4.f);  blurPass(tmp_, bd_, false, 4.f);
 }
 
-void Engine::runMain(const float *p, Rect vis, int pw, int ph, Target &e, int margin) {
+void Engine::runMain(const float *p, Rect vis, int pw, int ph, Target &e, int margin, GLenum fmt) {
     int ow, oh;
     outputSize(p, ow, oh);
-    ensureTarget(e, pw + 2 * margin, ph + 2 * margin, GL_RGBA16F);
+    ensureTarget(e, pw + 2 * margin, ph + 2 * margin, fmt);
     glDisable(GL_BLEND); glDisable(GL_DEPTH_TEST); glDisable(GL_SCISSOR_TEST); glDisable(GL_CULL_FACE);
     glBindFramebuffer(GL_FRAMEBUFFER, e.fbo);
     glViewport(0, 0, e.w, e.h);
@@ -344,8 +367,9 @@ void Engine::runMain(const float *p, Rect vis, int pw, int ph, Target &e, int ma
         {GL_TEXTURE_2D, srcTex_, "uSrc"}, {GL_TEXTURE_2D, bs_.tex, "uBs"}, {GL_TEXTURE_2D, bl_.tex, "uBl"},
         {GL_TEXTURE_2D, bd_.tex, "uBd"}, {GL_TEXTURE_2D, blocksTex_, "uBlocks"}, {GL_TEXTURE_2D, masksTex_, "uMasks"},
         {GL_TEXTURE_2D, curvesTex_, "uCurves"}, {GL_TEXTURE_2D_ARRAY, layersTex_, "uLayers"}, {GL_TEXTURE_2D, overlayTex_, "uOverlay"},
+        {GL_TEXTURE_2D, baseTex_, "uBase"},
     };
-    for (int i = 0; i < 9; i++) {
+    for (int i = 0; i < 10; i++) {
         glActiveTexture(GL_TEXTURE0 + i);
         glBindTexture(binds[i].target, binds[i].tex);
         glUniform1i(glGetUniformLocation(pr, binds[i].name), i);
@@ -367,14 +391,16 @@ void Engine::runMain(const float *p, Rect vis, int pw, int ph, Target &e, int ma
     glUniform3fv(glGetUniformLocation(pr, "uLensVig"), 1, p + G_LVIG);
     glUniform3f(glGetUniformLocation(pr, "uLensFlags"), p[G_LTCA_ON], p[G_LVIG_ON], 0.f);
     glUniform1f(glGetUniformLocation(pr, "uOverlayOn"), overlayW_ > 0 ? p[G_OVERLAY] : 0.f);
+    glUniformMatrix3fv(glGetUniformLocation(pr, "uToSrgb"), 1, GL_FALSE, colourMats().srgb);   // masks compare in sRGB display terms whatever the export space
     (void)bw;
     setGeometryUniforms(pr, p);
     draw();
 }
 
-static void setOutUniforms(GLuint pr, const float *p, int pw, int ph, Rect vis, float aspect, float flip, float outLinear, int margin, int space) {
+static void setOutUniforms(GLuint pr, const float *p, int pw, int ph, Rect vis, float aspect, float flip, float hiPrec, int margin, int space) {
     glUniform1i(glGetUniformLocation(pr, "uE"), 0);
     glUniform1i(glGetUniformLocation(pr, "uBase"), 1);
+    glUniform1i(glGetUniformLocation(pr, "uBase32"), 2);
     glUniform2i(glGetUniformLocation(pr, "uMargin"), margin, margin);
     glUniform2f(glGetUniformLocation(pr, "uPx"), float(pw), float(ph));
     glUniform4fv(glGetUniformLocation(pr, "uDetail"), 1, p + G_DETAIL);
@@ -385,17 +411,8 @@ static void setOutUniforms(GLuint pr, const float *p, int pw, int ph, Rect vis, 
     glUniform1f(glGetUniformLocation(pr, "uAspect"), aspect);
     float fullPx = pw / std::max(vis.w, 1e-6f);
     glUniform1f(glGetUniformLocation(pr, "uPxScale"), fullPx / 1920.f);
-    static float msrgb[9], mp3[9];
-    static bool init = false;
-    if (!init) {
-        proPhotoToSrgb(msrgb);
-        // ProPhoto (D50) -> linear Display P3, column major
-        const double r[9] = {1.63277, -0.37961, -0.252809, -0.153699, 1.166619, -0.013002, 0.010388, -0.062789, 1.052053};
-        for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) mp3[j * 3 + i] = float(r[i * 3 + j]);
-        init = true;
-    }
-    glUniformMatrix3fv(glGetUniformLocation(pr, "uToSrgb"), 1, GL_FALSE, space == 1 ? mp3 : msrgb);
-    glUniform1f(glGetUniformLocation(pr, "uOutLinear"), outLinear);
+    glUniformMatrix3fv(glGetUniformLocation(pr, "uToSrgb"), 1, GL_FALSE, space == 1 ? colourMats().p3 : colourMats().srgb);
+    glUniform1f(glGetUniformLocation(pr, "uHiPrec"), hiPrec);
     glUniform1f(glGetUniformLocation(pr, "uChecker"), flip > 0.5f ? 1.f : 0.f);
     glUniform1f(glGetUniformLocation(pr, "uFlipY"), flip);
 }
@@ -406,7 +423,7 @@ void Engine::renderToScreen(const float *p, int vx, int vy, int vw, int vh, Rect
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
     uploadTables(p);
     runAnalysis(p);
-    runMain(p, vis, vw, vh, e_, kMargin);
+    runMain(p, vis, vw, vh, e_, kMargin, GL_RGBA16F);
     glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
     glViewport(vx, vy, vw, vh);
     glUseProgram(out_.id);
@@ -414,22 +431,21 @@ void Engine::renderToScreen(const float *p, int vx, int vy, int vw, int vh, Rect
     glBindTexture(GL_TEXTURE_2D, e_.tex);
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, baseTex_);
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, baseTex32_);
     int ow, oh;
     outputSize(p, ow, oh);
     setOutUniforms(out_.id, p, vw, vh, vis, float(ow) / oh, 1.f, 0.f, kMargin, 0);
     draw();
 }
 
-bool Engine::renderRegion(const float *p, int pw, int ph, Rect vis, uint8_t *rgba, bool linearHalfOut, uint16_t *halfOut) {
-    if (!hasSource()) return false;
-    while (glGetError() != GL_NO_ERROR) {}
-    GLint prevFbo = 0, prevVp[4];
-    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
-    glGetIntegerv(GL_VIEWPORT, prevVp);
+// Draws the output pass into outT_ (RGBA8, or RGBA32F in high precision mode) and leaves outT_ bound for reading.
+bool Engine::drawOutput(const float *p, int pw, int ph, Rect vis) {
+    targetsOk_ = true;
     uploadTables(p);
     runAnalysis(p);
-    runMain(p, vis, pw, ph, e_, kMargin);
-    ensureTarget(outT_, pw, ph, linearHalfOut ? GL_RGBA16F : GL_RGBA8);
+    runMain(p, vis, pw, ph, e_, kMargin, hiPrec_ ? GL_RGBA32F : GL_RGBA16F);
+    ensureTarget(outT_, pw, ph, hiPrec_ ? GL_RGBA32F : GL_RGBA8);
     glBindFramebuffer(GL_FRAMEBUFFER, outT_.fbo);
     glViewport(0, 0, pw, ph);
     glUseProgram(out_.id);
@@ -437,22 +453,56 @@ bool Engine::renderRegion(const float *p, int pw, int ph, Rect vis, uint8_t *rgb
     glBindTexture(GL_TEXTURE_2D, e_.tex);
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, baseTex_);
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, baseTex32_);
     int ow, oh;
     outputSize(p, ow, oh);
-    setOutUniforms(out_.id, p, pw, ph, vis, float(ow) / oh, 0.f, linearHalfOut ? 1.f : 0.f, kMargin, outputSpace_);
+    setOutUniforms(out_.id, p, pw, ph, vis, float(ow) / oh, 0.f, hiPrec_ ? 1.f : 0.f, kMargin, outputSpace_);
     glUniform1f(glGetUniformLocation(out_.id, "uMark"), debugOutside_ ? 1.f : 0.f);
     draw();
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    if (linearHalfOut) {
-        // read as float (always valid for a float attachment) and pack to half for the caller
-        std::vector<float> f(size_t(pw) * ph * 4);
-        glReadPixels(0, 0, pw, ph, GL_RGBA, GL_FLOAT, f.data());
-        for (size_t i = 0; i < f.size(); i++) halfOut[i] = floatToHalf(f[i]);
-    }
-    else glReadPixels(0, 0, pw, ph, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    return targetsOk_;
+}
+
+bool Engine::renderRegion(const float *p, int pw, int ph, Rect vis, uint8_t *rgba) {
+    if (!hasSource() || hiPrec_) return false;
+    drainErrors();
+    GLint prevFbo = 0, prevVp[4];
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+    glGetIntegerv(GL_VIEWPORT, prevVp);
+    bool ok = drawOutput(p, pw, ph, vis);
+    if (ok) glReadPixels(0, 0, pw, ph, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
     glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
     glViewport(prevVp[0], prevVp[1], prevVp[2], prevVp[3]);
-    return glGetError() == GL_NO_ERROR;
+    return ok && glGetError() == GL_NO_ERROR;
+}
+
+// 16 bit export: float render targets end to end, quantised once here (no half float step, no second conversion in Kotlin).
+bool Engine::renderRegion16(const float *p, int pw, int ph, Rect vis, uint16_t *rgb) {
+    if (!hasSource() || !hiPrec_) return false;
+    drainErrors();
+    GLint prevFbo = 0, prevVp[4];
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+    glGetIntegerv(GL_VIEWPORT, prevVp);
+    bool ok = drawOutput(p, pw, ph, vis);
+    if (ok) {
+        const int rowsPer = std::max(1, std::min(ph, (1 << 20) / std::max(pw, 1)));   // about 16 MB of floats at a time instead of the whole tile
+        std::vector<float> f(size_t(pw) * rowsPer * 4);
+        for (int y0 = 0; y0 < ph; y0 += rowsPer) {
+            int rows = std::min(rowsPer, ph - y0);
+            glReadPixels(0, y0, pw, rows, GL_RGBA, GL_FLOAT, f.data());
+            for (size_t i = 0, n = size_t(pw) * rows; i < n; i++) {
+                for (int c = 0; c < 3; c++) {
+                    float v = f[i * 4 + c];
+                    v = !(v >= 0.f) ? 0.f : v > 1.f ? 1.f : v;   // NaN and negatives to 0
+                    rgb[(size_t(y0) * pw + i) * 3 + c] = uint16_t(v * 65535.f + 0.5f);
+                }
+            }
+        }
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
+    glViewport(prevVp[0], prevVp[1], prevVp[2], prevVp[3]);
+    return ok && glGetError() == GL_NO_ERROR;
 }
 
 }  // namespace rl

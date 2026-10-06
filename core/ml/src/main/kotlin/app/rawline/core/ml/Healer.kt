@@ -13,6 +13,7 @@ import app.rawline.core.model.HealOp
 import app.rawline.core.render.EditorSession
 import app.rawline.core.render.Geo
 import app.rawline.core.render.HealOverlay
+import app.rawline.core.render.RenderParams
 import java.nio.ByteBuffer
 import kotlin.math.abs
 import kotlin.math.max
@@ -76,9 +77,9 @@ class Healer(
         try {
             val t0 = System.nanoTime()
             val fh = Geo.frameHeightPx(s.geometry, session.orientationValue, sw, sh)
-            val pts = ArrayList<FloatArray>()
-            var i = 0
-            while (i + 1 < stroke.points.size) { pts.add(Geo.frameToSource(stroke.points[i], stroke.points[i + 1], s.geometry, s.optics, session.orientationValue, sw, sh)); i += 2 }
+            // the shader warps the frame through the lens profile polynomial before it samples the source, so strokes must be placed the same way
+            val lensDist = RenderParams.lensDistFor(s, session.lens)
+            val pts = HealGeometry.strokeToSource(stroke.points, s, session.orientationValue, sw, sh, lensDist)
             if (pts.isEmpty() || pts.first()[2] < 0.5f) return null
             val radius = stroke.size * fh / 2f   // source px
             var minX = 1f; var minY = 1f; var maxX = 0f; var maxY = 0f
@@ -109,7 +110,7 @@ class Healer(
                 "remove" -> aiPatch(orig, mask, pw, ph)
                 else -> {
                     val src = source ?: return null
-                    val sp = Geo.frameToSource(src.first, src.second, s.geometry, s.optics, session.orientationValue, sw, sh)
+                    val sp = Geo.frameToSource(src.first, src.second, s.geometry, s.optics, session.orientationValue, sw, sh, lensDist)
                     val dx = sp[0] - pts[0][0]; val dy = sp[1] - pts[0][1]
                     val rx = (region.x + dx).coerceIn(0f, 1f - region.w); val ry = (region.y + dy).coerceIn(0f, 1f - region.h)
                     val srcImg = session.renderSource(rx, ry, region.w, region.h, pw, ph) ?: return null
@@ -198,5 +199,16 @@ class Healer(
     private fun grow(m: FloatArray, w: Int, h: Int, r: Int): FloatArray {
         val b = GuidedFilter.box(m, w, h, r)
         return FloatArray(w * h) { if (b[it] > 0.02f) 1f else 0f }
+    }
+}
+
+/** Frame to source mapping for repair strokes: the same warp the shader applies, so a stroke lands on the object the user touched. */
+internal object HealGeometry {
+    /** One (u, v, inside) triple per point of [points] (x, y pairs in the frame). */
+    fun strokeToSource(points: List<Float>, recipe: app.rawline.core.model.EditRecipe, orientation: Int, srcW: Int, srcH: Int, lensDist: FloatArray?): List<FloatArray> {
+        val out = ArrayList<FloatArray>(points.size / 2)
+        var i = 0
+        while (i + 1 < points.size) { out.add(Geo.frameToSource(points[i], points[i + 1], recipe.geometry, recipe.optics, orientation, srcW, srcH, lensDist)); i += 2 }
+        return out
     }
 }

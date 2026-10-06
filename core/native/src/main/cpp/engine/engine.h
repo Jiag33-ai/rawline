@@ -32,8 +32,14 @@ public:
     /** Draws the visible region into the current framebuffer inside the given viewport. */
     void renderToScreen(const float *params, int vx, int vy, int vw, int vh, Rect vis);
 
-    /** Renders a region into an RGBA8 buffer (top row first). Used for exports and tests. */
-    bool renderRegion(const float *params, int pw, int ph, Rect vis, uint8_t *rgba, bool linearHalfOut = false, uint16_t *halfOut = nullptr);
+    /** Renders a region into an RGBA8 buffer (top row first). Used for exports and tests. Not available in high precision mode. */
+    bool renderRegion(const float *params, int pw, int ph, Rect vis, uint8_t *rgba);
+
+    /** High precision mode only: renders a region into 16 bit RGB (pw * ph * 3 values, top row first), display encoded, quantised once from float32. */
+    bool renderRegion16(const float *params, int pw, int ph, Rect vis, uint16_t *rgb);
+
+    /** Float32 intermediate and output targets plus a float32 base curve (16 bit TIFF export). Set before the first render. */
+    void setHighPrecision(bool on) { hiPrec_ = on; }
 
     /** 0 = sRGB, 1 = Display P3. */
     void setOutputSpace(int space) { outputSpace_ = space; }
@@ -52,13 +58,15 @@ private:
     void freeTarget(Target &t);
     void uploadTables(const float *params);
     void runAnalysis(const float *params);
-    void runMain(const float *params, Rect vis, int pw, int ph, Target &e, int margin);
+    void runMain(const float *params, Rect vis, int pw, int ph, Target &e, int margin, GLenum fmt);
+    bool drawOutput(const float *params, int pw, int ph, Rect vis);
+    static void drainErrors() { int guard = 0; while (glGetError() != GL_NO_ERROR && ++guard < 16) {} }
     void setGeometryUniforms(GLuint prog, const float *params);
     void draw();
 
     Prog lowres_, blur_, main_, out_;
     GLuint vao_ = 0;
-    GLuint srcTex_ = 0, blocksTex_ = 0, masksTex_ = 0, curvesTex_ = 0, layersTex_ = 0, overlayTex_ = 0, baseTex_ = 0;
+    GLuint srcTex_ = 0, blocksTex_ = 0, masksTex_ = 0, curvesTex_ = 0, layersTex_ = 0, overlayTex_ = 0, baseTex_ = 0, baseTex32_ = 0;
     Target l0_, bs_, bl_, bd_, tmp_, e_, outT_;
     int srcW_ = 0, srcH_ = 0, srcLevels_ = 1;
     int overlayW_ = 0;
@@ -67,6 +75,8 @@ private:
     bool ready_ = false;
     int outputSpace_ = 0;
     bool debugOutside_ = false;
+    bool hiPrec_ = false;
+    bool targetsOk_ = true;
 };
 
 }  // namespace rl
