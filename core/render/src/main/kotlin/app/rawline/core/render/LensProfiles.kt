@@ -2,7 +2,6 @@ package app.rawline.core.render
 
 import android.content.Context
 import org.xmlpull.v1.XmlPullParser
-import kotlin.math.abs
 import kotlin.math.ln
 
 /** What the shader needs to undo a lens's distortion, lateral chromatic aberration and vignetting. */
@@ -15,12 +14,13 @@ class LensCorrection(
 
 /**
  * Lens profiles from the lensfun database (data only, parsed here; the lensfun library itself is not used). The shipped file
- * holds the L-mount lenses (Lumix S, Sigma, Leica). Calibrations are interpolated by focal length.
+ * holds the L-mount lenses (Lumix S, Sigma, Leica). Distortion and chromatic aberration are interpolated by focal length, vignetting
+ * by focal length and aperture (see [interpolateVignetting]).
  */
 class LensProfiles private constructor(private val lenses: List<Lens>) {
     private class Dist(val focal: Float, val p: FloatArray)
     private class Tca(val focal: Float, val v: FloatArray)
-    private class Vig(val focal: Float, val aperture: Float, val distance: Float, val k: FloatArray)
+    internal class Vig(val focal: Float, val aperture: Float, val distance: Float, val k: FloatArray)
     private class Lens(val maker: String, val model: String, val dist: List<Dist>, val tca: List<Tca>, val vig: List<Vig>)
 
     private fun norm(s: String) = s.lowercase().replace(Regex("[^a-z0-9]"), "")
@@ -32,7 +32,7 @@ class LensProfiles private constructor(private val lenses: List<Lens>) {
             ?: lenses.firstOrNull { val m = norm(it.model); m.length > 8 && (e.contains(m) || m.contains(e)) }
             ?: bySignature(exifLens)
             ?: return null
-        return LensCorrection(l.model, interpDist(l.dist, focal), interpTca(l.tca, focal), nearestVig(l.vig, focal, aperture))
+        return LensCorrection(l.model, interpDist(l.dist, focal), interpTca(l.tca, focal), interpVig(l.vig, focal, aperture))
     }
 
     /** "LUMIX S 20-60/F3.5-5.6", "Lumix S 20-60mm f/3.5-5.6" and the like differ in punctuation: match on the numbers and a shared brand word. */
@@ -59,14 +59,39 @@ class LensProfiles private constructor(private val lenses: List<Lens>) {
     private fun interpDist(d: List<Dist>, focal: Float): FloatArray? = bracket(d, focal) { it.focal }?.let { (a, b, t) -> lerpArr(a.p, b.p, t) }
     private fun interpTca(d: List<Tca>, focal: Float): FloatArray? = bracket(d, focal) { it.focal }?.let { (a, b, t) -> lerpArr(a.v, b.v, t) }
 
-    private fun nearestVig(v: List<Vig>, focal: Float, aperture: Float): FloatArray? {
-        if (v.isEmpty()) return null
-        val far = v.filter { it.distance >= 100f }.ifEmpty { v }
-        return far.minByOrNull { abs(ln(focal / it.focal.coerceAtLeast(1f))) * 2f + abs(ln(aperture.coerceAtLeast(1f) / it.aperture.coerceAtLeast(1f))) }?.k
-    }
+    private fun interpVig(v: List<Vig>, focal: Float, aperture: Float): FloatArray? = interpolateVignetting(v, focal, aperture)
 
     companion object {
         @Volatile private var instance: LensProfiles? = null
+
+        /**
+         * Vignetting coefficients (k1 k2 k3 of the 'pa' model) for a focal length and aperture, interpolated between the calibrations:
+         * linear in focal length across the neighbouring calibrated focal lengths, and, at each of those, linear in log2 aperture
+         * across the neighbouring calibrated apertures. Outside the calibrated range the nearest calibration is used (no
+         * extrapolation). The pa model's gain at a radius is linear in k1 k2 k3, so interpolating them interpolates the gain too.
+         * Only calibrations focused far away (distance 100 or more) are used when there are any; at equal focal and aperture the
+         * one with the largest distance wins. The old code took the nearest calibration, so the correction jumped half way between
+         * calibrated focal lengths (for the 20 to 60 zoom, k1 -0.87 to -0.73 between 20 and 30 mm).
+         */
+        internal fun interpolateVignetting(v: List<Vig>, focal: Float, aperture: Float): FloatArray? {
+            if (v.isEmpty()) return null
+            val far = v.filter { it.distance >= 100f }.ifEmpty { v }
+            val ap = ln(aperture.coerceAtLeast(1f))
+            fun lerp(a: FloatArray, b: FloatArray, t: Float) = FloatArray(a.size) { a[it] + (b[it] - a[it]) * t }
+            // one coefficient set per calibrated aperture at this focal length, interpolated in log aperture
+            fun atFocal(f: Float): FloatArray {
+                val perAperture = far.filter { it.focal == f }.groupBy { it.aperture }.map { (_, g) -> g.maxByOrNull { it.distance }!! }.sortedBy { it.aperture }
+                val s = perAperture
+                val lo = s.lastOrNull { ln(it.aperture.coerceAtLeast(1f)) <= ap } ?: return s.first().k
+                val hi = s.firstOrNull { ln(it.aperture.coerceAtLeast(1f)) >= ap } ?: return s.last().k
+                val a0 = ln(lo.aperture.coerceAtLeast(1f)); val a1 = ln(hi.aperture.coerceAtLeast(1f))
+                return if (a1 - a0 <= 1e-6f) lo.k else lerp(lo.k, hi.k, (ap - a0) / (a1 - a0))
+            }
+            val focals = far.map { it.focal }.distinct().sorted()
+            val lo = focals.lastOrNull { it <= focal } ?: return atFocal(focals.first())
+            val hi = focals.firstOrNull { it >= focal } ?: return atFocal(focals.last())
+            return if (hi - lo <= 1e-6f) atFocal(lo) else lerp(atFocal(lo), atFocal(hi), (focal - lo) / (hi - lo))
+        }
 
         fun get(context: Context): LensProfiles = instance ?: synchronized(this) {
             instance ?: runCatching { context.assets.open("lensfun/lenses_lmount.xml").use { parse(it) } }.getOrDefault(LensProfiles(emptyList())).also { instance = it }
