@@ -12,6 +12,7 @@
 #include <cstring>
 #include <map>
 #include <string>
+#include <vector>
 
 #include "engine/base_curve.h"
 #include "engine/engine.h"
@@ -84,6 +85,162 @@ static void fitCrop(float *p, float srcW, float srcH) {
     p[G_CROP] = mx - w * lo / 2; p[G_CROP + 1] = my - h * lo / 2; p[G_CROP + 2] = w * lo; p[G_CROP + 3] = h * lo;
 }
 
+// ---- Scene keys: the key=value arguments of the harness, as tables ----
+// One table per topic. A key is either a plain parameter slot ({"name", index}: the value is written to p[index]) or a handler
+// ({"name", function}) for anything that needs more than one write. Tasks add their keys to the table of their own topic, or add a
+// new topic table and list it in kTopics (the one place marked NEW TOPIC below), so two independent tasks never edit the same lines.
+// A key that appears in two tables is an error at start up. An unknown key on the command line is ignored.
+struct Scene {                         // what a key handler may change
+    std::vector<float> &p;
+    Engine &eng;
+    bool autofit = false, mark = false, useMaskExposure = false;
+    int look = 2;                      // look version (docs/COLOUR.md): 1 reproduces every edit saved before looks existed
+    float maskExposure = 0.f;
+};
+using KeyFn = void (*)(Scene &s, const char *key, float v, const char *text);
+struct KeyDef {
+    const char *name; int index; KeyFn fn;
+    KeyDef(const char *n, int i) : name(n), index(i), fn(nullptr) {}
+    KeyDef(const char *n, KeyFn f) : name(n), index(-1), fn(f) {}
+};
+
+// Mask 0's header, the way the app writes it: one component, amount 1
+static float *beginMask(Scene &s) { float *m = s.p.data() + kOffMasks; m[0] = 1; m[1] = 1; m[2] = 0; m[3] = 0; return m; }
+
+// maskcolor and maskluma: the same handler, told apart by the key
+static void maskRange(Scene &s, const char *key, float, const char *text) {
+    float a0 = 0, a1 = 0, a2 = 0, a3 = 0, a4 = 0;
+    sscanf(text, "%f,%f,%f,%f,%f", &a0, &a1, &a2, &a3, &a4);
+    float *m = beginMask(s);
+    if (!strcmp(key, "maskcolor")) { m[4] = 4; m[8] = a0; m[9] = a1; m[10] = a2; m[11] = a3; m[12] = a4; }
+    else { m[4] = 5; m[8] = a0; m[9] = a1; m[10] = a2; }
+    s.p[G_NUM_MASKS] = 1;
+    s.useMaskExposure = true;
+}
+
+// -- tone --
+static const std::vector<KeyDef> kToneKeys = {
+    {"exposure", kOffBlocks + S_EXPOSURE}, {"contrast", kOffBlocks + S_CONTRAST}, {"highlights", kOffBlocks + S_HIGHLIGHTS},
+    {"shadows", kOffBlocks + S_SHADOWS}, {"whites", kOffBlocks + S_WHITES}, {"blacks", kOffBlocks + S_BLACKS},
+    {"curve", [](Scene &s, const char *, float v, const char *) {   // master tone curve: an S (contrast up), switched on through the block flag exactly as the app does
+        s.p[kOffBlocks + 60] = 1.f;
+        for (int i = 0; i < kCurveSize; i++) { float x = i / 255.f; s.p[kOffCurves + i] = std::min(1.f, std::max(0.f, (getenv("CURVE_SQ") ? x * x : getenv("CURVE_LIN") ? x * v : x - 0.15f * v * float(std::sin(6.2831853 * x))))); }
+    }},
+};
+
+// -- colour --
+static const std::vector<KeyDef> kColourKeys = {
+    {"temp", kOffBlocks + S_TEMP}, {"tint", kOffBlocks + S_TINT}, {"vibrance", kOffBlocks + S_VIBRANCE}, {"saturation", kOffBlocks + S_SATURATION},
+    {"ghue", kOffBlocks + S_GRADE_GLOBAL},         // global colour grade hue (0..1)
+    {"gsat", kOffBlocks + S_GRADE_GLOBAL + 1},     // global colour grade saturation (0..1)
+};
+
+// -- local contrast, detail and effects --
+static const std::vector<KeyDef> kDetailKeys = {
+    {"texture", kOffBlocks + S_TEXTURE}, {"clarity", kOffBlocks + S_CLARITY}, {"dehaze", kOffBlocks + S_DEHAZE},
+    {"sharpen", G_DETAIL}, {"nrl", G_NR}, {"nrc", G_NR + 1}, {"vig", G_FX}, {"grain", G_FX2},
+};
+
+// -- masks and layers (each mask key defines mask 0) --
+static const std::vector<KeyDef> kMaskKeys = {
+    {"maskexp", [](Scene &s, const char *, float v, const char *) {   // linear gradient mask 0 with exposure delta
+        float *m = beginMask(s);                                          // header: 1 component, amount 1
+        m[4] = 1; m[5] = 0; m[6] = 0; m[7] = 0;                         // comp: type linear, op add
+        m[8] = 0.2f; m[9] = 0.5f; m[10] = 0.8f; m[11] = 0.5f;           // start / end
+        s.p[G_NUM_MASKS] = 1;
+        s.p[kOffBlocks + kBlockFloats + S_EXPOSURE] = v;
+    }},
+    {"masklayer", [](Scene &s, const char *, float v, const char *) {   // bitmap mask: disc near the top left of the full frame
+        const int lw = 512, lh = 341;
+        std::vector<uint8_t> a(lw * lh, 0);
+        for (int y = 0; y < lh; y++) for (int x = 0; x < lw; x++) { float dx = x - 130.f, dy = y - 90.f; if (dx * dx + dy * dy < 80.f * 80.f) a[y * lw + x] = 255; }
+        s.eng.setLayer(0, a.data(), lw, lh);
+        float *m = beginMask(s);
+        m[4] = 3; m[5] = 0; m[6] = 0; m[7] = 0;   // type bitmap, layer 0
+        s.p[G_NUM_MASKS] = 1;
+        s.p[kOffBlocks + kBlockFloats + S_EXPOSURE] = v;
+    }},
+    {"masklayers", [](Scene &s, const char *, float v, const char *) {   // two bitmap layers of different sizes in one mask: both discs must show (upload of the second must not wipe the first)
+        const int aw = 512, ah = 341, bw = 200, bh = 300;
+        std::vector<uint8_t> a(aw * ah, 0), b(bw * bh, 0);
+        for (int y = 0; y < ah; y++) for (int x = 0; x < aw; x++) { float dx = x - 130.f, dy = y - 90.f; if (dx * dx + dy * dy < 80.f * 80.f) a[y * aw + x] = 255; }
+        for (int y = 0; y < bh; y++) for (int x = 0; x < bw; x++) { float dx = x - 130.f, dy = y - 200.f; if (dx * dx + dy * dy < 60.f * 60.f) b[y * bw + x] = 255; }
+        s.eng.setLayer(0, a.data(), aw, ah);
+        s.eng.setLayer(1, b.data(), bw, bh);
+        float *m = s.p.data() + kOffMasks;
+        m[0] = 2; m[1] = 1; m[2] = 0; m[3] = 0;
+        m[4] = 3; m[5] = 0; m[6] = 0; m[7] = 0;     // component 0: bitmap, layer 0
+        m[16] = 3; m[17] = 0; m[18] = 0; m[19] = 1; // component 1: bitmap, layer 1, add
+        s.p[G_NUM_MASKS] = 1;
+        s.p[kOffBlocks + kBlockFloats + S_EXPOSURE] = v;
+    }},
+    {"maskclarity", kOffBlocks + kBlockFloats + S_CLARITY},   // clarity inside mask 0 (any mask key defines the mask)
+    {"maskexposure", [](Scene &s, const char *, float v, const char *) { s.maskExposure = v; }},   // exposure of mask 0 for the colour and luminance range masks
+    {"maskcolor", maskRange},   // colour range (r,g,b,range,softness in display terms)
+    {"maskluma", maskRange},    // luminance range (lo,hi,falloff)
+    {"maskrad", [](Scene &s, const char *, float v, const char *) {
+        float *m = beginMask(s);
+        m[4] = 2; m[5] = 0; m[6] = 0; m[7] = 0;
+        m[8] = 0.5f; m[9] = 0.5f; m[10] = 0.35f; m[11] = 0.35f;
+        m[12] = 0; m[13] = 0.5f; m[14] = 0; m[15] = 0;
+        s.p[G_NUM_MASKS] = 1;
+        s.p[kOffBlocks + kBlockFloats + S_EXPOSURE] = v;
+    }},
+    {"overlay", [](Scene &s, const char *, float v, const char *) {   // flat heal patch (linear grey value v, premultiplied, alpha 1) over the left half of the source
+        const int ow = 64, oh = 64;
+        std::vector<uint16_t> ov(size_t(ow) * oh * 4, 0);
+        for (int y = 0; y < oh; y++) for (int x = 0; x < ow / 2; x++) {
+            uint16_t *d = &ov[(size_t(y) * ow + x) * 4];
+            d[0] = d[1] = d[2] = floatToHalf(v); d[3] = floatToHalf(1.f);
+        }
+        s.eng.setOverlay(reinterpret_cast<const uint8_t *>(ov.data()), ow, oh);
+        s.p[G_OVERLAY] = 1.f;
+    }},
+};
+
+// -- geometry (crop, rotation, keystone) --
+static const std::vector<KeyDef> kGeometryKeys = {
+    {"angle", G_GEO}, {"cropx", G_CROP}, {"cropw", G_CROP + 2}, {"ksv", G_GEO2}, {"ksh", G_GEO2 + 1},
+    {"autofit", [](Scene &s, const char *, float v, const char *) { s.autofit = v > 0.5f; }},
+};
+
+// -- lens profile (optics) --
+static const std::vector<KeyDef> kOpticsKeys = {
+    {"optvig", G_GEO2 + 3},   // manual lens vignetting correction slider (already in shader units)
+    {"lensfill", [](Scene &s, const char *, float v, const char *) {   // strong synthetic profile (poly3, k1 = 0.06) that samples beyond the frame edge without a crop fit
+        s.p[G_LDIST] = 1.f - 0.06f; s.p[G_LDIST + 2] = 0.06f; s.p[G_LDIST_ON] = v;
+    }},
+    {"lens", [](Scene &s, const char *, float v, const char *) {   // synthetic Lumix S 20-60 @ 20 mm style profile: ptlens a b c, strong vignetting, TCA
+        auto &p = s.p;
+        p[G_LDIST] = 1.f - 0.02161f + 0.03781f + 0.08584f; p[G_LDIST + 1] = -0.08584f; p[G_LDIST + 2] = -0.03781f; p[G_LDIST + 3] = 0.02161f; p[G_LDIST_ON] = v;
+        p[G_LTCA] = 1.0005613f; p[G_LTCA + 2] = -0.0002213f; p[G_LTCA + 3] = 0.9996489f; p[G_LTCA + 5] = 0.0002051f; p[G_LTCA_ON] = v;
+        p[G_LVIG] = -0.8703127f; p[G_LVIG + 1] = 0.1721043f; p[G_LVIG + 2] = -0.1557695f; p[G_LVIG_ON] = v;
+    }},
+};
+
+// -- look version (docs/COLOUR.md): 1 or 2 (default 2) --
+static const std::vector<KeyDef> kLookKeys = {
+    {"look", [](Scene &s, const char *, float v, const char *) { s.look = int(v); }},
+};
+
+// -- debug --
+static const std::vector<KeyDef> kDebugKeys = {
+    {"mark", [](Scene &s, const char *, float v, const char *) { s.mark = v > 0.5f; }},   // paint pixels outside the image magenta
+};
+
+// NEW TOPIC: add its table above and list it here. (Studio has its own harness, tools/golden/studio_golden.cpp.)
+static const std::vector<const std::vector<KeyDef> *> kTopics = {
+    &kToneKeys, &kColourKeys, &kDetailKeys, &kMaskKeys, &kGeometryKeys, &kOpticsKeys, &kLookKeys, &kDebugKeys,
+};
+
+static std::map<std::string, const KeyDef *> buildKeyIndex() {
+    std::map<std::string, const KeyDef *> index;
+    for (const auto *topic : kTopics) for (const KeyDef &k : *topic) {
+        if (!index.emplace(k.name, &k).second) { fprintf(stderr, "scene key '%s' is defined in two tables\n", k.name); exit(2); }
+    }
+    return index;
+}
+
 int main(int argc, char **argv) {
     if (argc < 4) { fprintf(stderr, "usage\n"); return 2; }
     auto getPD = (PFNEGLGETPLATFORMDISPLAYEXTPROC)eglGetProcAddress("eglGetPlatformDisplayEXT");
@@ -133,112 +290,23 @@ int main(int argc, char **argv) {
     // orientation
     int ori = img.orientation;
     p[G_GEO + 3] = ori == 6 ? 1 : ori == 3 ? 2 : ori == 8 ? 3 : 0;
-    std::map<std::string, int> blockSlots = {
-        {"exposure", S_EXPOSURE}, {"contrast", S_CONTRAST}, {"highlights", S_HIGHLIGHTS}, {"shadows", S_SHADOWS},
-        {"whites", S_WHITES}, {"blacks", S_BLACKS}, {"temp", S_TEMP}, {"tint", S_TINT}, {"vibrance", S_VIBRANCE},
-        {"saturation", S_SATURATION}, {"texture", S_TEXTURE}, {"clarity", S_CLARITY}, {"dehaze", S_DEHAZE}};
-    bool autofit = false, mark = false, useMaskExposure = false;
-    int look = 2;
-    float maskExposure = 0.f;
+    Scene sc{p, eng};
+    const std::map<std::string, const KeyDef *> keys = buildKeyIndex();
     for (int i = 5; i < argc; i++) {
         std::string a = argv[i];
         size_t eq = a.find('=');
         if (eq == std::string::npos) continue;
         std::string k = a.substr(0, eq);
-        float v = float(atof(a.c_str() + eq + 1));
-        if (blockSlots.count(k)) p[kOffBlocks + blockSlots[k]] = v;
-        else if (k == "look") look = int(v);
-        else if (k == "sharpen") p[G_DETAIL] = v;
-        else if (k == "nrl") p[G_NR] = v;
-        else if (k == "nrc") p[G_NR + 1] = v;
-        else if (k == "optvig") p[G_GEO2 + 3] = v;   // manual lens vignetting correction slider (already in shader units)
-        else if (k == "cropx") p[G_CROP] = v;
-        else if (k == "vig") p[G_FX] = v;
-        else if (k == "angle") p[G_GEO] = v;
-        else if (k == "grain") p[G_FX2] = v;
-        else if (k == "cropw") p[G_CROP + 2] = v;
-        else if (k == "ksv") p[G_GEO2] = v;
-        else if (k == "ksh") p[G_GEO2 + 1] = v;
-        else if (k == "autofit") autofit = v > 0.5f;
-        else if (k == "mark") mark = v > 0.5f;
-        else if (k == "lensfill") {   // strong synthetic profile (poly3, k1 = 0.06) that samples beyond the frame edge without a crop fit
-            p[G_LDIST] = 1.f - 0.06f; p[G_LDIST + 2] = 0.06f; p[G_LDIST_ON] = v;
-        }
-        else if (k == "lens") {   // synthetic Lumix S 20-60 @ 20 mm style profile: ptlens a b c, strong vignetting, TCA
-            p[G_LDIST] = 1.f - 0.02161f + 0.03781f + 0.08584f; p[G_LDIST + 1] = -0.08584f; p[G_LDIST + 2] = -0.03781f; p[G_LDIST + 3] = 0.02161f; p[G_LDIST_ON] = v;
-            p[G_LTCA] = 1.0005613f; p[G_LTCA + 2] = -0.0002213f; p[G_LTCA + 3] = 0.9996489f; p[G_LTCA + 5] = 0.0002051f; p[G_LTCA_ON] = v;
-            p[G_LVIG] = -0.8703127f; p[G_LVIG + 1] = 0.1721043f; p[G_LVIG + 2] = -0.1557695f; p[G_LVIG_ON] = v;
-        }
-        else if (k == "curve") {   // master tone curve: an S (contrast up), switched on through the block flag exactly as the app does
-            p[kOffBlocks + 60] = 1.f;
-            for (int i = 0; i < kCurveSize; i++) { float x = i / 255.f; p[kOffCurves + i] = std::min(1.f, std::max(0.f, (getenv("CURVE_SQ") ? x * x : getenv("CURVE_LIN") ? x * v : x - 0.15f * v * float(std::sin(6.2831853 * x))))); }
-        }
-        else if (k == "maskexp") {   // linear gradient mask 0 with exposure delta
-            float *m = p.data() + kOffMasks;
-            m[0] = 1; m[1] = 1; m[2] = 0; m[3] = 0;                 // header: 1 component, amount 1
-            m[4] = 1; m[5] = 0; m[6] = 0; m[7] = 0;                 // comp: type linear, op add
-            m[8] = 0.2f; m[9] = 0.5f; m[10] = 0.8f; m[11] = 0.5f;   // start / end
-            p[G_NUM_MASKS] = 1;
-            p[kOffBlocks + kBlockFloats + S_EXPOSURE] = v;
-        } else if (k == "masklayer") {   // bitmap mask: disc near the top left of the full frame
-            const int lw = 512, lh = 341;
-            std::vector<uint8_t> a(lw * lh, 0);
-            for (int y = 0; y < lh; y++) for (int x = 0; x < lw; x++) { float dx = x - 130.f, dy = y - 90.f; if (dx * dx + dy * dy < 80.f * 80.f) a[y * lw + x] = 255; }
-            eng.setLayer(0, a.data(), lw, lh);
-            float *m = p.data() + kOffMasks;
-            m[0] = 1; m[1] = 1; m[2] = 0; m[3] = 0;
-            m[4] = 3; m[5] = 0; m[6] = 0; m[7] = 0;   // type bitmap, layer 0
-            p[G_NUM_MASKS] = 1;
-            p[kOffBlocks + kBlockFloats + S_EXPOSURE] = v;
-        } else if (k == "masklayers") {   // two bitmap layers of different sizes in one mask: both discs must show (upload of the second must not wipe the first)
-            const int aw = 512, ah = 341, bw = 200, bh = 300;
-            std::vector<uint8_t> a(aw * ah, 0), b(bw * bh, 0);
-            for (int y = 0; y < ah; y++) for (int x = 0; x < aw; x++) { float dx = x - 130.f, dy = y - 90.f; if (dx * dx + dy * dy < 80.f * 80.f) a[y * aw + x] = 255; }
-            for (int y = 0; y < bh; y++) for (int x = 0; x < bw; x++) { float dx = x - 130.f, dy = y - 200.f; if (dx * dx + dy * dy < 60.f * 60.f) b[y * bw + x] = 255; }
-            eng.setLayer(0, a.data(), aw, ah);
-            eng.setLayer(1, b.data(), bw, bh);
-            float *m = p.data() + kOffMasks;
-            m[0] = 2; m[1] = 1; m[2] = 0; m[3] = 0;
-            m[4] = 3; m[5] = 0; m[6] = 0; m[7] = 0;     // component 0: bitmap, layer 0
-            m[16] = 3; m[17] = 0; m[18] = 0; m[19] = 1; // component 1: bitmap, layer 1, add
-            p[G_NUM_MASKS] = 1;
-            p[kOffBlocks + kBlockFloats + S_EXPOSURE] = v;
-        } else if (k == "maskclarity") {
-            p[kOffBlocks + kBlockFloats + S_CLARITY] = v;   // clarity inside mask 0 (any mask key defines the mask)
-        } else if (k == "ghue") {
-            p[kOffBlocks + S_GRADE_GLOBAL] = v;          // global colour grade hue (0..1)
-        } else if (k == "gsat") {
-            p[kOffBlocks + S_GRADE_GLOBAL + 1] = v;      // global colour grade saturation (0..1)
-        } else if (k == "overlay") {   // flat heal patch (linear grey value v, premultiplied, alpha 1) over the left half of the source
-            const int ow = 64, oh = 64;
-            std::vector<uint16_t> ov(size_t(ow) * oh * 4, 0);
-            for (int y = 0; y < oh; y++) for (int x = 0; x < ow / 2; x++) {
-                uint16_t *d = &ov[(size_t(y) * ow + x) * 4];
-                d[0] = d[1] = d[2] = floatToHalf(v); d[3] = floatToHalf(1.f);
-            }
-            eng.setOverlay(reinterpret_cast<const uint8_t *>(ov.data()), ow, oh);
-            p[G_OVERLAY] = 1.f;
-        } else if (k == "maskexposure") {
-            maskExposure = v;   // exposure of mask 0 for the colour and luminance range masks
-        } else if (k == "maskcolor" || k == "maskluma") {   // colour range (r,g,b,range,softness in display terms) or luminance range (lo,hi,falloff)
-            float a0 = 0, a1 = 0, a2 = 0, a3 = 0, a4 = 0;
-            sscanf(a.c_str() + eq + 1, "%f,%f,%f,%f,%f", &a0, &a1, &a2, &a3, &a4);
-            float *m = p.data() + kOffMasks;
-            m[0] = 1; m[1] = 1; m[2] = 0; m[3] = 0;
-            if (k == "maskcolor") { m[4] = 4; m[8] = a0; m[9] = a1; m[10] = a2; m[11] = a3; m[12] = a4; }
-            else { m[4] = 5; m[8] = a0; m[9] = a1; m[10] = a2; }
-            p[G_NUM_MASKS] = 1;
-            useMaskExposure = true;
-        } else if (k == "maskrad") {
-            float *m = p.data() + kOffMasks;
-            m[0] = 1; m[1] = 1; m[2] = 0; m[3] = 0;
-            m[4] = 2; m[5] = 0; m[6] = 0; m[7] = 0;
-            m[8] = 0.5f; m[9] = 0.5f; m[10] = 0.35f; m[11] = 0.35f;
-            m[12] = 0; m[13] = 0.5f; m[14] = 0; m[15] = 0;
-            p[G_NUM_MASKS] = 1;
-            p[kOffBlocks + kBlockFloats + S_EXPOSURE] = v;
-        }
+        auto it = keys.find(k);
+        if (it == keys.end()) continue;   // an unknown key is ignored, as it always was
+        const char *text = a.c_str() + eq + 1;
+        float v = float(atof(text));
+        const KeyDef &kd = *it->second;
+        if (kd.fn) kd.fn(sc, k.c_str(), v, text); else p[kd.index] = v;
     }
+    bool autofit = sc.autofit, mark = sc.mark, useMaskExposure = sc.useMaskExposure;
+    int look = sc.look;
+    float maskExposure = sc.maskExposure;
     if (useMaskExposure) p[kOffBlocks + kBlockFloats + S_EXPOSURE] = maskExposure;
     eng.setBaseCurve(look == 1 ? kBaseCurve : kBaseCurve2);
     eng.setSrcGain(look == 1 ? img.v1Scale : img.wbGain);
