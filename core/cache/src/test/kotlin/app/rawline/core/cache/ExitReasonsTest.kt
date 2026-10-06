@@ -43,4 +43,11 @@ class ExitReasonsTest {
     @Test fun tombstoneHintsOfNoiseIsEmpty() {
         assertEquals("", ExitReasons.tombstoneHints(ByteArray(300) { (it % 7).toByte() }))
     }
+
+    @Test fun readUpToStopsAtTheLimitAndHandlesShortStreams() {
+        val data = ByteArray(20000) { it.toByte() }
+        assertEquals(1400, ExitReasons.readUpTo(data.inputStream(), 1400).size)
+        assertEquals(20000, ExitReasons.readUpTo(data.inputStream(), 50000).size)
+        assertEquals(0, ExitReasons.readUpTo(ByteArray(0).inputStream(), 10).size)
+    }
 }

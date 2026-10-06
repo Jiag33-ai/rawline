@@ -77,6 +77,18 @@ object ExitReasons {
         return parts.joinToString("; ")
     }
 
+    /** InputStream.readNBytes needs API 33 and this app supports 31, so read by hand. */
+    fun readUpTo(input: java.io.InputStream, max: Int): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        val buf = ByteArray(8192)
+        while (out.size() < max) {
+            val n = input.read(buf, 0, minOf(buf.size, max - out.size()))
+            if (n < 0) break
+            out.write(buf, 0, n)
+        }
+        return out.toByteArray()
+    }
+
     fun describe(context: Context, now: Long = System.currentTimeMillis(), max: Int = 6): String = runCatching {
         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         val list = am.getHistoricalProcessExitReasons(null, 0, max)
@@ -87,9 +99,9 @@ object ExitReasons {
     private fun toRecord(i: ApplicationExitInfo): Record {
         val detail = runCatching {
             when (i.reason) {
-                ApplicationExitInfo.REASON_CRASH_NATIVE -> i.traceInputStream?.use { tombstoneHints(it.readNBytes(256 * 1024)) }
+                ApplicationExitInfo.REASON_CRASH_NATIVE -> i.traceInputStream?.use { tombstoneHints(readUpTo(it, 256 * 1024)) }
                 // an ANR trace is text; keep the start (the main thread) and drop directories
-                ApplicationExitInfo.REASON_ANR -> i.traceInputStream?.use { ReportText.redact(String(it.readNBytes(1400), Charsets.UTF_8)) }
+                ApplicationExitInfo.REASON_ANR -> i.traceInputStream?.use { ReportText.redact(String(readUpTo(it, 1400), Charsets.UTF_8)) }
                 else -> null
             }
         }.getOrNull()
