@@ -9,7 +9,8 @@ def load(path):
 
 
 def pixels(im):
-    return im.get_flattened_data() if hasattr(im, "get_flattened_data") else pixels(im)
+    # newer Pillow has get_flattened_data; older ones (as on the CI runner) only have getdata
+    return im.get_flattened_data() if hasattr(im, "get_flattened_data") else im.getdata()
 
 
 def luma_values(im):
