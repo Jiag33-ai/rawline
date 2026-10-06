@@ -31,9 +31,12 @@ import java.util.concurrent.Executor
 class MemFs : Fs {
     val files = LinkedHashMap<String, ByteArray>()
     var failWrites = false
+    var failPathContains: String? = null
+    var free = Long.MAX_VALUE
+    override fun freeBytes() = free
     override fun exists(path: String) = files.containsKey(path)
     override fun read(path: String) = files[path]
-    override fun write(path: String, data: ByteArray) { if (failWrites) throw java.io.IOException("disk full"); files[path] = data.copyOf() }
+    override fun write(path: String, data: ByteArray) { if (failWrites || failPathContains?.let { path.contains(it) } == true) throw java.io.IOException("disk full"); files[path] = data.copyOf() }
     override fun rename(from: String, to: String) { files[to] = files.remove(from) ?: throw IllegalStateException("no $from") }
     override fun delete(path: String) { files.remove(path) }
     override fun list(dir: String) = files.keys.filter { it.startsWith("$dir/") && !it.substring(dir.length + 1).contains('/') }.map { it.substring(dir.length + 1) }
@@ -50,6 +53,8 @@ class FakeGpu : StudioGpu {
     var strokeBegins = 0
     var strokeEnds = 0
     var failBegin = false
+    var failReadAt = 0   // the Nth readStroke call (1 based) returns false
+    var reads = 0
     override fun setLayerImage(slot: Int, rgba: ByteArray, w: Int, h: Int): Boolean { tex[slot] = RawPixels(w, h, rgba.copyOf()); return true }
     override fun updateRegion(slot: Int, x: Int, y: Int, w: Int, h: Int, rgba: ByteArray): Boolean {
         val t = tex[slot] ?: return false
@@ -65,6 +70,7 @@ class FakeGpu : StudioGpu {
     }
     override fun addStamps(xyr: FloatArray, count: Int): Boolean { for (i in 0 until count) stamps += Stamp(xyr[i * 3].toDouble(), xyr[i * 3 + 1].toDouble(), xyr[i * 3 + 2].toDouble()); return true }
     override fun readStroke(x: Int, y: Int, w: Int, h: Int, coverage: FloatArray): Boolean {
+        if (failReadAt > 0 && ++reads == failReadAt) return false
         val (slot, brush) = stroke ?: return false
         val t = tex[slot]!!
         val full = StrokeReference.coverage(t.w, t.h, stamps, brush)
@@ -92,7 +98,8 @@ class FakeGl(val gpu: FakeGpu = FakeGpu()) : GpuExecutor {
     override var listener: SurfaceListener? = null
     var last: FrameSpec? = null
     var renders = 0
-    override fun post(onDrop: (() -> Unit)?, block: (StudioGpu) -> Unit) = block(gpu)
+    var frozen = false   // a GL thread that never runs anything
+    override fun post(onDrop: (() -> Unit)?, block: (StudioGpu) -> Unit) { if (!frozen) block(gpu) }
     override fun setFrame(frame: FrameSpec?) { last = frame }
     override fun requestRender() { renders++ }
 }
@@ -246,7 +253,7 @@ class StudioSessionTest {
         h.stroke(listOf(5f to 5f, 30f to 5f))
         assertEquals(SaveState.FAILED, h.st.save)
         assertTrue(h.errors.any { it.contains("studio save") })
-        assertEquals("Could not save. Will try again.", h.st.message!!.text)
+        assertEquals(app.rawline.core.studio.model.SpaceCheck.SAVE_FAILED_OTHER, h.st.message!!.text)
         h.fs.failWrites = false
         h.now += 6_000; h.fireTimers()
         assertEquals(SaveState.SAVED, h.st.save)
@@ -436,7 +443,7 @@ class StudioSessionTest {
         h.s.start()
         h.gl.gpu.failBegin = true
         h.stroke(listOf(5f to 5f, 20f to 5f))
-        assertEquals("Could not start a stroke.", h.st.message!!.text)
+        assertEquals("Could not finish that stroke.", h.st.message!!.text)
         assertFalse(h.st.canUndo)
     }
 

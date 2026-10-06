@@ -1,6 +1,7 @@
 package app.rawline.core.studio.render
 
 import android.content.Context
+import android.opengl.EGL14
 import android.opengl.GLES30
 import android.opengl.GLSurfaceView
 import android.os.SystemClock
@@ -34,9 +35,12 @@ class StudioGl(private val perf: StudioPerf) : GLSurfaceView.Renderer, GpuExecut
     @Volatile private var frame: FrameSpec? = null
     @Volatile private var view: GLSurfaceView? = null
     @Volatile private var glReady = false
-    @Volatile private var released = false
+    /** True once the screen is leaving for good (the compositor is destroyed with the view). */
+    @Volatile var released = false; private set
+    /** The first GL init failed: jobs are dropped at once instead of waiting for a context that will not come. */
+    @Volatile private var failed = false
     private val pending = ArrayList<Queued>()
-    private var handle = 0L
+    @Volatile private var handle = 0L
     private var gpu: NativeStudioGpu? = null
     private var everCreated = false
     private var w = 0
@@ -55,7 +59,7 @@ class StudioGl(private val perf: StudioPerf) : GLSurfaceView.Renderer, GpuExecut
     override fun post(onDrop: (() -> Unit)?, block: (StudioGpu) -> Unit) {
         val q = Queued(block, onDrop)
         synchronized(pending) {
-            if (released) { drop(q); return }
+            if (released || failed) { drop(q); return }
             if (!glReady) { pending.add(q); return }
         }
         val v = view
@@ -69,6 +73,30 @@ class StudioGl(private val perf: StudioPerf) : GLSurfaceView.Renderer, GpuExecut
     fun release() {
         val dropped = synchronized(pending) { released = true; glReady = false; ArrayList(pending).also { pending.clear() } }
         dropped.forEach { drop(it) }
+        // The view may already be gone (its GL thread and context with it): free the object without GL calls so nothing leaks. If it is still attached, its detach destroys.
+        val v = view
+        if (v == null || !v.isAttachedToWindow) { val h = handle; if (h != 0L) { handle = 0; gpu = null; StudioNative.abandon(h) } }
+    }
+
+    /** The view is paused (screen off, another app on top): the context may be lost before the next frame, so jobs wait until it is known to be valid again. */
+    fun paused() { synchronized(pending) { glReady = false } }
+
+    /** The view resumed: if the context survived, jobs run again; if it did not, [onSurfaceCreated] does the same once the new one exists. */
+    fun resumed() { view?.queueEvent { markReadyIfValid() } }
+
+    private fun markReadyIfValid() {
+        if (handle == 0L || gpu == null || EGL14.eglGetCurrentContext() == EGL14.EGL_NO_CONTEXT) return
+        val queued = synchronized(pending) { glReady = !released && !failed; ArrayList(pending).also { pending.clear() } }
+        queued.forEach { run(it) }
+    }
+
+    /**
+     * The view was detached. The compositor is destroyed only when the screen is really leaving ([released]); a rotation never detaches the view
+     * (it is moved between layouts), and anything else that detaches it keeps the compositor for the next surface.
+     * If the screen was released before the view detached the GL thread is still there to destroy on, otherwise it is gone with its context, so the object is only freed.
+     */
+    fun viewDetached(v: GLSurfaceView) {
+        if (released) destroy(v)
     }
 
     /** The GL thread stops in the view's detach, so the compositor is torn down first while that thread can still run it. */
@@ -94,7 +122,13 @@ class StudioGl(private val perf: StudioPerf) : GLSurfaceView.Renderer, GpuExecut
         display = null
         handle = StudioNative.create()
         val err = StudioNative.init(handle)
-        if (err != null) { perf.error("studio gpu init: $err"); handle = 0; gpu = null; return }
+        if (err != null) {
+            perf.error("studio gpu init: $err")
+            StudioNative.abandon(handle); handle = 0; gpu = null
+            val dropped = synchronized(pending) { failed = true; ArrayList(pending).also { pending.clear() } }
+            dropped.forEach { drop(it) }
+            return
+        }
         gpu = NativeStudioGpu(handle)
         display = Display.create()
         val restored = everCreated
@@ -108,6 +142,7 @@ class StudioGl(private val perf: StudioPerf) : GLSurfaceView.Renderer, GpuExecut
         w = width; h = height
         out = ByteArray(width * height * 4)
         GLES30.glViewport(0, 0, width, height)
+        markReadyIfValid()   // after a resume the surface is made again with the same context: this is where jobs that waited can run
         listener?.onSurfaceSize(width, height)
     }
 
@@ -217,8 +252,12 @@ class StudioGlView(context: Context, private val gl: StudioGl) : GLSurfaceView(c
         renderMode = RENDERMODE_WHEN_DIRTY
     }
 
+    override fun onPause() { gl.paused(); super.onPause() }
+
+    override fun onResume() { super.onResume(); gl.resumed() }
+
     override fun onDetachedFromWindow() {
-        gl.destroy(this)
+        gl.viewDetached(this)
         super.onDetachedFromWindow()
     }
 }

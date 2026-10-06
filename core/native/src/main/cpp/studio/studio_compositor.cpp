@@ -214,16 +214,23 @@ bool Compositor::addStamps(const float *xyr, int count) {
     return glGetError() == GL_NO_ERROR;
 }
 
-bool Compositor::readStroke(int x, int y, int w, int h, float *coverage) {
+bool Compositor::readStroke(int x, int y, int w, int h, float *coverage, int bandRows) {
     if (!ready_ || !strokeBuf_.tex || x < 0 || y < 0 || w <= 0 || h <= 0 || x + w > strokeBuf_.w || y + h > strokeBuf_.h) return false;
+    bandRows = std::max(1, bandRows);
     GLint prevFbo = 0;
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
     glBindFramebuffer(GL_FRAMEBUFFER, strokeBuf_.fbo);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    std::vector<float> rgba(size_t(w) * h * 4);   // RGBA with FLOAT is the combination every driver accepts for a float attachment
-    glReadPixels(x, y, w, h, GL_RGBA, GL_FLOAT, rgba.data());
+    // Bands of at most bandRows rows through one reusable RGBA/FLOAT buffer (the combination every driver accepts for a float attachment): the temporary is
+    // w * bandRows * 16 bytes (16 MB for a 4096 wide band of 256 rows) instead of w * h * 16 bytes (192 MB for a 12 MP box).
+    std::vector<float> rgba(size_t(w) * size_t(std::min(h, bandRows)) * 4);
+    for (int y0 = 0; y0 < h; y0 += bandRows) {
+        const int bh = std::min(bandRows, h - y0);
+        glReadPixels(x, y + y0, w, bh, GL_RGBA, GL_FLOAT, rgba.data());
+        float *dst = coverage + size_t(y0) * w;
+        for (size_t i = 0; i < size_t(w) * bh; i++) dst[i] = rgba[i * 4];
+    }
     glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
-    for (size_t i = 0; i < size_t(w) * h; i++) coverage[i] = rgba[i * 4];
     return glGetError() == GL_NO_ERROR;
 }
 

@@ -6,6 +6,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.changedToDown
 import androidx.compose.ui.input.pointer.changedToUp
@@ -42,6 +43,8 @@ fun Modifier.canvasInput(session: StudioSession): Modifier {
                         val id = c.id.value.toInt()
                         val kind = if (c.type == PointerType.Stylus || c.type == PointerType.Eraser) PointerKind.STYLUS else PointerKind.FINGER
                         val pressure = if (kind == PointerKind.STYLUS) c.pressure.coerceIn(0f, 1f) else 1f
+                        // Pen hover (not touching): fingers are taken for a palm while the pen is near and for a short grace after it leaves (BK-481).
+                        if (kind == PointerKind.STYLUS && !c.pressed) current.onHover(event.type != PointerEventType.Exit, c.uptimeMillis)
                         when {
                             c.changedToDown() -> {
                                 kinds[id] = kind; lastPos[id] = floatArrayOf(c.position.x, c.position.y); lastPressure[id] = pressure; lastTime[id] = c.uptimeMillis

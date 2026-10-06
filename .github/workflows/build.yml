@@ -111,6 +111,21 @@ jobs:
           path: "**/build/reports/lint-results-debug.html"
           if-no-files-found: ignore
 
+  commit-messages:
+    # CLAUDE.md: no model name and no Co-Authored-By in commits. Only commits after tools/commit-message-base are checked.
+    # Not in any "needs": a bad message on main cannot be fixed by rewriting history, so it shows red but never blocks a release.
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0     # the base commit must be present
+      - name: Commit message tests
+        run: ./tools/test-commit-msg-check.sh
+      - name: No model name or Co-Authored-By after the base
+        run: ./tools/check-commit-messages.sh
+
   studio-flag:
     # Both values of the Studio flag (app/build.gradle.kts, studio.enabled) build and pass the unit tests, and the debug APK proves it in both directions:
     # with the flag on the dex files hold the Studio classes, with it off none of them (the stub app.rawline.StudioEntry is all that is left).

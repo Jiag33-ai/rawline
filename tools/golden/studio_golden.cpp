@@ -63,7 +63,7 @@ int main(int argc, char **argv) {
     if (!stamps.empty() && !comp.addStamps(stamps.data(), int(stamps.size() / 3))) { std::fprintf(stderr, "addStamps failed\n"); return 6; }
     std::vector<uint8_t> out(size_t(ow) * oh * 4);
     if (comp.stroking() && getenv("STUDIO_READ_STROKE")) {   // commit path check: read the coverage back
-        std::vector<float> cov(size_t(ow) * oh); comp.readStroke(0, 0, ow, oh, cov.data());
+        std::vector<float> cov(size_t(ow) * oh); comp.readStroke(0, 0, ow, oh, cov.data(), getenv("STUDIO_BAND") ? atoi(getenv("STUDIO_BAND")) : 256);
         FILE *cf = std::fopen(getenv("STUDIO_READ_STROKE"), "wb"); std::fwrite(cov.data(), 4, cov.size(), cf); std::fclose(cf);
     }
     if (!comp.render(draws, vx, vy, zoom, ow, oh, out.data())) { std::fprintf(stderr, "render failed\n"); return 7; }

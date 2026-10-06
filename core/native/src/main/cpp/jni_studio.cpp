@@ -1,3 +1,4 @@
+#include <atomic>
 #include <jni.h>
 #include <android/log.h>
 
@@ -31,12 +32,13 @@ struct Bytes {
     Bytes(JNIEnv *e, jbyteArray arr, jint releaseMode) : env(e), a(arr), p(e->GetByteArrayElements(arr, nullptr)), mode(releaseMode) { if (!p) throw std::bad_alloc(); }
     ~Bytes() { if (p) env->ReleaseByteArrayElements(a, p, mode); }
 };
+std::atomic<int> g_liveHandles{0};   // compositors created and not yet destroyed or abandoned (Copy report: must read 0 after leaving Studio)
 }  // namespace
 
 extern "C" {
 
 JNIEXPORT jlong JNICALL Java_app_rawline_core_nativelib_StudioNative_create(JNIEnv *, jobject) {
-    return guarded<jlong>("studioCreate", 0, [&]() -> jlong { return reinterpret_cast<jlong>(new Compositor()); });
+    return guarded<jlong>("studioCreate", 0, [&]() -> jlong { auto *c = new Compositor(); g_liveHandles++; return reinterpret_cast<jlong>(c); });
 }
 
 /** null on success, else the GL error text. GL thread. */
@@ -50,13 +52,15 @@ JNIEXPORT jstring JNICALL Java_app_rawline_core_nativelib_StudioNative_init(JNIE
 
 /** Releases the GL objects (needs the context) and deletes the object. */
 JNIEXPORT void JNICALL Java_app_rawline_core_nativelib_StudioNative_destroy(JNIEnv *, jobject, jlong h) {
-    guardedV("studioDestroy", [&] { delete reinterpret_cast<Compositor *>(h); });
+    guardedV("studioDestroy", [&] { if (!h) return; delete reinterpret_cast<Compositor *>(h); g_liveHandles--; });
 }
 
 /** The context is gone: delete the object without touching GL (the new context holds other objects with the same names). */
 JNIEXPORT void JNICALL Java_app_rawline_core_nativelib_StudioNative_abandon(JNIEnv *, jobject, jlong h) {
-    guardedV("studioAbandon", [&] { auto *c = reinterpret_cast<Compositor *>(h); c->abandon(); delete c; });
+    guardedV("studioAbandon", [&] { if (!h) return; auto *c = reinterpret_cast<Compositor *>(h); c->abandon(); delete c; g_liveHandles--; });
 }
+
+JNIEXPORT jint JNICALL Java_app_rawline_core_nativelib_StudioNative_liveHandles(JNIEnv *, jobject) { return g_liveHandles.load(); }
 
 JNIEXPORT jboolean JNICALL Java_app_rawline_core_nativelib_StudioNative_setLayerImage(JNIEnv *env, jobject, jlong h, jint slot, jbyteArray rgba, jint w, jint hgt) {
     return guarded<jboolean>("studioSetLayerImage", JNI_FALSE, [&]() -> jboolean {

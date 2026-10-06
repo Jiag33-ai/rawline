@@ -43,7 +43,7 @@ public:
      */
     bool beginStroke(int slot, float r, float g, float b, float opacity, bool erase, float hardness, float flow);
     bool addStamps(const float *xyr, int count);
-    bool readStroke(int x, int y, int w, int h, float *coverage);
+    bool readStroke(int x, int y, int w, int h, float *coverage, int bandRows = 256);
     void endStroke();
     bool stroking() const { return stroke_.slot >= 0; }
 

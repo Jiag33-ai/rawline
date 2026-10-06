@@ -29,13 +29,16 @@ import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -102,6 +105,12 @@ fun StudioCanvasScreen(session: StudioSession, gl: StudioGl, projects: StudioPro
 
     // autosave on pause (decision D8); the session returns at once and writes on its own thread
     LifecycleEventEffect(Lifecycle.Event.ON_PAUSE) { session.flush() }
+    // One GL view for the whole life of the screen, moved between the portrait and landscape layouts without being detached: a rotation then neither destroys the
+    // compositor nor re-uploads the layers, and the view transform is kept (review F9, F16). Its pause and resume follow the lifecycle (jobs wait while the context may be lost, F8).
+    val glView = remember(gl) { StudioGlView(context, gl) }
+    val surface = remember(glView) { movableContentOf { AndroidView(factory = { glView }, modifier = Modifier.fillMaxSize()) } }
+    LifecycleEventEffect(Lifecycle.Event.ON_PAUSE) { glView.onPause() }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { glView.onResume() }
     androidx.compose.runtime.DisposableEffect(session) {
         val cb = object : android.content.ComponentCallbacks2 {
             override fun onTrimMemory(level: Int) { if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_BACKGROUND || level == android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL) session.trimMemory() }
@@ -137,7 +146,11 @@ fun StudioCanvasScreen(session: StudioSession, gl: StudioGl, projects: StudioPro
             }
         }
     }
-    BackHandler(enabled = !leaving) { if (exportOpen) exportOpen = false else if (layersOpen) layersOpen = false else leave() }
+    // BK-503: leaving while the last save failed would lose the changes (the project stays in memory only while this screen is open): ask first, and offer Export.
+    var confirmLeave by remember { mutableStateOf(false) }
+    val unsaved = state.save == app.rawline.core.studio.render.SaveState.FAILED || state.save == app.rawline.core.studio.render.SaveState.NO_SPACE
+    val tryLeave: () -> Unit = { if (unsaved && state.phase == Phase.READY) confirmLeave = true else leave() }
+    BackHandler(enabled = !leaving) { if (exportOpen) exportOpen = false else if (layersOpen) layersOpen = false else tryLeave() }
 
     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) scope.launch {
@@ -153,8 +166,8 @@ fun StudioCanvasScreen(session: StudioSession, gl: StudioGl, projects: StudioPro
         Box(modifier.fillMaxSize().background(Lr.Canvas)) {
             // The layout (and with it the GL surface) is ALWAYS composed: the session waits for the GL context to upload the layers before it says READY,
             // so a surface that only appeared once READY would wait for itself.
-            if (landscape) Landscape(state, session, gl, layersOpen, { layersOpen = !layersOpen }, { picker = it }, addPhoto, leave, { exportOpen = true })
-            else Portrait(state, session, gl, layersOpen, { layersOpen = !layersOpen }, { picker = it }, addPhoto, leave, { exportOpen = true })
+            if (landscape) Landscape(state, session, surface, layersOpen, { layersOpen = !layersOpen }, { picker = it }, addPhoto, tryLeave, { exportOpen = true })
+            else Portrait(state, session, surface, layersOpen, { layersOpen = !layersOpen }, { picker = it }, addPhoto, tryLeave, { exportOpen = true })
             when (state.phase) {
                 Phase.LOADING -> Box(Modifier.fillMaxSize().background(Lr.Canvas).blockPointerInput(), contentAlignment = Alignment.Center) { LocalLoader() }
                 Phase.ERROR -> Column(Modifier.fillMaxSize().background(Lr.Canvas).blockPointerInput().statusBarsPadding().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
@@ -168,6 +181,18 @@ fun StudioCanvasScreen(session: StudioSession, gl: StudioGl, projects: StudioPro
             Notices(state, session, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 200.dp, start = 16.dp, end = 16.dp))
         }
     }
+    if (confirmLeave) AlertDialog(
+        onDismissRequest = { confirmLeave = false },
+        title = { Text("Leave without saving?") },
+        text = { Text("Your last changes are not saved. Export keeps a picture of what you have.") },
+        confirmButton = { LrTextButton(onClick = { confirmLeave = false; leave() }) { Text("Leave") } },
+        dismissButton = {
+            Row {
+                LrTextButton(onClick = { confirmLeave = false }) { Text("Stay") }
+                LrTextButton(onClick = { confirmLeave = false; exportOpen = true }) { Text("Export") }
+            }
+        },
+    )
     if (exportOpen) ExportSheet(session, state.document.width, state.document.height, state.document.name, perf, onDismiss = { exportOpen = false })
     picker?.let { target ->
         val fg = target == PickerTarget.FOREGROUND
@@ -180,11 +205,11 @@ fun StudioCanvasScreen(session: StudioSession, gl: StudioGl, projects: StudioPro
 }
 
 @Composable
-private fun Portrait(state: StudioState, session: StudioSession, gl: StudioGl, layersOpen: Boolean, toggleLayers: () -> Unit, pick: (PickerTarget) -> Unit, addPhoto: () -> Unit, onExit: () -> Unit, onExport: () -> Unit) {
+private fun Portrait(state: StudioState, session: StudioSession, surface: @Composable () -> Unit, layersOpen: Boolean, toggleLayers: () -> Unit, pick: (PickerTarget) -> Unit, addPhoto: () -> Unit, onExit: () -> Unit, onExport: () -> Unit) {
     Column(Modifier.fillMaxSize()) {
         StatusStrip(state, session, onExit, onExport, Modifier.statusBarsPadding())
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            CanvasSurface(session, gl, state)
+            CanvasSurface(session, surface, state)
             ColourChips(state, pick, Modifier.align(Alignment.BottomEnd).padding(12.dp))
         }
         if (layersOpen) LayersPanel(state, session, addPhoto, Modifier.fillMaxWidth().heightIn(max = 300.dp))
@@ -194,13 +219,13 @@ private fun Portrait(state: StudioState, session: StudioSession, gl: StudioGl, l
 }
 
 @Composable
-private fun Landscape(state: StudioState, session: StudioSession, gl: StudioGl, layersOpen: Boolean, toggleLayers: () -> Unit, pick: (PickerTarget) -> Unit, addPhoto: () -> Unit, onExit: () -> Unit, onExport: () -> Unit) {
+private fun Landscape(state: StudioState, session: StudioSession, surface: @Composable () -> Unit, layersOpen: Boolean, toggleLayers: () -> Unit, pick: (PickerTarget) -> Unit, addPhoto: () -> Unit, onExit: () -> Unit, onExport: () -> Unit) {
     Row(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))) {
         ToolRail(state, session, layersOpen, toggleLayers, vertical = true, Modifier.fillMaxHeight())
         Column(Modifier.weight(1f).fillMaxHeight()) {
             StatusStrip(state, session, onExit, onExport, Modifier.statusBarsPadding())
             Box(Modifier.weight(1f).fillMaxWidth()) {
-                CanvasSurface(session, gl, state)
+                CanvasSurface(session, surface, state)
                 ColourChips(state, pick, Modifier.align(Alignment.BottomStart).padding(12.dp))
             }
         }
@@ -220,7 +245,7 @@ private fun StatusStrip(state: StudioState, session: StudioSession, onExit: () -
             Text(state.document.name, style = MaterialTheme.typography.bodyMedium, color = Lr.TextPrimary, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
             Text(
                 "${state.document.width} x ${state.document.height}, ${state.save.label}", style = MaterialTheme.typography.labelSmall,
-                color = if (state.save == app.rawline.core.studio.render.SaveState.FAILED) Lr.Error else Lr.TextMuted, maxLines = 1,
+                color = if (state.save == app.rawline.core.studio.render.SaveState.FAILED || state.save == app.rawline.core.studio.render.SaveState.NO_SPACE) Lr.Error else Lr.TextMuted, maxLines = 1,
             )
         }
         LrIconButton(LrIcon.UNDO, "Undo", { session.undo() }, enabled = state.canUndo)
@@ -237,9 +262,9 @@ private fun StatusStrip(state: StudioState, session: StudioSession, onExit: () -
 
 /** The GL surface with the pointer layer above it. The surface and the pointer box are the same size, so pointer pixels are surface pixels. */
 @Composable
-private fun CanvasSurface(session: StudioSession, gl: StudioGl, state: StudioState) {
+private fun CanvasSurface(session: StudioSession, surface: @Composable () -> Unit, state: StudioState) {
     Box(Modifier.fillMaxSize().background(Lr.Canvas)) {
-        AndroidView(factory = { StudioGlView(it, gl) }, modifier = Modifier.fillMaxSize())
+        surface()
         Box(
             Modifier.fillMaxSize().systemGestureExclusion().canvasInput(session)
                 .semantics { contentDescription = "Drawing canvas, ${state.document.width} by ${state.document.height}" },
@@ -251,12 +276,14 @@ private fun CanvasSurface(session: StudioSession, gl: StudioGl, state: StudioSta
 private fun ColourChips(state: StudioState, pick: (PickerTarget) -> Unit, modifier: Modifier = Modifier) {
     Box(modifier.size(64.dp)) {
         Box(
-            Modifier.align(Alignment.BottomEnd).size(40.dp).clip(RoundedCornerShape(4.dp)).background(androidx.compose.ui.graphics.Color(state.background.r, state.background.g, state.background.b))
-                .border(1.dp, Lr.BorderStrong, RoundedCornerShape(4.dp)).clickable { pick(PickerTarget.BACKGROUND) }.semantics { contentDescription = "Background colour ${ColourHex.format(state.background)}" },
+            Modifier.align(Alignment.BottomEnd).minimumInteractiveComponentSize().clickable { pick(PickerTarget.BACKGROUND) }.semantics { contentDescription = "Background colour ${ColourHex.format(state.background)}" }   // 48 dp target, 40 dp chip
+                .size(40.dp).clip(RoundedCornerShape(4.dp)).background(androidx.compose.ui.graphics.Color(state.background.r, state.background.g, state.background.b))
+                .border(1.dp, Lr.BorderStrong, RoundedCornerShape(4.dp)),
         )
         Box(
-            Modifier.align(Alignment.TopStart).size(40.dp).clip(RoundedCornerShape(4.dp)).background(androidx.compose.ui.graphics.Color(state.colour.r, state.colour.g, state.colour.b))
-                .border(1.dp, Lr.BorderStrong, RoundedCornerShape(4.dp)).clickable { pick(PickerTarget.FOREGROUND) }.semantics { contentDescription = "Colour ${ColourHex.format(state.colour)}" },
+            Modifier.align(Alignment.TopStart).minimumInteractiveComponentSize().clickable { pick(PickerTarget.FOREGROUND) }.semantics { contentDescription = "Colour ${ColourHex.format(state.colour)}" }
+                .size(40.dp).clip(RoundedCornerShape(4.dp)).background(androidx.compose.ui.graphics.Color(state.colour.r, state.colour.g, state.colour.b))
+                .border(1.dp, Lr.BorderStrong, RoundedCornerShape(4.dp)),
         )
     }
 }

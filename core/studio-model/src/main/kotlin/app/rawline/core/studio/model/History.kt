@@ -25,6 +25,10 @@ sealed class Step {
     class SetDocument(val document: Document) : Step()
     /** Write [bytes] (the delta's before or after) into the rectangle of the layer, in the CPU copy and in the GPU texture. */
     class SetPixels(val layerId: String, val delta: PixelDelta, val bytes: ByteArray) : Step()
+    /** A stroke that touched several tiles: write every part (before bytes for an undo, after bytes for a redo). */
+    class SetPixelsMany(val layerId: String, val parts: List<PixelDelta>, val useAfter: Boolean) : Step() {
+        fun apply(layer: ByteArray, layerW: Int) { for (d in parts) d.apply(layer, layerW, if (useAfter) d.after else d.before) }
+    }
 }
 
 /**
@@ -35,7 +39,9 @@ class StudioHistory(initial: Document, private val maxEntries: Int = 100, privat
     private sealed class Entry {
         class Doc(val before: Document, val after: Document) : Entry()
         class Stroke(val layerId: String, val delta: PixelDelta) : Entry()
+        class Strokes(val layerId: String, val parts: List<PixelDelta>) : Entry()
     }
+    private fun bytesOf(e: Entry): Long = when (e) { is Entry.Stroke -> e.delta.bytes; is Entry.Strokes -> e.parts.sumOf { it.bytes }; is Entry.Doc -> 0L }
     private val undo = ArrayDeque<Entry>()
     private val redo = ArrayDeque<Entry>()
     var document: Document = initial
@@ -54,6 +60,24 @@ class StudioHistory(initial: Document, private val maxEntries: Int = 100, privat
     /** Records a finished stroke. The pixels are already in place; only the delta is kept. */
     fun commitStroke(layerId: String, delta: PixelDelta) { push(Entry.Stroke(layerId, delta)); deltaBytes += delta.bytes; trim() }
 
+    /** One entry for a stroke that changed several tiles (one undo step, bytes proportional to the painted tiles, not to a bounding box). */
+    fun commitStrokeTiles(layerId: String, parts: List<PixelDelta>) {
+        if (parts.isEmpty()) return
+        val e = Entry.Strokes(layerId, parts.toList()); push(e); deltaBytes += bytesOf(e); trim()
+    }
+
+    /**
+     * Layers whose pixels an undo or a redo can still need to bring back: those that leave the stack in a recorded layer operation (undo of a delete) or enter it
+     * in an undone one (redo of an add). The session keeps the encoded pixels of exactly these layers and may drop every other graveyard entry.
+     */
+    fun restorableLayerIds(): Set<String> {
+        val out = HashSet<String>()
+        fun ids(d: Document) = d.layers.map { it.common.id }.toSet()
+        for (e in undo) if (e is Entry.Doc) out += ids(e.before) - ids(e.after)
+        for (e in redo) if (e is Entry.Doc) out += ids(e.after) - ids(e.before)
+        return out
+    }
+
     /** Replaces the current document without a history entry (the storage layer filling in pixel file names after a save). */
     fun replaceCurrent(doc: Document) { document = doc }
 
@@ -63,6 +87,7 @@ class StudioHistory(initial: Document, private val maxEntries: Int = 100, privat
         return when (e) {
             is Entry.Doc -> { document = e.before; Step.SetDocument(e.before) }
             is Entry.Stroke -> Step.SetPixels(e.layerId, e.delta, e.delta.before)
+            is Entry.Strokes -> Step.SetPixelsMany(e.layerId, e.parts, useAfter = false)
         }
     }
 
@@ -72,6 +97,7 @@ class StudioHistory(initial: Document, private val maxEntries: Int = 100, privat
         return when (e) {
             is Entry.Doc -> { document = e.after; Step.SetDocument(e.after) }
             is Entry.Stroke -> Step.SetPixels(e.layerId, e.delta, e.delta.after)
+            is Entry.Strokes -> Step.SetPixelsMany(e.layerId, e.parts, useAfter = true)
         }
     }
 
@@ -80,7 +106,7 @@ class StudioHistory(initial: Document, private val maxEntries: Int = 100, privat
         var dropped = false
         while (deltaBytes > maxBytes && undo.size > 1) {
             val e = undo.removeFirst(); dropped = true
-            if (e is Entry.Stroke) deltaBytes -= e.delta.bytes
+            deltaBytes -= bytesOf(e)
         }
         return dropped
     }
@@ -91,12 +117,12 @@ class StudioHistory(initial: Document, private val maxEntries: Int = 100, privat
         trim()
     }
 
-    private fun dropRedo() { for (e in redo) if (e is Entry.Stroke) deltaBytes -= e.delta.bytes; redo.clear() }
+    private fun dropRedo() { for (e in redo) deltaBytes -= bytesOf(e); redo.clear() }
 
     private fun trim() {
         while (undo.size > maxEntries || (deltaBytes > maxBytes && undo.size > 1)) {
             val e = undo.removeFirst()
-            if (e is Entry.Stroke) deltaBytes -= e.delta.bytes
+            deltaBytes -= bytesOf(e)
         }
     }
 }

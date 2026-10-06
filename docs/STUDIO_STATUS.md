@@ -59,7 +59,26 @@ Not verified (the UI cannot run here; compiled, linted and reviewed only)
 
 Jai on the phone (one message): make a project from a photo, paint, export a PNG and a JPEG and open them in Gallery; duplicate and delete a project; switch to Develop and back; force stop during a stroke, reopen; paste the Copy report (the Studio block is at the end).
 
-Known limits carried forward: the export is on a coroutine in the app process (no foreground service until S9); a canvas that is left by a switch or a kill keeps its older thumbnail; Back on the home goes to Develop; the review findings of review-s1b.md are untouched.
+Known limits carried forward: the export is on a coroutine in the app process (no foreground service until S9); a canvas that is left by a switch or a kill keeps its older thumbnail; Back on the home goes to Develop. The review findings of review-s1b.md are addressed in the next section.
+
+## S1b fixes and autosave on a full phone (delivered, phone checks pending)
+Studio blends in gamma encoded display space by default, as Photoshop does. A linear light option is stored per document (`BlendSpace.LINEAR`) and is off. The S3 reference and every S3 golden run in both spaces. The new project dialog gets the switch "Blend in linear light" (off) in S3, not before. (BK-488, decided by the PM on 6 Oct 2026.)
+
+Delivered (review-s1b.md F1 to F3, F5, F7 to F10, F13, F16, F18, BK-479 to 481, 483, 484, 487, and BK-503)
+- Per tile stroke commit (`StrokeTiles`): one rectangle per touched 256 px tile, one undo step per stroke (`Entry.Strokes`, `Step.SetPixelsMany`), baked bytes identical to the old whole box bake (tested against `StrokeReference`). A diagonal across a 4000 x 3000 layer keeps history under 12 MB where the box would be 96 MB (host test).
+- Banded readback in native (`readStroke` in bands of 256 rows, one reusable band buffer); the session reads at most 8 tiles per GL round trip and bakes only after every read worked, so a failed read rolls the whole stroke back. Golden: coverage identical at bands of 1, 7, 64, 256 and 1000 rows (loop added to `studio-golden.sh`).
+- Pen beats palm: a stylus DOWN cancels a finger stroke and draws; fingers are ignored while the pen hovers and for 600 ms after (`InputRouter.PALM_GRACE_MS`); hover comes from the canvas (`onHover`).
+- Graveyard pruned to the layers history can still bring back (`restorableLayerIds`).
+- GL lifecycle: init failure drops queued jobs at once; jobs wait while the view is paused (`paused`, `resumed`, and `onPause`/`onResume` follow the lifecycle); the compositor is destroyed only when the screen is released, and freed without GL calls if the view was already gone; one `StudioGlView` for the screen, moved between portrait and landscape with `movableContentOf`, so a rotation neither destroys nor re-uploads; after a size change a zoomed view keeps its zoom and centre. `GL compositors alive` in the Copy report Studio block (native live handle counter).
+- `strokeStart` no longer waits for the GL thread (the failed start message is now "Could not finish that stroke."); the first stamp is input stamped.
+- 48 dp touch targets on the blend and opacity chips and the two colour chips (visual size unchanged), with TalkBack descriptions.
+- BK-503: autosave backs off 5, 10, 20, 40, then 60 s, stops after 10 failures in a row until the user edits, pauses or leaves, gives one notice per failure episode, shows "not saved: the phone is almost full" in the status strip, checks free space before writing, leaves a first save that failed with no half written folder, asks "Leave without saving?" (Stay, Export, Leave) when the last save failed, and checks free space (estimate plus 200 MB) before new project, from a photo, duplicate and export ("Not enough space. Free about N MB and try again."). The probe (200 retries and 200 toasts in 17 simulated minutes) is now a test: 10 attempts, 1 notice.
+- Tests: `:core:studio-model` 121 (17 new: StrokeTiles 6, history 5, pen over palm 6), `:core:studio-render` 51 (S1bSessionTest 5, FullDiskTest 5 added), `:feature:studio` 5.
+
+Not verified (compiled and reviewed only; nothing here ran on a device)
+- Pen and palm on a real S Pen, the hover events, the movable GL view across a real rotation, pause and resume with a lost context, `liveHandles` after leaving, the 48 dp targets, the leave dialog, the free space messages on a real full phone, and every timing (`studio_commit_ms` before and after).
+- Not done: BK-482 (frame path without CPU readback), the autosave debounce of F6, F11, F12, F14, F17 (system cancel: check on the phone whether a stroke is committed when the shade is pulled; no interop filter was added).
+- Risk: an export that is running while the app is in the background now waits for the GL context (jobs queue while paused) and may time out.
 
 ## Handoff to S2
 - `StudioSession.exportSnapshot` plus `renderStrip` is the way to render the whole canvas at any size; layered export reuses it.

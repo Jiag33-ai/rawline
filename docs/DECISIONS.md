@@ -73,3 +73,8 @@
 - New projects follow the spec: blank presets make one empty (transparent) layer, a photo becomes layer "Photo". S1b's white Background layer is gone from the home path (`StudioProjects.newBlank` is no longer used by the app). Back on the Studio home goes to Develop.
 - The lint job is no longer `continue-on-error`: all modules report 0 errors (the one error was a literal byte-order mark inside a string in `core/data`, now written as `\uFEFF`).
 
+## Studio S1b fix decisions (docs/STUDIO_STATUS.md)
+- Studio blends in gamma encoded display space by default, as Photoshop does. A linear light option is stored per document (`BlendSpace.LINEAR`) and is off. The S3 reference and every S3 golden run in both spaces. (BK-488, PM decision, 6 Oct 2026.)
+- A stroke commits per touched 256 px tile with one undo step; the bytes baked equal the old whole box bake. Pen beats palm (a stylus DOWN cancels a finger stroke; fingers wait 600 ms after the pen leaves). The graveyard keeps only layers history can bring back.
+- The GL view is created once per canvas screen and is never detached by a rotation; the compositor is destroyed only when the screen is released.
+- Autosave on failure (BK-503): retry delays 5, 10, 20, 40, 60 s, stop after 10 failures in a row until an edit, a pause or leaving; one notice per episode; free space checked before writing (autosave: estimate plus 16 MB, new project, duplicate, import and export: estimate plus 200 MB); leaving with a failed save asks first and offers Export.

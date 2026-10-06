@@ -74,7 +74,9 @@ object StudioEntry {
         lines.append("mode ${AppMode.fromKey(kv.getString(ModeState.KEY)).key}\n")
         lines.append("projects $projects\n")
         lines.append("starts pending ${kv.getInt(StartGuard.PENDING, 0)}\n")
-        lines.append("last fallback to Develop ${if (kv.getInt(ModeState.LAST_FALLBACK, 0) == 1) "yes" else "no"}")
+        lines.append("last fallback to Develop ${if (kv.getInt(ModeState.LAST_FALLBACK, 0) == 1) "yes" else "no"}\n")
+        // compositors made and not yet freed: 1 while a canvas is open, 0 after leaving Studio (anything else is a leak)
+        lines.append("GL compositors alive ${runCatching { app.rawline.core.nativelib.StudioNative.liveHandles().toString() }.getOrDefault("unknown")}")
         StudioStats.describe()?.let { lines.append('\n').append(it) } ?: lines.append("\nNo project is open (GPU textures 0 MB)")
         return "Studio" to lines.toString()
     }

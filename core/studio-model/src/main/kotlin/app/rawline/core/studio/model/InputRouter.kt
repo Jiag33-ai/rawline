@@ -37,16 +37,29 @@ class InputRouter {
     private val down = HashSet<Int>()
     private var lastCx = 0f; private var lastCy = 0f; private var lastDist = 1f
 
+    /** Until this uptime (ms) a finger DOWN is taken for a palm: the pen is near or was just lifted. Long.MAX_VALUE while the tip is down or the pen hovers. */
+    private var penNearUntil = Long.MIN_VALUE
+
+    /** Pen hover from the canvas (Compose PointerEventType.Enter and Move with a stylus: [near] true, Exit: false). */
+    fun onHover(near: Boolean, timeMs: Long) { penNearUntil = if (near) Long.MAX_VALUE else timeMs + PALM_GRACE_MS }
+
     fun onEvent(e: InputEvent): List<Action> {
         val out = ArrayList<Action>(2)
         when (e.phase) {
             Phase.DOWN -> {
                 down.add(e.pointerId)
+                if (e.kind == PointerKind.STYLUS) penNearUntil = Long.MAX_VALUE
+                else if (state == State.IDLE && e.timeMs < penNearUntil) return out   // a palm resting near the pen: ignored (it stays in `down` so its UP is understood)
                 when (state) {
                     State.IDLE -> { state = State.STROKING; stroke = e.pointerId; strokeKind = e.kind; out += Action.StrokeStart(e.x, e.y, e.pressure, e.kind) }
                     State.STROKING -> {
                         if (strokeKind == PointerKind.STYLUS && e.kind == PointerKind.FINGER) return out    // palm
-                        if (e.kind == PointerKind.STYLUS) return out
+                        if (e.kind == PointerKind.STYLUS) {   // the pen wins over a finger or a palm that began a stroke: roll that stroke back and draw with the pen
+                            out += Action.StrokeCancel
+                            stroke = e.pointerId; strokeKind = PointerKind.STYLUS; strokePos = floatArrayOf(e.x, e.y)
+                            out += Action.StrokeStart(e.x, e.y, e.pressure, e.kind)
+                            return out
+                        }
                         out += Action.StrokeCancel
                         val first = strokePos ?: floatArrayOf(e.x, e.y)
                         pos.clear(); pos[stroke] = first; pos[e.pointerId] = floatArrayOf(e.x, e.y)
@@ -62,6 +75,7 @@ class InputRouter {
             }
             Phase.UP, Phase.CANCEL -> {
                 down.remove(e.pointerId)
+                if (e.kind == PointerKind.STYLUS) penNearUntil = e.timeMs + PALM_GRACE_MS
                 when (state) {
                     State.STROKING -> if (e.pointerId == stroke) { out += if (e.phase == Phase.UP) Action.StrokeEnd else Action.StrokeCancel; state = State.IDLE; strokePos = null }
                     State.GESTURE -> if (pos.containsKey(e.pointerId)) { out += Action.GestureEnd; pos.clear(); state = if (down.isEmpty()) State.IDLE else State.WAIT_FOR_UP }
@@ -75,6 +89,8 @@ class InputRouter {
     }
 
     private var strokePos: FloatArray? = null
+
+    companion object { const val PALM_GRACE_MS = 600L }
 
     private fun beginGesture() {
         val (cx, cy, d) = measure(); lastCx = cx; lastCy = cy; lastDist = d.coerceAtLeast(1f)

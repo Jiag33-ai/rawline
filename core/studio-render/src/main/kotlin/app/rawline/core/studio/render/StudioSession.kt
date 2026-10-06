@@ -18,9 +18,11 @@ import app.rawline.core.studio.model.PixelDelta
 import app.rawline.core.studio.model.Placement
 import app.rawline.core.studio.model.ProjectStore
 import app.rawline.core.studio.model.RawPixels
+import app.rawline.core.studio.model.SpaceCheck
 import app.rawline.core.studio.model.Step
 import app.rawline.core.studio.model.StrokePoint
 import app.rawline.core.studio.model.StrokeReference
+import app.rawline.core.studio.model.StrokeTiles
 import app.rawline.core.studio.model.StrokeWalker
 import app.rawline.core.studio.model.StudioHistory
 import app.rawline.core.studio.model.Stamp
@@ -83,6 +85,11 @@ class StudioSession(
     private var lastSaveStart = Long.MIN_VALUE / 2
     private var lastModified = initial.modified
     private var saveFailed = false
+    private var noSpace = false                                  // the last failure was "not enough free space"
+    private var failStreak = 0                                   // failed saves in a row; the retry delay grows with it (BK-503)
+    private var retryHalted = false                              // MAX_TRIES failures in a row: no more timer retries until something changes
+    private var failureNotified = false                          // one notice per failure episode, not per retry
+    private var everSaved = onDisk                               // false until the first save of a new project worked
     private var view = CanvasView()
     private var surfaceW = 0
     private var surfaceH = 0
@@ -94,6 +101,8 @@ class StudioSession(
     private val messageId = AtomicLong()
     private val router = InputRouter()                           // main thread only (onInput)
     private val inputStamp = AtomicLong(0)                       // uptime of the newest input whose stamps the GL thread has drawn; read by the renderer for studio_input_to_pixel_ms
+
+    private class NoSpaceException(message: String) : java.io.IOException(message)
 
     private class PaintStroke(val layerId: String, val slot: Int, val brush: Brush, val colour: FloatArray, val walker: StrokeWalker) { val stamps = ArrayList<Stamp>() }
     private class MoveDrag(val layerId: String, val sx: Float, val sy: Float, val x: Int, val y: Int, val scale: Float)
@@ -137,10 +146,13 @@ class StudioSession(
 
     override fun onSurfaceSize(w: Int, h: Int) = model {
         if (w <= 0 || h <= 0 || (w == surfaceW && h == surfaceH)) return@model
-        surfaceW = w; surfaceH = h
         val d = curDoc()
-        view = CanvasView.fit(d.width, d.height, w, h)
-        viewFitted = true
+        view = if (surfaceW > 0 && !viewFitted) {
+            // The user zoomed or panned and the surface changed size (a rotation): keep the zoom and the document point at the centre of the screen.
+            val cx = view.toDocX(surfaceW / 2f); val cy = view.toDocY(surfaceH / 2f)
+            CanvasView(cx - w / 2f / view.zoom, cy - h / 2f / view.zoom, view.zoom).clamped(d.width, d.height, w, h)
+        } else { viewFitted = true; CanvasView.fit(d.width, d.height, w, h) }
+        surfaceW = w; surfaceH = h
         publishZoom(); updateFrame()
     }
 
@@ -177,6 +189,9 @@ class StudioSession(
         val t = e.timeMs
         model { for (a in actions) handle(a, t) }
     }
+
+    /** Pen hover from the canvas (main thread): fingers are taken for a palm while the pen is near and for a short grace after. */
+    fun onHover(near: Boolean, timeMs: Long) { if (!released) router.onHover(near, timeMs) }
 
     fun takeInputStamp(): Long = inputStamp.getAndSet(0)
 
@@ -272,6 +287,7 @@ class StudioSession(
     fun trimMemory() = model {
         graveyard.clear()
         if (history.trimBytes(50L * 1024 * 1024) && !trimmedToast) { trimmedToast = true; toast("Older undo steps were cleared to free memory") }
+        pruneGraveyard()
         publish()
     }
 
@@ -280,7 +296,7 @@ class StudioSession(
     private fun handle(a: Action, timeMs: Long) {
         try {
             when (a) {
-                is Action.StrokeStart -> strokeStart(a)
+                is Action.StrokeStart -> strokeStart(a, timeMs)
                 is Action.StrokeMove -> strokeMove(a, timeMs)
                 Action.StrokeEnd -> strokeEnd()
                 Action.StrokeCancel -> strokeCancel()
@@ -295,7 +311,7 @@ class StudioSession(
         }
     }
 
-    private fun strokeStart(a: Action.StrokeStart) {
+    private fun strokeStart(a: Action.StrokeStart, timeMs: Long) {
         if (_state.value.phase != Phase.READY) return
         val l = layer(activeId) as? Layer.Pixel ?: return
         val s = _state.value
@@ -306,11 +322,11 @@ class StudioSession(
                 val slot = slots[activeId] ?: return
                 ensureActivePixels()
                 val c = s.colour.array()
-                val ok = gpuCall { it.beginStroke(slot, c[0], c[1], c[2], brush.opacity.toFloat(), brush.erase, brush.hardness.toFloat(), brush.flow.toFloat()) } == true
-                if (!ok) { toast("Could not start a stroke."); return }
+                // FIFO with the stamps that follow; if it fails the commit's readStroke fails cleanly and the stroke is rolled back
+                gpuAsync { it.beginStroke(slot, c[0], c[1], c[2], brush.opacity.toFloat(), brush.erase, brush.hardness.toFloat(), brush.flow.toFloat()) }
                 val st = PaintStroke(activeId, slot, brush, c, StrokeWalker(brush))
                 drag = st
-                addPoint(st, a.x, a.y, a.pressure, 0L)
+                addPoint(st, a.x, a.y, a.pressure, timeMs)
             }
             Tool.MOVE -> {
                 if (!editable(l)) return
@@ -365,6 +381,7 @@ class StudioSession(
             updateFrame()
         } else if (d == null && _state.value.tool != Tool.SCALE) {
             val doc = curDoc()
+            viewFitted = false
             view = view.gestured(a.dx, a.dy, a.scale, a.cx, a.cy).clamped(doc.width, doc.height, surfaceW.coerceAtLeast(1), surfaceH.coerceAtLeast(1))
             publishZoom(); updateFrame()
         }
@@ -399,23 +416,27 @@ class StudioSession(
         val l = layer(st.layerId) as? Layer.Pixel
         val px = activePixels
         if (l == null || px == null || activeId != st.layerId) { gpuAsync { it.endStroke() }; return }
-        val rect = Dirty.rect(st.stamps, l.width, l.height)
-        if (rect[2] == 0) { gpuAsync { it.endStroke() }; gl.requestRender(); return }
+        val rects = StrokeTiles.rects(st.stamps, l.width, l.height)
+        if (rects.isEmpty()) { gpuAsync { it.endStroke() }; gl.requestRender(); return }
         val t0 = env.nanos()
-        val cov = FloatArray(rect[2] * rect[3])
-        val ok = gpuCall { it.readStroke(rect[0], rect[1], rect[2], rect[3], cov) } == true
-        if (!ok) { gpuAsync { it.endStroke() }; toast("Could not finish that stroke."); gl.requestRender(); return }
-        val before = PixelDelta.cut(px.rgba, l.width, rect[0], rect[1], rect[2], rect[3])
-        StrokeReference.commitRect(px.rgba, l.width, rect, cov, st.colour, st.brush)   // coverage of the rectangle only: no layer sized array
-        val after = PixelDelta.cut(px.rgba, l.width, rect[0], rect[1], rect[2], rect[3])
-        // one GPU job: the baked rectangle goes in and the live stroke goes away before the next frame, so the stroke is never drawn twice
-        gpuAsync { g -> g.updateRegion(st.slot, rect[0], rect[1], rect[2], rect[3], after); g.endStroke() }
-        history.commitStroke(st.layerId, PixelDelta(rect[0], rect[1], rect[2], rect[3], before, after))
+        // Read the coverage of every touched tile first (nothing is baked until all reads worked, so a failed read rolls the whole stroke back).
+        val covs = ArrayList<FloatArray>(rects.size)
+        for (batch in rects.chunked(8)) {   // at most 8 tiles of floats in flight, one GL round trip per batch
+            val got = gpuCall { g -> batch.map { r -> FloatArray(r[2] * r[3]).also { c -> if (!g.readStroke(r[0], r[1], r[2], r[3], c)) throw IllegalStateException("readStroke") } } }
+            if (got == null) { gpuAsync { it.endStroke() }; toast("Could not finish that stroke."); gl.requestRender(); return }
+            covs += got
+        }
+        var i = 0
+        val deltas = StrokeTiles.commit(px.rgba, l.width, rects, st.colour, st.brush) { covs[i++] }
+        // one GPU job: the baked tiles go in and the live stroke goes away before the next frame, so the stroke is never drawn twice
+        gpuAsync { g -> for (d in deltas) g.updateRegion(st.slot, d.x, d.y, d.w, d.h, d.after); g.endStroke() }
+        history.commitStrokeTiles(st.layerId, deltas)
         blank -= st.layerId
         dirty += st.layerId
         thumbs[st.layerId] = Thumbs.make(px)
         env.report("studio_commit_ms", (env.nanos() - t0) / 1_000_000)
         markDirty()
+        pruneGraveyard()
         publish()
         gl.requestRender()
         gauges()
@@ -439,14 +460,36 @@ class StudioSession(
                 thumbs[step.layerId] = Thumbs.make(px)
                 markDirty()
             }
+            is Step.SetPixelsMany -> {
+                if (activeId != step.layerId) activate(step.layerId)
+                val l = layer(step.layerId) as Layer.Pixel
+                val px = activePixels ?: return
+                step.apply(px.rgba, l.width)
+                val slot = slots[step.layerId] ?: return
+                gpuAsync { g -> for (d in step.parts) g.updateRegion(slot, d.x, d.y, d.w, d.h, if (step.useAfter) d.after else d.before) }
+                blank -= step.layerId; dirty += step.layerId; thumbs[step.layerId] = Thumbs.make(px); markDirty()
+            }
             is Step.SetDocument -> {
                 syncSlots(step.document)
                 ensureActiveValid(step.document)
                 markDirty()
             }
         }
+        pruneGraveyard()
         publish(); updateFrame(); gauges()
     }
+
+    /** Keeps the encoded pixels only of layers an undo or a redo can still bring back (history trims and new edits make others unreachable). */
+    private fun pruneGraveyard() {
+        val keep = history.restorableLayerIds()
+        graveyard.keys.retainAll(keep); lost.retainAll(keep)
+    }
+
+    /** Test hook: bytes the undo history holds. */
+    internal fun historyBytes(): Long = history.deltaBytes
+
+    /** Test hook: how many removed layers still have their pixels kept. */
+    internal fun graveyardSize(): Int = graveyard.size
 
     // ---- documents -----------------------------------------------------------------------------------------------------------------
 
@@ -466,6 +509,7 @@ class StudioSession(
         working = null; scaleBase = null
         history.commitDocument(w)
         markDirty()
+        pruneGraveyard()
     }
 
     private fun cancelWorking() {
@@ -500,6 +544,7 @@ class StudioSession(
         if (newActive != null) activate(newActive, take = newPixels[newActive])
         ensureActiveValid(next)
         markDirty()
+        pruneGraveyard()
         publish(); updateFrame(); gauges()
     }
 
@@ -637,16 +682,23 @@ class StudioSession(
 
     // ---- autosave (decision D8) ---------------------------------------------------------------------------------------------------
 
+    /** A change to save (an edit, a pause, leaving). After a run of failures an edit allows a few more slow tries and a pause or leaving allows one. */
     private fun markDirty(now: Boolean = false) {
         needsSave = true
+        if (retryHalted) { retryHalted = false; failStreak = if (now) SpaceCheck.MAX_TRIES - 1 else SpaceCheck.MAX_TRIES - 3 }
+        scheduleSave(now)
+    }
+
+    private fun scheduleSave(now: Boolean) {
         if (saving) { saveAgain = true; if (now) saveAgainNow = true; publishSave(); return }
-        val wait = if (now) 0L else lastSaveStart + SAVE_EVERY_MS - env.clock()
+        val spacing = if (saveFailed) SpaceCheck.retryDelayMs(failStreak) else SAVE_EVERY_MS
+        val wait = if (now) 0L else lastSaveStart + spacing - env.clock()
         if (wait <= 0L) startSave()
         else {
             publishSave()
             if (!timerArmed) {
                 timerArmed = true
-                env.later(wait) { env.model.execute { timerArmed = false; if (needsSave && !saving && !released) startSave() } }
+                env.later(wait) { env.model.execute { timerArmed = false; if (needsSave && !saving && !released && !retryHalted) scheduleSave(false) } }
             }
         }
     }
@@ -671,12 +723,15 @@ class StudioSession(
         env.saver.execute {
             val t0 = env.nanos()
             try {
+                // free space first: a phone that is nearly full gets one clear message instead of a half written project
+                val raw = snaps.values.sumOf { it.rgba.size.toLong() }
+                SpaceCheck.problem(fs.freeBytes(), SpaceCheck.saveEstimate(raw), SpaceCheck.SAVE_MARGIN_BYTES)?.let { throw NoSpaceException(it) }
                 val saved = store.save(doc, { p -> snaps[p.common.id] }, changed)
                 env.report("studio_autosave_ms", (env.nanos() - t0) / 1_000_000)
                 env.model.execute { onSaved(saved, snaps) }
             } catch (t: Throwable) {
                 env.error("studio save: ${t.javaClass.simpleName}: ${t.message}")
-                env.model.execute { onSaveFailed(changed, snaps) }
+                env.model.execute { onSaveFailed(changed, snaps, t is NoSpaceException || (t is java.io.IOException && fs.freeBytes() < SpaceCheck.SAVE_MARGIN_BYTES)) }
             }
         }
     }
@@ -684,17 +739,24 @@ class StudioSession(
     private fun onSaved(saved: Document, snaps: Map<String, RawPixels>) {
         for (l in saved.layers) if (l is Layer.Pixel) files[l.common.id] = l.pixelsFile
         for ((id, px) in snaps) { inFlight.remove(id); if (unsaved[id] === px) unsaved.remove(id) }
-        saving = false; saveFailed = false
+        saving = false; saveFailed = false; noSpace = false; failStreak = 0; failureNotified = false; retryHalted = false; everSaved = true
         if (saveAgain || needsSave || dirty.isNotEmpty()) { val urgent = saveAgainNow; saveAgain = false; saveAgainNow = false; markDirty(now = urgent) } else publishSave()
         gauges()
     }
 
-    private fun onSaveFailed(changed: Set<String>, snaps: Map<String, RawPixels>) {
+    /**
+     * BK-503: the work stays in memory (dirty and unsaved are kept). One notice per failure episode, the status strip says it for as long as it lasts, the retry delay doubles
+     * (5, 10, 20, 40, 60 s) and after [SpaceCheck.MAX_TRIES] failures the timer stops until the user edits, pauses or leaves.
+     */
+    private fun onSaveFailed(changed: Set<String>, snaps: Map<String, RawPixels>, full: Boolean) {
         for ((id, px) in snaps) { inFlight.remove(id); if (id != activeId) unsaved.putIfAbsent(id, px) }
         dirty += changed
-        saving = false; saveFailed = true
-        toast("Could not save. Will try again.")
-        markDirty()   // the next try waits for the five second spacing
+        saving = false; saveFailed = true; noSpace = full; failStreak++
+        if (!everSaved) fs.deleteTree(root)   // a first save that failed leaves no half written project folder behind
+        if (!failureNotified) { failureNotified = true; toast(if (full) SpaceCheck.SAVE_FAILED_FULL else SpaceCheck.SAVE_FAILED_OTHER) }
+        if (failStreak >= SpaceCheck.MAX_TRIES) { retryHalted = true; needsSave = true; publishSave(); return }
+        needsSave = true
+        scheduleSave(false)
     }
 
     // ---- plumbing ---------------------------------------------------------------------------------------------------------------------
@@ -730,6 +792,7 @@ class StudioSession(
     private fun publishZoom() { _state.update { it.copy(zoomPercent = Math.round(view.zoom * 100f)) } }
 
     private fun saveStateNow() = when {
+        saveFailed && noSpace -> SaveState.NO_SPACE
         saveFailed -> SaveState.FAILED
         saving -> SaveState.SAVING
         needsSave || dirty.isNotEmpty() -> SaveState.DIRTY

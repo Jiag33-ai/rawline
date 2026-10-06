@@ -8,6 +8,8 @@ object StudioNative {
     }
 
     external fun create(): Long
+    /** Compositors made and not yet destroyed or abandoned: 0 after leaving Studio, anything else is a leak. Any thread. */
+    external fun liveHandles(): Int
     /** null on success, else the GL error text. */
     external fun init(h: Long): String?
     external fun destroy(h: Long)

@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -125,12 +126,12 @@ private fun LayerRowView(row: LayerRow, thumb: Thumb?, session: StudioSession) {
                 Text(row.name, style = MaterialTheme.typography.bodyMedium, color = if (row.visible) Lr.TextPrimary else Lr.TextMuted, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box {
-                        SmallChip(LayerRows.blendName(row.blend), false) { blendMenu = true }
+                        SmallChip(LayerRows.blendName(row.blend), "Blend mode ${LayerRows.blendName(row.blend)}", false) { blendMenu = true }
                         LrDropdown(blendMenu, { blendMenu = false }, width = 150.dp) {
                             for (m in BlendMode.entries) LrMenuItem(LayerRows.blendName(m), { blendMenu = false; session.setBlend(row.id, m) })
                         }
                     }
-                    SmallChip("${row.opacity}%", opacityOpen) { opacityOpen = !opacityOpen }
+                    SmallChip("${row.opacity}%", "Opacity ${row.opacity} percent", opacityOpen) { opacityOpen = !opacityOpen }
                 }
             }
             Box(Modifier.size(LrDim.touch).clickable { session.setVisible(row.id, !row.visible) }.semantics { contentDescription = if (row.visible) "Hide ${row.name}" else "Show ${row.name}" }, contentAlignment = Alignment.Center) {
@@ -146,10 +147,11 @@ private fun LayerRowView(row: LayerRow, thumb: Thumb?, session: StudioSession) {
 }
 
 @Composable
-private fun SmallChip(text: String, selected: Boolean, onClick: () -> Unit) {
+private fun SmallChip(text: String, description: String, selected: Boolean, onClick: () -> Unit) {
     Box(
-        Modifier.height(24.dp).clip(RoundedCornerShape(4.dp)).background(if (selected) Lr.Surface3 else Color.Transparent).border(1.dp, if (selected) Lr.BorderStrong else Lr.BorderDefault, RoundedCornerShape(4.dp))
-            .clickable(onClick = onClick).padding(horizontal = 8.dp),
+        Modifier.minimumInteractiveComponentSize().semantics { contentDescription = description }.clickable(onClick = onClick)   // 48 dp target, the visible chip below stays 24 dp
+            .height(24.dp).clip(RoundedCornerShape(4.dp)).background(if (selected) Lr.Surface3 else Color.Transparent).border(1.dp, if (selected) Lr.BorderStrong else Lr.BorderDefault, RoundedCornerShape(4.dp))
+            .padding(horizontal = 8.dp),
         contentAlignment = Alignment.Center,
     ) { Text(text, style = MaterialTheme.typography.labelSmall, color = Lr.TextSecondary) }
 }
