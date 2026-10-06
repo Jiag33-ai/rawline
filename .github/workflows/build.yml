@@ -55,6 +55,8 @@ jobs:
           fi
       - name: Golden render tests
         run: ./tools/golden/run-golden.sh
+      - name: Colour verification (synthetic DNG charts)
+        run: ./tools/colour/run-colour.sh
       - name: Preview parser test on real S5IIX files
         run: |
           mkdir -p testdata

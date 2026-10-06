@@ -24,7 +24,7 @@ object ColorSpaces {
     private fun eotf(v: Float) = if (v <= 0.04045f) v / 12.92f else ((v + 0.055f) / 1.055f).pow(2.4f)
 
     // linear sRGB (D65) -> ProPhoto (D50), Bradford
-    private val m = floatArrayOf(0.5293f, 0.3300f, 0.1406f, 0.0984f, 0.8735f, 0.0282f, 0.0169f, 0.1177f, 0.8656f)
+    internal val SRGB_TO_WORKING = floatArrayOf(0.5293f, 0.3300f, 0.1406f, 0.0984f, 0.8735f, 0.0282f, 0.0169f, 0.1177f, 0.8656f)
 
     /**
      * display r,g,b in 0..1 -> linear working space. [useBase] false is for finished pictures (JPEG, HEIC, PNG), which are drawn with
@@ -37,9 +37,9 @@ object ColorSpaces {
             return eotf(inverse[i] * (1 - f) + inverse[i + 1] * f)
         }
         val lr = lin(r); val lg = lin(g); val lb = lin(b)
-        out[o] = m[0] * lr + m[1] * lg + m[2] * lb
-        out[o + 1] = m[3] * lr + m[4] * lg + m[5] * lb
-        out[o + 2] = m[6] * lr + m[7] * lg + m[8] * lb
+        out[o] = SRGB_TO_WORKING[0] * lr + SRGB_TO_WORKING[1] * lg + SRGB_TO_WORKING[2] * lb
+        out[o + 1] = SRGB_TO_WORKING[3] * lr + SRGB_TO_WORKING[4] * lg + SRGB_TO_WORKING[5] * lb
+        out[o + 2] = SRGB_TO_WORKING[6] * lr + SRGB_TO_WORKING[7] * lg + SRGB_TO_WORKING[8] * lb
     }
 
     private fun oetf(x: Float) = if (x <= 0.0031308f) 12.92f * x else 1.055f * x.pow(1f / 2.4f) - 0.055f
