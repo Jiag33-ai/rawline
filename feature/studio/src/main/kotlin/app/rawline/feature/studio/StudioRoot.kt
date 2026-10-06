@@ -24,6 +24,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import app.rawline.core.studio.model.SpaceCheck
 import app.rawline.core.studio.model.Document
 import app.rawline.core.studio.model.Layer
 import app.rawline.core.studio.model.LayerCommon
@@ -91,6 +92,7 @@ fun StudioRoot(modeSwitch: @Composable () -> Unit, perf: StudioPerf, appVersion:
 
     fun newBlank(p: NewProject.Preset) {
         if (busy != null || open != null) return
+        SpaceCheck.problem(context.filesDir.usableSpace, 1L * 1024 * 1024)?.let { message = it; return }
         val now = System.currentTimeMillis()
         val doc = NewProject.blank(ProjectCatalog.newId(now), "Untitled", p.width, p.height, now)
         openSession(doc, emptyMap(), onDisk = false, recovered = false)
@@ -100,7 +102,9 @@ fun StudioRoot(modeSwitch: @Composable () -> Unit, perf: StudioPerf, appVersion:
         if (uri != null && busy == null && open == null) scope.launch {
             busy = "Reading the picture"; message = null
             val px = withContext(Dispatchers.IO) { PhotoImport.decode(context, uri) }
+            val space = px?.let { SpaceCheck.problem(context.filesDir.usableSpace, it.w.toLong() * it.h * 4 / 2) }
             if (px == null) { busy = null; message = "Could not read that picture." }
+            else if (space != null) { busy = null; message = space }
             else {
                 val now = System.currentTimeMillis()
                 val layer = Layer.Pixel(LayerCommon("l1", "Photo"), px.w, px.h)

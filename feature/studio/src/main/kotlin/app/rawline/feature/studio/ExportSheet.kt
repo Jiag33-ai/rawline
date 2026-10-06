@@ -40,6 +40,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import app.rawline.core.studio.model.SpaceCheck
 import app.rawline.core.studio.render.FlattenFormat
 import app.rawline.core.studio.render.StudioExporter
 import app.rawline.core.studio.render.StudioPerf
@@ -78,6 +79,8 @@ fun ExportSheet(session: StudioSession, width: Int, height: Int, projectName: St
 
     fun startExport(where: Where, picked: android.net.Uri? = null) {
         if (running) return
+        // the picture is about one byte per pixel as JPEG, up to four as PNG; the system and the other apps need room too
+        SpaceCheck.problem(context.filesDir.usableSpace, width.toLong() * height * (if (format == FlattenFormat.PNG) 4 else 1))?.let { error = it; return }
         running = true; cancel.set(false); progress.floatValue = 0f; result = null; error = null; doneTarget = null
         val fmt = format; val q = quality; val fileName = name
         scope.launch {

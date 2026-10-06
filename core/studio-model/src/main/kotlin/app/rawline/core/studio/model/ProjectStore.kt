@@ -22,6 +22,8 @@ interface Fs {
     fun size(path: String): Long
     /** Deletes [path] and everything under it. */
     fun deleteTree(path: String)
+    /** Bytes that can still be written on the volume holding this file system. Unknown (and so never a reason to refuse) when not overridden. */
+    fun freeBytes(): Long = Long.MAX_VALUE
 }
 
 /** Straight RGBA8 pixels of one layer. */

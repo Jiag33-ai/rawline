@@ -16,7 +16,7 @@ data class Rgb(val r: Float, val g: Float, val b: Float) {
 }
 
 enum class SaveState(val label: String) {
-    SAVED("saved"), DIRTY("changes not saved yet"), SAVING("saving"), FAILED("last save failed, will try again"),
+    SAVED("saved"), DIRTY("changes not saved yet"), SAVING("saving"), FAILED("last save failed, will try again"), NO_SPACE("not saved: the phone is almost full"),
 }
 
 class UiMessage(val id: Long, val text: String)

@@ -7,6 +7,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import app.rawline.core.studio.model.SpaceCheck
 import app.rawline.core.studio.model.IndexDiff
 import app.rawline.core.studio.model.JavaFs
 import app.rawline.core.studio.model.ProjectCatalog
@@ -74,6 +75,8 @@ class StudioHomeViewModel(private val app: Application, private val perf: Studio
 
     fun duplicate(id: String) = op("Could not duplicate the project.") {
         val now = System.currentTimeMillis()
+        val size = java.io.File(app.filesDir, "$root/$id").walkTopDown().filter { it.isFile }.sumOf { it.length() }
+        SpaceCheck.problem(app.filesDir.usableSpace, size)?.let { _message.value = it; return@op }
         ProjectCatalog.duplicate(fs, root, id, ProjectCatalog.newId(now), now)
     }
 
