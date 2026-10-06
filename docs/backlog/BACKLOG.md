@@ -233,7 +233,7 @@ After these 25: baseline profile and macrobenchmarks (BK-002, BK-003, after W01 
 | N. Studio | 6 | 30 | 17 | 2 | 55 |
 | **All** | 38 | 201 | 215 | 53 | 507 |
 
-Status of the 507 entries: 15 DONE, 44 PARTLY DONE, 10 MERGED into another entry (dedupe pass, 6 Oct 2026), 19 SPEC COVERS and 2 SPEC WINS (Studio entries settled by docs/STUDIO_SPEC.md), 1 DECLINED and 1 BLOCKED; the rest are open. Merged and done entries are kept for their history and acceptance details.
+Status of the 507 entries: 25 DONE, 42 PARTLY DONE, 10 MERGED into another entry (dedupe pass, 6 Oct 2026), 19 SPEC COVERS and 2 SPEC WINS (Studio entries settled by docs/STUDIO_SPEC.md), 1 DECLINED and 1 BLOCKED; the rest are open. Merged and done entries are kept for their history and acceptance details.
 
 ## Top 30 overall (ranked)
 
@@ -262,7 +262,7 @@ Order weighs risk of losing Jai's work first, then measurement, then speed and l
 | 19 | BK-097 | E | Reject-to-trash and delete with undo (MediaStore trash and a 30 day bin) | Reject-to-trash with a confirmation and undo: culling never frees space today. |
 | 20 | BK-098 | E | Search: text, camera, lens, ISO, aperture, focal length, date range, rating, label, edited, file type, with saved searches | Structured search (lens, ISO, date, rating) with saved searches. |
 | 21 | BK-104 | E | Cull mode: full-screen one-at-a-time with pick/reject on swipe, rating on number tap, and auto-advance | Cull mode with swipe pick/reject and auto-advance (then BK-310 suggestions). |
-| 22 | BK-246 | M | [DESIGNED] Adopt Android 16 behaviours now: predictive back and edge-to-edge (targetSdk is 37) | Android 16 predictive back and edge-to-edge compliance (targetSdk is 37). |
+| 22 | BK-246 | M | [DONE] Adopt Android 16 behaviours now: predictive back and edge-to-edge (targetSdk is 37) | Android 16 predictive back and edge-to-edge compliance (targetSdk is 37). |
 | 23 | BK-145 | G | [DONE] DeviceScanner/Indexer must never prune on a partial listing (AUDIT open item 3), and add a downgrade/rollback path for Room | No pruning on a partial listing (the downgrade half is done). |
 | 24 | BK-166 | H | Bring every interactive control to 48 dp minimum hit area without changing the visual size | 48 dp touch targets without changing the look. |
 | 25 | BK-323 | M | [PARTLY DONE] The release APK carries three unused ABIs: about 22.7 MB of native code, so every sideload update is a third bigger than needed | Drop the three unused ABIs: about 22.7 MB less in every sideload update, one line in app/build.gradle.kts. |
@@ -506,8 +506,8 @@ Dependencies: BK-263 and BK-098 before BK-099; BK-096 before BK-112 and BK-256; 
 
 | ID | P | Size | Status | Title |
 | --- | --- | --- | --- | --- |
-| BK-497 | P1 | M | DESIGNED | The grid reorders itself while indexing finishes, because the sort key changes from file time to EXIF capture time (found by reading DeviceScanner and Indexer) |
-| BK-498 | P1 | S | DESIGNED | First run shows everything on the phone (`device:*`), so the S24 Ultra's thousands of JPEG and HEIC photos, screenshots and chat images bury the RAW files |
+| BK-497 | P1 | M | DONE | The grid reorders itself while indexing finishes, because the sort key changes from file time to EXIF capture time (found by reading DeviceScanner and Indexer) |
+| BK-498 | P1 | S | DONE | First run shows everything on the phone (`device:*`), so the S24 Ultra's thousands of JPEG and HEIC photos, screenshots and chat images bury the RAW files |
 | BK-474 | P1 | S |  | Imported RAWs must keep the card file's modified time, or `Photo.keyOf` (`name/size/modified`) makes every imported copy a new photo and breaks sync with edits made on the original |
 | BK-475 | P1 | M |  | A DNG that LibRaw opens but cannot decode shows no error: `unpack` returns -2 and the user sees a blank or grey frame |
 | BK-476 | P1 | S |  | Samsung Expert RAW spike: find out what compression the S24 Ultra writes before promising DNG support |
@@ -567,7 +567,7 @@ Dependencies: BK-040 before BK-132; BK-128 before BK-315 and BK-130; BK-166 befo
 | BK-210 | P1 | M-L |  | Gradle Managed Devices emulator smoke test in CI: launch, grant permissions, import a sample, open loupe, open editor, move a slider, export |
 | BK-240 | P1 | M-L | PARTLY DONE | In-app update check and install (sideload update flow with SHA-256 verification) |
 | BK-245 | P1 | S-M |  | Licence compliance pass: SegFormer weights, ML Kit beta, lensfun CC BY-SA, LibRaw LGPL relink, and an in-app licences screen |
-| BK-246 | P0 | M | DESIGNED | Adopt Android 16 behaviours now: predictive back and edge-to-edge (targetSdk is 37) |
+| BK-246 | P0 | M | DONE | Adopt Android 16 behaviours now: predictive back and edge-to-edge (targetSdk is 37) |
 | BK-232 | P1 | S-M | PARTLY DONE | In-app privacy statement and a verified "no data leaves the phone" claim |
 | BK-228 | P1 | S-M | PARTLY DONE | Choose the right foreground service type and declare it correctly for each background job |
 | BK-080 | P1 | L |  | Depth range mask using on-device depth estimation (spec item not done) |
@@ -643,10 +643,20 @@ Dependencies: BK-365 first; BK-366 and BK-367 before everything; BK-368 and BK-3
 - BK-150 Persist PerfLog samples across restarts and rotate files: DONE
 - BK-145 DeviceScanner/Indexer must never prune on a partial listing (AUDIT open item 3), and add a downgrade/rollback path for Room: DONE
 - BK-365 Reconcile every Studio requirement with the spec when docs/STUDIO_SPEC.md appears, and keep one traceability table: DONE
+- BK-285 Ask for notification permission when the first export starts, not at launch together with the photo permission: DONE
 - BK-007 Enable OpenMP (or a thread pool) inside LibRaw for the full-size decode: DONE
 - BK-444 The "16 bit" TIFF must carry 16 bits: a ramp test and the linear readback contract (audit AE-018): DONE
 - BK-461 Colour range and luminance range masks compare in a different domain from the picker (audit AE-015): DONE
 - BK-467 floatToHalf rounds values near 65520 up to infinity (audit AE-028): DONE
+- BK-246 Adopt Android 16 behaviours now: predictive back and edge-to-edge (targetSdk is 37): DONE
+- BK-426 API 37 readiness checklist (edge-to-edge, predictive back, resizability) with tests on the S24 Ultra and a large-screen emulator: DONE
+- BK-120 Persist per-source scroll position, selection and sort across rotation and process death: DONE
+- BK-497 The grid reorders itself while indexing finishes, because the sort key changes from file time to EXIF capture time (found by reading DeviceScanner and Indexer): DONE
+- BK-498 First run shows everything on the phone (`device:*`), so the S24 Ultra's thousands of JPEG and HEIC photos, screenshots and chat images bury the RAW files: DONE
+- BK-504 After the app is killed in Studio it reopens in Studio on the project list, and the open project is not offered back: DONE
+- BK-505 RAW files in Studio: the picker offers a Samsung Expert RAW DNG that Android decodes with its own colour, and RW2 is not offered; failures say only "Could not read that picture": DONE
+- BK-506 The start guard counts an impatient swipe-away during the first frame as a failed Studio start: DONE
+- BK-507 Leaving a Studio project waits up to 3 seconds for a thumbnail the user did not ask for: DONE
 - BK-352 Undo for the last rating, flag, label or batch change (snackbar): DONE
 
 Parked with a reason: BK-141 (declined in DECISIONS.md, see BK-291), BK-109 (blocked on it). P2 and P3 entries are not scheduled; pull them in when they unblock a P0/P1 item or when a milestone finishes early.
@@ -1938,16 +1948,16 @@ What exists: sources (camera roll via MediaStore, other albums, imported files, 
 - Size: S (Jai 5 minutes, then a worker). Files: none until the numbers exist. Risk: scope (a JXL decoder is 1 to 4 days).
 - Src: W15-card-import.md section 3.
 
-### BK-497 [P1] [DESIGNED] The grid reorders itself while indexing finishes, because the sort key changes from file time to EXIF capture time (found by reading DeviceScanner and Indexer)
-- Status: W29-library-first-impression.md: OrderGate, DefaultView, WhatsNew and the rawOnly filter compiled and tested on the host (23 core/model tests pass); ViewModel, scanner and screen edits specified, not compiled. Not merged.
+### BK-497 [P1] [DONE] The grid reorders itself while indexing finishes, because the sort key changes from file time to EXIF capture time (found by reading DeviceScanner and Indexer)
+- Status: Done in c59254e (W29): OrderGate and HeldOrder hold the grid order while the user is busy, rawOnly with the RAW photos and All photos chips, the one time What's New note, capture times read at the scan, grid_resort_count in the Copy report (host tests; ViewModel, scanner and screen compiled and linted). Left over: the phone checks and the numbers from the Copy report.
 - Finding: `DeviceScanner` inserts a row with `takenAt = MediaStore DATE_TAKEN if above 0, else the file's modified time` (MediaStore usually has no DATE_TAKEN for RW2). `Library` sorts newest first on `takenAt`. `Indexer.markIndexed` later overwrites `takenAt` with the EXIF capture time. A card copied with a file manager (all files within one minute of copy time, in copy order) therefore first shows in copy order and then re-sorts into shooting order, one batch at a time, while Jai is scrolling or has a photo selected. W15 keeps the original mtime for its own imports, but copies made any other way do not.
 - Why it matters to Jai: the first thing a photographer does after a shoot is scroll the grid; rows jumping under the thumb makes culling unreliable.
 - Acceptance: for new RW2 rows read the capture time from the first TIFF IFD (a 64 KB head read, no decode) in the scan itself, for the first screenful at once and the rest in the first indexing pass before the rows are inserted into the visible list; keep the visible order stable while the user is scrolling (apply a re-sort only when the list is idle for 1 s or on pull to refresh); a host test with 300 rows whose file times are in reverse shooting order checks the list order never changes after the first display; Copy report line `grid_resort_count`.
 - Size: M. Files: core/data DeviceScanner.kt, Indexer.kt, LibraryViewModel.kt, tests. Risk: low.
 - Src: DeviceScanner.kt lines 25 to 50, Indexer.kt markIndexed, core/model Library.kt sort.
 
-### BK-498 [P1] [DESIGNED] First run shows everything on the phone (`device:*`), so the S24 Ultra's thousands of JPEG and HEIC photos, screenshots and chat images bury the RAW files
-- Status: W29-library-first-impression.md: OrderGate, DefaultView, WhatsNew and the rawOnly filter compiled and tested on the host (23 core/model tests pass); ViewModel, scanner and screen edits specified, not compiled. Not merged.
+### BK-498 [P1] [DONE] First run shows everything on the phone (`device:*`), so the S24 Ultra's thousands of JPEG and HEIC photos, screenshots and chat images bury the RAW files
+- Status: Done in c59254e (W29): OrderGate and HeldOrder hold the grid order while the user is busy, rawOnly with the RAW photos and All photos chips, the one time What's New note, capture times read at the scan, grid_resort_count in the Copy report (host tests; ViewModel, scanner and screen compiled and linted). Left over: the phone checks and the numbers from the Copy report.
 - Finding: `LibraryViewModel.init` sets `source = "device:*"` when no source is saved, and `scanDevice` lists every image row plus every file named like a RAW. For a phone in daily use that is tens of thousands of rows, newest first; the RW2 files from last weekend sit below that day's screenshots. BK-450 covers the empty and "RAW files hidden" cases but not the default view when everything is allowed.
 - Why it matters to Jai: Rawline is a RAW editor; its first screen should be RAW photos.
 - Acceptance: the default filter on first run is "RAW photos" (a chip at the top of the grid, one tap to "All photos"), chosen when at least one RAW row exists after the first scan and otherwise "All photos" with the BK-450 hint; the choice is remembered; JPEG and HEIC stay reachable and editable (BK-275); the number of rows inserted at first scan is unchanged (this is a filter, not a different scan); Robolectric test of the default with a fake scanner returning 5000 images and 12 RAW.
@@ -2003,8 +2013,8 @@ What exists: sources (camera roll via MediaStore, other albums, imported files, 
 - Acceptance: optional "show edited thumbnails": after leaving the editor, render a 320 px thumbnail with the recipe (GL pass from the cached preview) and store it as the tile image; toggle in Settings; a badge variant for masks/heals.
 - Size: M. Files: EditorHost.kt, ThumbStore.kt. Risk: low-medium (storage, GPU).
 
-### BK-120 [P2] [PARTLY DONE] Persist per-source scroll position, selection and sort across rotation and process death
-- Status: Columns, selection and the filter panel flag are rememberSaveable and the Activity keeps its state on rotation. Left over: the filter and sort and the column count on a cold start, and the scroll position (W16-platform.md, 9 host tests).
+### BK-120 [P2] [DONE] Persist per-source scroll position, selection and sort across rotation and process death
+- Status: Done in eec8960 (W16): filter and sort (libraryFilter), column count and the top photo are stored and restored after a cold start (LibraryFilterJson, GridRows.topPhotoId and restoreIndex, tested). Left over: the phone check.
 - Problem: AUDIT item 4: rotation resets selection; `source` and `folder` are in prefs but scroll position, filters, columns (`mutableIntStateOf(5)` not saved) are not.
 - Acceptance: `rememberSaveable` and a `SavedStateHandle` in LibraryViewModel; columns saved in prefs; grid returns to the same photo after viewing a photo and after the process is killed.
 - Size: S. Files: LibraryScreen.kt, LibraryViewModel.kt. Risk: low.
@@ -2752,8 +2762,8 @@ Facts: Settings is a single scrolling column (version, built, LibRaw, debug over
 - Acceptance: all user-facing strings in `res/values/strings.xml` with plurals; a lint check or unit test that scans for em dashes (the project rule) and American spellings (colour, grey, centre, organise) in resources and docs.
 - Size: M. Files: every feature module. Risk: low (mechanical).
 
-### BK-285 [P2] [PARTLY DONE] Ask for notification permission when the first export starts, not at launch together with the photo permission
-- Status: Already in the code (checked 6 Oct 2026): queueExport asks POST_NOTIFICATIONS once at the first export, not at launch. Left over: extract the rule into a tested function and show the one line reason (W16-platform.md).
+### BK-285 [P2] [DONE] Ask for notification permission when the first export starts, not at launch together with the photo permission
+- Status: Done in eec8960 (W16): NotificationRule (tested) decides the one time ask at the first export and the one line reason is shown first. Left over: the phone check.
 - Problem: `MainActivity` launches the media permission request and `POST_NOTIFICATIONS` request in the same `LaunchedEffect` on first launch (Android 13+), stacking two system dialogs before Jai has seen the app.
 - Acceptance: notifications are requested the first time an export is queued with a one-line reason; declining does not stop exports (the foreground service still runs; the notification is hidden by the system).
 - Size: S. Files: MainActivity.kt. Risk: low.
@@ -3209,8 +3219,8 @@ Facts: release APK is signed with a keystore committed to the repo (`app/rawline
 
 # AREA M: PLATFORM, PANASONIC AND COMPOSE SPECIFICS
 
-### BK-246 [P0] [DESIGNED] Adopt Android 16 behaviours now: predictive back and edge-to-edge (targetSdk is 37)
-- Status: W16-platform.md: guard tests (manifest rules, BackHandler inventory) run on the host and are red on main for the missing enableOnBackInvokedCallback, green after the one line edit; phone checks listed. Not merged.
+### BK-246 [P0] [DONE] Adopt Android 16 behaviours now: predictive back and edge-to-edge (targetSdk is 37)
+- Status: Done in eec8960 (W16): enableOnBackInvokedCallback on the application, and PlatformRulesTest reads the manifest and every BackHandler (red before the manifest edit, green after); docs/PLATFORM.md carries the back order. Left over: the phone back checks and a tablet emulator run.
 - Problem: apps targeting 36 and up get predictive back animations by default and cannot opt out of edge-to-edge; `onBackPressed` is not called. The app uses `BackHandler` in places (LibraryScreen, LoupeScreen, EditorScreen, MaskTray, EditorHost) and a custom nav: the system back-to-home animation may preview the wrong destination or `BackHandler` ordering may break (for example crop X vs Back).
 - Acceptance: `android:enableOnBackInvokedCallback="true"` explicit, every screen uses `PredictiveBackHandler` or `BackHandler` consistently, back from editor shows the loupe as the revealed screen, crop X vs Back precedence tested on the phone; insets verified on gesture and 3 button navigation, display cutout, and landscape.
 - Size: M. Files: AndroidManifest.xml, MainActivity.kt, EditorHost.kt, LibraryScreen.kt, LoupeScreen.kt, EditorScreen.kt. Risk: medium.
@@ -3321,8 +3331,8 @@ Facts: release APK is signed with a keystore committed to the repo (`app/rawline
 - Acceptance: the report adds `GL_MAX_COMPUTE_WORK_GROUP_INVOCATIONS`, `GL_MAX_COMPUTE_SHARED_MEMORY_SIZE`, `GL_MAX_COMPUTE_WORK_GROUP_SIZE`, `GL_MAX_ARRAY_TEXTURE_LAYERS`, `GL_MAX_TEXTURE_SIZE`, `GL_MAX_COLOR_ATTACHMENTS`, and presence of `GL_EXT_shader_framebuffer_fetch`, `GL_EXT_texture_norm16`, `GL_EXT_color_buffer_float`, `GL_QCOM_*` tiling hints; a short table of the numbers for the S24 Ultra goes in docs/PERF.md so later designs use real limits.
 - Size: S. Files: core/cache/GlInfo.kt. Risk: low.
 
-### BK-426 [P2] [DESIGNED] API 37 readiness checklist (edge-to-edge, predictive back, resizability) with tests on the S24 Ultra and a large-screen emulator
-- Status: W16-platform.md: guard tests (manifest rules, BackHandler inventory) run on the host and are red on main for the missing enableOnBackInvokedCallback, green after the one line edit; phone checks listed. Not merged.
+### BK-426 [P2] [DONE] API 37 readiness checklist (edge-to-edge, predictive back, resizability) with tests on the S24 Ultra and a large-screen emulator
+- Status: Done in eec8960 (W16): enableOnBackInvokedCallback on the application, and PlatformRulesTest reads the manifest and every BackHandler (red before the manifest edit, green after); docs/PLATFORM.md carries the back order. Left over: the phone back checks and a tablet emulator run.
 - Facts: targetSdk is already 37. Edge-to-edge cannot be opted out of (since API 36) and predictive back animations are on by default; Android 17 (API 37) removes the developer opt-out for orientation and resizability restrictions on large screens (sw 600 dp and wider), according to the Android Developers blog post "Prepare your app for the resizability and orientation changes in Android 17" (February 2026, checked 6 Oct 2026). The S24 Ultra is a phone and is not affected by the large-screen rule; the Studio spec says phone portrait and landscape only.
 - Acceptance: the manifest has no `screenOrientation` lock and no `resizeableActivity=false` (verify and keep a test that fails if one is added); a one-time run on a large-screen emulator (tablet profile) to confirm that nothing crashes or becomes unusable (letterboxed is acceptable, crashes are not); the edge-to-edge insets are tested on gesture and three-button navigation; the predictive back list from BK-246 is ticked off; the checklist is stored in docs/PLATFORM.md and re-run when the next API level's behaviour changes are published.
 - Size: S-M. Files: AndroidManifest.xml, docs, tests. Risk: low.
@@ -3655,25 +3665,29 @@ Status of the spec: docs/STUDIO_SPEC.md exists (commit 6d62008). Where an entry 
 - Size: S. Files: .github/workflows/build.yml, tools/commit-msg-check.sh. Risk: low.
 - Src: `git log --grep=Sonnet`, CLAUDE.md rules.
 
-### BK-504 [P2] After the app is killed in Studio it reopens in Studio on the project list, and the open project is not offered back
+### BK-504 [P2] [DONE] After the app is killed in Studio it reopens in Studio on the project list, and the open project is not offered back
+- Status: Done in 318015e (W31, Studio S1d): start mode window, OpenMark and the Continue card, RAW and DNG messages in both pickers, a swipe away is not a failed start, the thumbnail from the autosave path with Close never waiting (host tests; Compose and app edits compiled and linted). Left over: the phone checks (docs/STUDIO_STATUS.md).
 - Finding: `ModeState` restores the last mode, so a user who tried Studio once and was killed there opens Rawline in Studio every time until they switch; `StudioRoot`'s `open` is plain `remember`, so a process death returns to the project list, not the canvas, and nothing says which project was open.
 - Acceptance: start in Develop unless the last session ended on the Studio home or canvas less than 30 minutes ago; the Studio home shows a "Continue <name>" card first when the last session ended with a project open (cleared by a normal Close); PHONE-TEST-S1 step 7 passes.
 - Size: S. Files: Mode.kt, StudioRoot.kt, StudioHome.kt, tests. Risk: low.
 - Src: Mode.kt startMode, StudioRoot.kt.
 
-### BK-505 [P2] RAW files in Studio: the picker offers a Samsung Expert RAW DNG that Android decodes with its own colour, and RW2 is not offered; failures say only "Could not read that picture"
+### BK-505 [P2] [DONE] RAW files in Studio: the picker offers a Samsung Expert RAW DNG that Android decodes with its own colour, and RW2 is not offered; failures say only "Could not read that picture"
+- Status: Done in 318015e (W31, Studio S1d): start mode window, OpenMark and the Continue card, RAW and DNG messages in both pickers, a swipe away is not a failed start, the thumbnail from the autosave path with Close never waiting (host tests; Compose and app edits compiled and linted). Left over: the phone checks (docs/STUDIO_STATUS.md).
 - Finding: `PhotoImport.decode` uses `ImageDecoder`, so a DNG goes through Android's raw rendering (not Rawline's pipeline) and looks different from the same file in Develop; an RW2 is not an image type to MediaStore, so the photo picker usually does not list it. The hand-off from Develop (W26) is the intended way.
 - Acceptance: until the hand-off exists the home says in one line where RAW files come from ("RAW photos open from Develop"); a picked DNG shows a notice "Rendered by Android, so colours can differ from Develop" on the layer; the decode failure message names the cause (unsupported format, too large, damaged); PHONE-TEST-S1 step 5 records the real behaviour.
 - Size: S. Files: StudioRoot.kt, PhotoImport.kt, StudioHome.kt. Risk: low.
 - Src: PhotoImport.kt, StudioRoot.kt photo launcher.
 
-### BK-506 [P3] The start guard counts an impatient swipe-away during the first frame as a failed Studio start
+### BK-506 [P3] [DONE] The start guard counts an impatient swipe-away during the first frame as a failed Studio start
+- Status: Done in 318015e (W31, Studio S1d): start mode window, OpenMark and the Continue card, RAW and DNG messages in both pickers, a swipe away is not a failed start, the thumbnail from the autosave path with Close never waiting (host tests; Compose and app edits compiled and linted). Left over: the phone checks (docs/STUDIO_STATUS.md).
 - Finding: `StartGuard` increments on every Studio start and resets only when the home has drawn two frames. Two quick app kills while the home loads (a slow cold start on a busy phone) flip the next start to Develop with the notice "Studio did not start twice".
 - Acceptance: count a start as failed only if the process died from a crash (the existing `ApplicationExitInfo` reader reports the reason) or took over 10 s; test with a fake exit reason list.
 - Size: S. Files: Mode.kt, RawlineApplication (ExitReasons), tests. Risk: low.
 - Src: Mode.kt StartGuard.
 
-### BK-507 [P3] Leaving a Studio project waits up to 3 seconds for a thumbnail the user did not ask for
+### BK-507 [P3] [DONE] Leaving a Studio project waits up to 3 seconds for a thumbnail the user did not ask for
+- Status: Done in 318015e (W31, Studio S1d): start mode window, OpenMark and the Continue card, RAW and DNG messages in both pickers, a swipe away is not a failed start, the thumbnail from the autosave path with Close never waiting (host tests; Compose and app edits compiled and linted). Left over: the phone checks (docs/STUDIO_STATUS.md).
 - Finding: `CanvasScreen.leave` renders the project thumbnail and waits at most 3 s before closing, with a spinner. The limit is real but every Close can cost it on a big project.
 - Acceptance: write the thumbnail from the autosave path (after a quiet 2 s) so Close is immediate; `studio_leave_ms` in the Copy report; phone: Close under 500 ms on a 12 MP project (measure, no claim before).
 - Size: S. Files: CanvasScreen.kt, StudioSession.kt. Risk: low.
