@@ -1,0 +1,125 @@
+--- a/core/native/src/main/cpp/raw_decode.cpp
++++ b/core/native/src/main/cpp/raw_decode.cpp
+@@ -42,4 +42,5 @@
+     P.med_passes = 0;
+     P.fbdd_noiserd = 0;
++    P.adjust_maximum_thr = 0.f;   // look version 2: the frame's brightest pixel must not move the white point (the v1 factor is reported in out.v1Scale)
+ 
+     int r = lr.open_file(path.c_str());
+@@ -58,4 +59,11 @@
+     out.camera = std::string(lr.imgdata.idata.make) + " " + lr.imgdata.idata.model;
+     for (int i = 0; i < 4; i++) out.wbMul[i] = lr.imgdata.color.cam_mul[i];
++    {   // LibRaw's own rule for the white point it would have lowered (adjust_maximum, default threshold 0.75), evaluated on the unscaled decode
++        const auto &C = lr.imgdata.color;
++        float mx = float(C.maximum), dm = float(C.data_maximum);
++        out.v1Scale = (dm > 0.f && dm < mx && dm > mx * 0.75f) ? mx / dm : 1.f;
++        float lo = std::min(C.cam_mul[0], std::min(C.cam_mul[1], C.cam_mul[2])), hi = std::max(C.cam_mul[0], std::max(C.cam_mul[1], C.cam_mul[2]));
++        out.wbGain = (lo > 0.f) ? hi / lo : 1.f;   // pre_mul is normalised by its largest member, so a neutral lands at min/max of cam_mul: this brings it back to 1
++    }
+     out.width = w;
+     out.height = h;
+--- a/core/native/src/main/cpp/raw_decode.h
++++ b/core/native/src/main/cpp/raw_decode.h
+@@ -48,4 +48,6 @@
+     std::string camera;
+     float wbMul[4] = {1, 1, 1, 1};
++    float v1Scale = 1.f;   // factor LibRaw's default white point rule would have applied (look version 1)
++    float wbGain = 1.f;    // brings a neutral back to the level it has at unity white balance (look version 2)
+ };
+ 
+--- a/core/native/src/main/cpp/engine/engine.h
++++ b/core/native/src/main/cpp/engine/engine.h
+@@ -29,4 +29,6 @@
+     void updateOverlayRegion(int x, int y, int w, int h, const uint8_t *rgbaHalf);   // premultiplied RGBA half float
+     void setBaseCurve(const float *lut256);
++    /** Multiplier applied to every source texel (look version: 1 = LibRaw's old white point rule, 2 = white balance neutral gain). */
++    void setSrcGain(float g) { if (g != srcGain_) { srcGain_ = g; invalidateAnalysis(); } }
+ 
+     /** Size in pixels of the final image for these params at full source resolution. */
+@@ -91,4 +93,5 @@
+     Target l0_, bs_, bl_, bd_, tmp_, e_, outT_, eS_, outS_;   // eS_ and outS_: small renders (see drawOutput)
+     int srcW_ = 0, srcH_ = 0, srcLevels_ = 1;
++    float srcGain_ = 1.f;
+     int overlayW_ = 0;
+     uint64_t analysisKey_ = ~0ull;
+--- a/core/native/src/main/cpp/engine/engine.cpp
++++ b/core/native/src/main/cpp/engine/engine.cpp
+@@ -375,4 +375,5 @@
+     setGeometryUniforms(lowres_, p);
+     float ratio = std::max(float(ow) / lw, float(oh) / lh);
++    glUniform1f(lowres_.u("uSrcGain"), srcGain_);
+     glUniform1f(lowres_.u("uLod"), std::clamp(std::log2(std::max(1.f, ratio)), 0.f, float(srcLevels_ - 1)));
+     glBindFramebuffer(GL_FRAMEBUFFER, l0_.fbo);
+@@ -431,4 +432,5 @@
+     // How many source pixels land on one output pixel (oriented crop size is in source pixels already).
+     float lod = std::log2(std::max(1.f, std::max(hx, hy)));
++    glUniform1f(pr.u("uSrcGain"), srcGain_);
+     glUniform1f(pr.u("uLod"), std::clamp(lod, 0.f, float(srcLevels_ - 1)));
+     glUniform1i(pr.u("uNumMasks"), int(p[G_NUM_MASKS] + 0.5f));
+--- a/core/native/src/main/cpp/shaders/main.frag
++++ b/core/native/src/main/cpp/shaders/main.frag
+@@ -20,4 +20,5 @@
+ uniform vec2 uOutPx;         // pixels in the render target
+ uniform float uLod;
++uniform float uSrcGain;      // look version: 1 reproduces LibRaw's old white point rule, 2 is the white balance neutral gain
+ uniform int uNumMasks;
+ uniform int uShowMask;
+@@ -253,5 +254,5 @@
+     vec2 guv = clamp(g.xy, 0.0, 1.0);
+     vec4 s = textureLod(uSrc, guv, uLod);
+-    vec3 c = s.rgb;
++    vec3 c = s.rgb * uSrcGain;
+     // Lens profile: lateral chromatic aberration (red and blue sampled at their own radius) and vignetting
+     vec2 sd = (guv - 0.5) * uSrcSize;
+@@ -260,6 +261,6 @@
+         float sr = uTcaR.x + rn * (uTcaR.y + rn * uTcaR.z);
+         float sb = uTcaB.x + rn * (uTcaB.y + rn * uTcaB.z);
+-        c.r = textureLod(uSrc, clamp(0.5 + (guv - 0.5) * sr, 0.0, 1.0), uLod).r;
+-        c.b = textureLod(uSrc, clamp(0.5 + (guv - 0.5) * sb, 0.0, 1.0), uLod).b;
++        c.r = textureLod(uSrc, clamp(0.5 + (guv - 0.5) * sr, 0.0, 1.0), uLod).r * uSrcGain;
++        c.b = textureLod(uSrc, clamp(0.5 + (guv - 0.5) * sb, 0.0, 1.0), uLod).b * uSrcGain;
+     }
+     // Heal and remove patches are rendered from the source as it is (no lens gain, no CA correction), so they are laid over it
+--- a/core/native/src/main/cpp/shaders/lowres.frag
++++ b/core/native/src/main/cpp/shaders/lowres.frag
+@@ -6,9 +6,10 @@
+ uniform sampler2D uSrc;
+ uniform float uLod;
++uniform float uSrcGain;
+ //@include geometry.glsl
+ const vec3 Y = vec3(0.28807, 0.71184, 0.0000857);
+ void main() {
+     vec3 g = srcUv(vUv);
+-    vec3 c = textureLod(uSrc, clamp(g.xy, 0.0, 1.0), uLod).rgb;
++    vec3 c = textureLod(uSrc, clamp(g.xy, 0.0, 1.0), uLod).rgb * uSrcGain;
+     c = max(c, 0.0);
+     oColor = vec4(dot(c, Y), min(c.r, min(c.g, c.b)), 0.0, 1.0);
+--- a/tools/golden/golden.cpp
++++ b/tools/golden/golden.cpp
+@@ -14,4 +14,5 @@
+ #include <string>
+ 
++#include "engine/base_curve.h"
+ #include "engine/engine.h"
+ #include "engine/halfs.h"
+@@ -138,4 +139,5 @@
+         {"saturation", S_SATURATION}, {"texture", S_TEXTURE}, {"clarity", S_CLARITY}, {"dehaze", S_DEHAZE}};
+     bool autofit = false, mark = false, useMaskExposure = false;
++    int look = 2;
+     float maskExposure = 0.f;
+     for (int i = 5; i < argc; i++) {
+@@ -146,4 +148,5 @@
+         float v = float(atof(a.c_str() + eq + 1));
+         if (blockSlots.count(k)) p[kOffBlocks + blockSlots[k]] = v;
++        else if (k == "look") look = int(v);
+         else if (k == "sharpen") p[G_DETAIL] = v;
+         else if (k == "nrl") p[G_NR] = v;
+@@ -238,5 +241,7 @@
+     }
+     if (useMaskExposure) p[kOffBlocks + kBlockFloats + S_EXPOSURE] = maskExposure;
+-    fprintf(stderr, "SRC %d %d %d\n", img.width, img.height, ori);
++    eng.setBaseCurve(look == 1 ? kBaseCurve : kBaseCurve2);
++    eng.setSrcGain(look == 1 ? img.v1Scale : img.wbGain);
++    fprintf(stderr, "SRC %d %d %d look %d gain %.4f\n", img.width, img.height, ori, look, look == 1 ? img.v1Scale : img.wbGain);
+     if (autofit) {
+         fitCrop(p.data(), float(img.width), float(img.height));

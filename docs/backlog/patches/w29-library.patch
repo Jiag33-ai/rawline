@@ -1,0 +1,21 @@
+--- a/core/model/src/main/kotlin/app/rawline/core/model/Library.kt
++++ b/core/model/src/main/kotlin/app/rawline/core/model/Library.kt
+@@ -10,6 +10,8 @@
+     val edited: EditedFilter = EditedFilter.ANY,
+     val camera: String? = null,
+     val sort: SortOrder = SortOrder.NEWEST,
++    /** BK-498: show RAW photos only (the first run default when the phone has any). A view choice, not a filter the user built, so it does not count in [isActive]. */
++    val rawOnly: Boolean = false,
+ ) {
+     val isActive get() = minRating > 0 || flag != FlagFilter.ANY || edited != EditedFilter.ANY || camera != null
+ 
+@@ -18,7 +20,8 @@
+             it.rating >= minRating &&
+                 when (flag) { FlagFilter.ANY -> true; FlagFilter.PICK -> it.flag == 1; FlagFilter.REJECT -> it.flag == -1; FlagFilter.NONE -> it.flag == 0 } &&
+                 when (edited) { EditedFilter.ANY -> true; EditedFilter.EDITED -> it.edited; EditedFilter.UNEDITED -> !it.edited } &&
+-                (camera == null || it.camera == camera)
++                (camera == null || it.camera == camera) &&
++                (!rawOnly || it.kind == Kind.RAW)
+         }
+         return when (sort) {
+             SortOrder.NEWEST -> f.sortedWith(compareByDescending<Photo> { if (it.takenAt > 0) it.takenAt else it.modified }.thenByDescending { it.id })
