@@ -30,7 +30,12 @@ data class Photo(
     val edited: Boolean = false,
 ) {
     /** Stable across re-indexing: file name, size and modified time. */
-    val key: String get() = "$name|$size|$modified"
+    val key: String get() = keyOf(name, size, modified)
+
+    companion object {
+        /** The one place the edit key is built, so a future content based key has a single seam (see docs/DECISIONS.md). */
+        fun keyOf(name: String, size: Long, modified: Long): String = "$name|$size|$modified"
+    }
 }
 
 object FileTypes {

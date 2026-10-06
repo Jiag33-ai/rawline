@@ -25,6 +25,7 @@ androidx-navigation-compose = { module = "androidx.navigation:navigation-compose
 androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
 junit = { module = "junit:junit", version.ref = "junit" }
 json = { module = "org.json:json", version = "20250517" }
+sqlite-jdbc = { module = "org.xerial:sqlite-jdbc", version = "3.41.2.2" }
 kxml = { module = "net.sf.kxml:kxml2", version = "2.3.0" }
 
 androidx-room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }

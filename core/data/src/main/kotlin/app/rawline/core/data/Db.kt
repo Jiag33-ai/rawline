@@ -56,7 +56,11 @@ data class EditEntity(@PrimaryKey val key: String, val json: String, val updated
 
 /** Rating, flag and colour label, kept by content key so they survive re-indexing. */
 @Entity(tableName = "meta")
-data class MetaEntity(@PrimaryKey val key: String, val rating: Int, val flag: Int, val label: Int)
+data class MetaEntity(
+    @PrimaryKey val key: String, val rating: Int, val flag: Int, val label: Int,
+    /** When the user last changed this row (millis). 0 for rows from before v4 or from a backup without times. */
+    @ColumnInfo(defaultValue = "0") val updatedAt: Long = 0,
+)
 
 /** One entry of the export queue. status: 0 waiting, 1 running, 2 done, 3 failed, 4 cancelled. */
 @Entity(tableName = "export_jobs")
@@ -76,7 +80,7 @@ interface ExportDao {
     suspend fun finish(id: Long, status: Int, message: String?, out: String?, progress: Float)
     @Query("UPDATE export_jobs SET status = 1, progress = 0 WHERE id = :id") suspend fun start(id: Long)
     @Query("UPDATE export_jobs SET progress = :p WHERE id = :id") suspend fun progress(id: Long, p: Float)
-    @Query("UPDATE export_jobs SET status = 0, progress = 0, message = NULL WHERE status IN (1, 3, 4) AND id = :id") suspend fun retry(id: Long)
+    @Query("UPDATE export_jobs SET status = 0, progress = 0, message = NULL WHERE status IN (3, 4) AND id = :id") suspend fun retry(id: Long)
     @Query("UPDATE export_jobs SET status = 0 WHERE status = 1") suspend fun resetRunning()
     @Query("UPDATE export_jobs SET status = 4, message = 'Cancelled' WHERE status = 0") suspend fun cancelWaiting()
     @Query("UPDATE export_jobs SET status = 4, message = 'Cancelled' WHERE id = :id AND status = 0") suspend fun cancel(id: Long)
@@ -182,18 +186,39 @@ interface EditDao {
     @Query("DELETE FROM presets WHERE id = :id") suspend fun deletePreset(id: Long)
 }
 
-@Database(entities = [PhotoEntity::class, EditEntity::class, SnapshotEntity::class, PresetEntity::class, MetaEntity::class, ExportJobEntity::class], version = 3, exportSchema = false)
+@Database(entities = [PhotoEntity::class, EditEntity::class, SnapshotEntity::class, PresetEntity::class, MetaEntity::class, ExportJobEntity::class], version = 4, exportSchema = true)
 abstract class RawlineDb : RoomDatabase() {
     abstract fun photos(): PhotoDao
     abstract fun edits(): EditDao
     abstract fun exports(): ExportDao
 
     companion object {
+        const val VERSION = 4
+
+        /** Plain SQL so a host-side test can run it against the committed schema JSON. */
+        val SQL_2_3 = listOf("CREATE TABLE IF NOT EXISTS `export_jobs` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `photoKey` TEXT NOT NULL, `photoUri` TEXT NOT NULL, `photoName` TEXT NOT NULL, `settingsJson` TEXT NOT NULL, `status` INTEGER NOT NULL, `progress` REAL NOT NULL, `message` TEXT, `outputUri` TEXT, `createdAt` INTEGER NOT NULL)")
+        val SQL_3_4 = listOf("ALTER TABLE `meta` ADD COLUMN `updatedAt` INTEGER NOT NULL DEFAULT 0")
+        /** Downgrade from 4 to 3 (older build installed over a newer one): keeps every row, drops only the new column. */
+        val SQL_4_3 = listOf(
+            "CREATE TABLE `meta_old` (`key` TEXT NOT NULL, `rating` INTEGER NOT NULL, `flag` INTEGER NOT NULL, `label` INTEGER NOT NULL, PRIMARY KEY(`key`))",
+            "INSERT INTO `meta_old` (`key`, `rating`, `flag`, `label`) SELECT `key`, `rating`, `flag`, `label` FROM `meta`",
+            "DROP TABLE `meta`",
+            "ALTER TABLE `meta_old` RENAME TO `meta`",
+        )
+
+        private fun migration(from: Int, to: Int, sql: List<String>) = object : androidx.room.migration.Migration(from, to) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) { sql.forEach { db.execSQL(it) } }
+        }
+
+        val MIGRATIONS = arrayOf(migration(2, 3, SQL_2_3), migration(3, 4, SQL_3_4), migration(4, 3, SQL_4_3))
+
+        /**
+         * Version 1 held only the photos index (no edits, ratings or presets), and a re-scan rebuilds it, so wiping it loses
+         * nothing the user made. Every later version has an explicit migration, including the downgrade, so user edits are
+         * never dropped: there is deliberately no destructive fallback for downgrades. A database from a build newer than
+         * [VERSION] with no downgrade step makes Room throw at open rather than erase it.
+         */
         fun create(context: Context): RawlineDb =
-            Room.databaseBuilder(context, RawlineDb::class.java, "rawline.db").addMigrations(object : androidx.room.migration.Migration(2, 3) {
-                override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
-                    db.execSQL("CREATE TABLE IF NOT EXISTS `export_jobs` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `photoKey` TEXT NOT NULL, `photoUri` TEXT NOT NULL, `photoName` TEXT NOT NULL, `settingsJson` TEXT NOT NULL, `status` INTEGER NOT NULL, `progress` REAL NOT NULL, `message` TEXT, `outputUri` TEXT, `createdAt` INTEGER NOT NULL)")
-                }
-            }).fallbackToDestructiveMigrationFrom(true, 1).build()
+            Room.databaseBuilder(context, RawlineDb::class.java, "rawline.db").addMigrations(*MIGRATIONS).fallbackToDestructiveMigrationFrom(true, 1).build()
     }
 }
