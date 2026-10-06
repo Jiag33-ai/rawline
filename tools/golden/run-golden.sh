@@ -9,16 +9,17 @@ mkdir -p "$W" "$ROOT/tools/golden/ref"
 LR_VER=0.22.2
 LR_SHA=de86b035655accff8d4010f1a221fdf50d353cb7b1422ba26f14a0db92612cfa
 
-if [ ! -f "$W/libraw_host.a" ]; then
+# built with OpenMP like the Android library, so the golden renders cover the threaded demosaic
+if [ ! -f "$W/libraw_host_omp.a" ]; then
   curl -fsSL -o "$W/libraw.tgz" "https://www.libraw.org/data/LibRaw-$LR_VER.tar.gz"
   echo "$LR_SHA  $W/libraw.tgz" | sha256sum -c -
   tar xzf "$W/libraw.tgz" -C "$W"
-  mkdir -p "$W/obj"
+  rm -rf "$W/obj"; mkdir -p "$W/obj"
   ( cd "$W/LibRaw-$LR_VER" && find src -name '*.cpp' ! -path '*/integration/*' ! -name '*_ph.cpp' | \
-      xargs -P"$(nproc)" -I{} sh -c 'g++ -O2 -w -c -DLIBRAW_BUILDLIB -I. {} -o "'"$W"'/obj/$(echo {} | tr / _).o"' )
-  ar rcs "$W/libraw_host.a" "$W"/obj/*.o
+      xargs -P"$(nproc)" -I{} sh -c 'g++ -O2 -w -fopenmp -c -DLIBRAW_BUILDLIB -I. {} -o "'"$W"'/obj/$(echo {} | tr / _).o"' )
+  ar rcs "$W/libraw_host_omp.a" "$W"/obj/*.o
 fi
-LIBRAW_SRC="$W/LibRaw-$LR_VER" LIBRAW_A="$W/libraw_host.a" "$ROOT/tools/golden/build.sh" >/dev/null
+LIBRAW_SRC="$W/LibRaw-$LR_VER" LIBRAW_A="$W/libraw_host_omp.a" "$ROOT/tools/golden/build.sh" >/dev/null
 
 SAMPLE="$W/P1055415.RW2"
 [ -f "$SAMPLE" ] || curl -fsSL -o "$SAMPLE" https://raw.pixls.us/data/Panasonic/DC-S5M2X/P1055415.RW2

@@ -2,6 +2,12 @@ package app.rawline.core.nativelib
 
 object Native {
     init {
+        // LibRaw runs its demosaic on OpenMP threads (libomp is linked into libraw.so). Do not let idle workers spin after each
+        // parallel region (the default keeps them busy for 200 ms): set before the library is loaded, which is when libomp reads it.
+        try {
+            android.system.Os.setenv("KMP_BLOCKTIME", "0", false)
+            android.system.Os.setenv("OMP_WAIT_POLICY", "passive", false)
+        } catch (_: Throwable) {}
         System.loadLibrary("raw")
         System.loadLibrary("rawline_jni")
     }

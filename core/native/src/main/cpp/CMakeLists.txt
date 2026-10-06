@@ -19,7 +19,11 @@ list(FILTER LIBRAW_SOURCES EXCLUDE REGEX "/integration/|_ph\\.cpp$")
 add_library(raw SHARED ${LIBRAW_SOURCES})
 target_include_directories(raw PUBLIC ${libraw_src_SOURCE_DIR})
 target_compile_definitions(raw PRIVATE LIBRAW_BUILDLIB)
-target_compile_options(raw PRIVATE -O2 -w)
+# LibRaw's AHD demosaic and several colour passes are `#pragma omp` loops: without OpenMP a full resolution decode runs on one core.
+# libomp is linked statically (-static-openmp, libomp.a ships with the NDK for arm64), so no extra .so has to be packaged and loaded.
+# Output is bit identical to the single threaded build (checked on the sample RAW, tools/golden).
+target_compile_options(raw PRIVATE -O3 -DNDEBUG -fopenmp -w)
+target_link_options(raw PRIVATE -fopenmp -static-openmp -Wl,--exclude-libs,libomp.a)   # do not export the runtime's symbols to other libraries
 set_target_properties(raw PROPERTIES OUTPUT_NAME "raw")
 
 # Shader sources are embedded at configure time.

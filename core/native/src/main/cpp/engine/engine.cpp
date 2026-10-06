@@ -18,6 +18,7 @@ namespace {
 
 constexpr int kMargin = 8;
 constexpr int kAnalysisEdge = 512;
+constexpr int kSmallEdge = 512;   // renders no larger than this on either side use the small, fixed size targets
 
 std::string expandIncludes(const char *src) {
     std::string in(src), out;
@@ -100,6 +101,7 @@ bool Engine::build(Prog &p, const char *vs, const char *fs, std::string &err) {
         return false;
     }
     p.id = glCreateProgram();
+    p.loc.clear();
     glAttachShader(p.id, v);
     glAttachShader(p.id, f);
     glLinkProgram(p.id);
@@ -176,6 +178,7 @@ void Engine::freeTarget(Target &t) {
 void Engine::ensureTarget(Target &t, int w, int h, GLenum fmt) {
     if (t.tex && t.w == w && t.h == h && t.fmt == fmt) return;
     freeTarget(t);
+    targetAllocs_++;
     t.w = w; t.h = h; t.fmt = fmt;
     // float32 textures are only filterable with an extension; targets are read with texelFetch or exact texel coordinates there
     t.tex = makeTex2D(GL_TEXTURE_2D, fmt == GL_RGBA32F ? GL_NEAREST : GL_LINEAR);
@@ -188,7 +191,7 @@ void Engine::ensureTarget(Target &t, int w, int h, GLenum fmt) {
 
 void Engine::release() {
     if (!ready_) return;
-    for (Target *t : {&l0_, &bs_, &bl_, &bd_, &tmp_, &e_, &outT_}) freeTarget(*t);
+    for (Target *t : {&l0_, &bs_, &bl_, &bd_, &tmp_, &e_, &outT_, &eS_, &outS_}) freeTarget(*t);
     GLuint texs[] = {srcTex_, blocksTex_, masksTex_, curvesTex_, layersTex_, overlayTex_, baseTex_, baseTex32_};
     glDeleteTextures(8, texs);
     glDeleteProgram(lowres_.id); glDeleteProgram(blur_.id); glDeleteProgram(main_.id); glDeleteProgram(out_.id);
@@ -202,7 +205,8 @@ void Engine::release() {
 // The GL context this engine belonged to is gone (lost surface, new context). Its object names mean nothing in the current context:
 // deleting them there raises GL_INVALID_VALUE (or worse, frees someone else's objects), so forget them without any GL call.
 void Engine::abandon() {
-    for (Target *t : {&l0_, &bs_, &bl_, &bd_, &tmp_, &e_, &outT_}) *t = Target();
+    for (Target *t : {&l0_, &bs_, &bl_, &bd_, &tmp_, &e_, &outT_, &eS_, &outS_}) *t = Target();
+    for (Prog *pr : {&lowres_, &blur_, &main_, &out_}) pr->loc.clear();
     srcTex_ = blocksTex_ = masksTex_ = curvesTex_ = layersTex_ = overlayTex_ = baseTex_ = baseTex32_ = 0;
     lowres_.id = blur_.id = main_.id = out_.id = 0;
     vao_ = 0;
@@ -328,13 +332,13 @@ void Engine::uploadTables(const float *p) {
     }
 }
 
-void Engine::setGeometryUniforms(GLuint prog, const float *p) {
-    glUniform2f(glGetUniformLocation(prog, "uSrcSize"), float(srcW_), float(srcH_));
-    glUniform4fv(glGetUniformLocation(prog, "uCrop"), 1, p + G_CROP);
-    glUniform4fv(glGetUniformLocation(prog, "uGeo"), 1, p + G_GEO);
-    glUniform4fv(glGetUniformLocation(prog, "uGeo2"), 1, p + G_GEO2);
-    glUniform4fv(glGetUniformLocation(prog, "uLensDist"), 1, p + G_LDIST);
-    glUniform2f(glGetUniformLocation(prog, "uLensDist2"), p[G_LDIST + 4], p[G_LDIST_ON]);
+void Engine::setGeometryUniforms(Prog &prog, const float *p) {
+    glUniform2f(prog.u("uSrcSize"), float(srcW_), float(srcH_));
+    glUniform4fv(prog.u("uCrop"), 1, p + G_CROP);
+    glUniform4fv(prog.u("uGeo"), 1, p + G_GEO);
+    glUniform4fv(prog.u("uGeo2"), 1, p + G_GEO2);
+    glUniform4fv(prog.u("uLensDist"), 1, p + G_LDIST);
+    glUniform2f(prog.u("uLensDist2"), p[G_LDIST + 4], p[G_LDIST_ON]);
 }
 
 void Engine::runAnalysis(const float *p) {
@@ -366,22 +370,22 @@ void Engine::runAnalysis(const float *p) {
     glUseProgram(lowres_.id);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, srcTex_);
-    glUniform1i(glGetUniformLocation(lowres_.id, "uSrc"), 0);
-    glUniform1f(glGetUniformLocation(lowres_.id, "uFlipY"), 0.f);
-    setGeometryUniforms(lowres_.id, p);
+    glUniform1i(lowres_.u("uSrc"), 0);
+    glUniform1f(lowres_.u("uFlipY"), 0.f);
+    setGeometryUniforms(lowres_, p);
     float ratio = std::max(float(ow) / lw, float(oh) / lh);
-    glUniform1f(glGetUniformLocation(lowres_.id, "uLod"), std::clamp(std::log2(std::max(1.f, ratio)), 0.f, float(srcLevels_ - 1)));
+    glUniform1f(lowres_.u("uLod"), std::clamp(std::log2(std::max(1.f, ratio)), 0.f, float(srcLevels_ - 1)));
     glBindFramebuffer(GL_FRAMEBUFFER, l0_.fbo);
     draw();
 
     auto blurPass = [&](Target &from, Target &to, bool horizontal, float step) {
         glBindFramebuffer(GL_FRAMEBUFFER, to.fbo);
         glUseProgram(blur_.id);
-        glUniform1f(glGetUniformLocation(blur_.id, "uFlipY"), 0.f);
+        glUniform1f(blur_.u("uFlipY"), 0.f);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, from.tex);
-        glUniform1i(glGetUniformLocation(blur_.id, "uTex"), 0);
-        glUniform2f(glGetUniformLocation(blur_.id, "uStep"), horizontal ? step / lw : 0.f, horizontal ? 0.f : step / lh);
+        glUniform1i(blur_.u("uTex"), 0);
+        glUniform2f(blur_.u("uStep"), horizontal ? step / lw : 0.f, horizontal ? 0.f : step / lh);
         draw();
     };
     // bs = blur(l0), bl = blur(blur(bs)), bd = blur(bl)
@@ -393,15 +397,19 @@ void Engine::runAnalysis(const float *p) {
     blurPass(bd_, tmp_, true, 4.f);  blurPass(tmp_, bd_, false, 4.f);
 }
 
-void Engine::runMain(const float *p, Rect vis, int pw, int ph, Target &e, int margin, GLenum fmt) {
+void Engine::runMain(const float *p, Rect vis, int pw, int ph, Target &e, int margin, GLenum fmt, bool fixedCapacity) {
     int ow, oh;
     outputSize(p, ow, oh);
-    ensureTarget(e, pw + 2 * margin, ph + 2 * margin, fmt);
+    // The region is pw x ph plus the margin. A fixed capacity target is made once and only a part of it is drawn (viewport), so
+    // renders of different small sizes (histogram, picker, statistics) alternate without reallocating anything.
+    const int ew = pw + 2 * margin, eh = ph + 2 * margin;
+    if (fixedCapacity) ensureTarget(e, kSmallEdge + 2 * margin, kSmallEdge + 2 * margin, fmt);
+    else ensureTarget(e, ew, eh, fmt);
     glDisable(GL_BLEND); glDisable(GL_DEPTH_TEST); glDisable(GL_SCISSOR_TEST); glDisable(GL_CULL_FACE);
     glBindFramebuffer(GL_FRAMEBUFFER, e.fbo);
-    glViewport(0, 0, e.w, e.h);
+    glViewport(0, 0, ew, eh);
     glUseProgram(main_.id);
-    GLuint pr = main_.id;
+    Prog &pr = main_;
     struct B { GLenum target; GLuint tex; const char *name; };
     B binds[] = {
         {GL_TEXTURE_2D, srcTex_, "uSrc"}, {GL_TEXTURE_2D, bs_.tex, "uBs"}, {GL_TEXTURE_2D, bl_.tex, "uBl"},
@@ -412,49 +420,49 @@ void Engine::runMain(const float *p, Rect vis, int pw, int ph, Target &e, int ma
     for (int i = 0; i < 10; i++) {
         glActiveTexture(GL_TEXTURE0 + i);
         glBindTexture(binds[i].target, binds[i].tex);
-        glUniform1i(glGetUniformLocation(pr, binds[i].name), i);
+        glUniform1i(pr.u(binds[i].name), i);
     }
     float mx = vis.w * margin / pw, my = vis.h * margin / ph;
-    glUniform4f(glGetUniformLocation(pr, "uView"), vis.x - mx, vis.y - my, vis.w + 2 * mx, vis.h + 2 * my);
-    glUniform1f(glGetUniformLocation(pr, "uFlipY"), 0.f);
-    glUniform2f(glGetUniformLocation(pr, "uOutPx"), float(e.w), float(e.h));
+    glUniform4f(pr.u("uView"), vis.x - mx, vis.y - my, vis.w + 2 * mx, vis.h + 2 * my);
+    glUniform1f(pr.u("uFlipY"), 0.f);
+    glUniform2f(pr.u("uOutPx"), float(ew), float(eh));
     float hx = vis.w * ow / pw, hy = vis.h * oh / ph;
     float bw = std::max(float(srcW_), 1.f);
     // How many source pixels land on one output pixel (oriented crop size is in source pixels already).
     float lod = std::log2(std::max(1.f, std::max(hx, hy)));
-    glUniform1f(glGetUniformLocation(pr, "uLod"), std::clamp(lod, 0.f, float(srcLevels_ - 1)));
-    glUniform1i(glGetUniformLocation(pr, "uNumMasks"), int(p[G_NUM_MASKS] + 0.5f));
-    glUniform1i(glGetUniformLocation(pr, "uShowMask"), int(std::lround(p[G_SHOWMASK])));
-    glUniform1f(glGetUniformLocation(pr, "uAspect"), float(ow) / float(oh));
-    glUniform3fv(glGetUniformLocation(pr, "uTcaR"), 1, p + G_LTCA);
-    glUniform3fv(glGetUniformLocation(pr, "uTcaB"), 1, p + G_LTCA + 3);
-    glUniform3fv(glGetUniformLocation(pr, "uLensVig"), 1, p + G_LVIG);
-    glUniform3f(glGetUniformLocation(pr, "uLensFlags"), p[G_LTCA_ON], p[G_LVIG_ON], 0.f);
-    glUniform1f(glGetUniformLocation(pr, "uOverlayOn"), overlayW_ > 0 ? p[G_OVERLAY] : 0.f);
-    glUniformMatrix3fv(glGetUniformLocation(pr, "uToSrgb"), 1, GL_FALSE, colourMats().srgb);   // masks compare in sRGB display terms whatever the export space
+    glUniform1f(pr.u("uLod"), std::clamp(lod, 0.f, float(srcLevels_ - 1)));
+    glUniform1i(pr.u("uNumMasks"), int(p[G_NUM_MASKS] + 0.5f));
+    glUniform1i(pr.u("uShowMask"), int(std::lround(p[G_SHOWMASK])));
+    glUniform1f(pr.u("uAspect"), float(ow) / float(oh));
+    glUniform3fv(pr.u("uTcaR"), 1, p + G_LTCA);
+    glUniform3fv(pr.u("uTcaB"), 1, p + G_LTCA + 3);
+    glUniform3fv(pr.u("uLensVig"), 1, p + G_LVIG);
+    glUniform3f(pr.u("uLensFlags"), p[G_LTCA_ON], p[G_LVIG_ON], 0.f);
+    glUniform1f(pr.u("uOverlayOn"), overlayW_ > 0 ? p[G_OVERLAY] : 0.f);
+    glUniformMatrix3fv(pr.u("uToSrgb"), 1, GL_FALSE, colourMats().srgb);   // masks compare in sRGB display terms whatever the export space
     (void)bw;
     setGeometryUniforms(pr, p);
     draw();
 }
 
-static void setOutUniforms(GLuint pr, const float *p, int pw, int ph, Rect vis, float aspect, float flip, float hiPrec, int margin, int space) {
-    glUniform1i(glGetUniformLocation(pr, "uE"), 0);
-    glUniform1i(glGetUniformLocation(pr, "uBase"), 1);
-    glUniform1i(glGetUniformLocation(pr, "uBase32"), 2);
-    glUniform2i(glGetUniformLocation(pr, "uMargin"), margin, margin);
-    glUniform2f(glGetUniformLocation(pr, "uPx"), float(pw), float(ph));
-    glUniform4fv(glGetUniformLocation(pr, "uDetail"), 1, p + G_DETAIL);
-    glUniform2fv(glGetUniformLocation(pr, "uNr"), 1, p + G_NR);
-    glUniform4fv(glGetUniformLocation(pr, "uFx"), 1, p + G_FX);
-    glUniform4fv(glGetUniformLocation(pr, "uFx2"), 1, p + G_FX2);
-    glUniform4f(glGetUniformLocation(pr, "uView"), vis.x, vis.y, vis.w, vis.h);
-    glUniform1f(glGetUniformLocation(pr, "uAspect"), aspect);
+template <class ProgT> static void setOutUniforms(ProgT &pr, const float *p, int pw, int ph, Rect vis, float aspect, float flip, float hiPrec, int margin, int space) {
+    glUniform1i(pr.u("uE"), 0);
+    glUniform1i(pr.u("uBase"), 1);
+    glUniform1i(pr.u("uBase32"), 2);
+    glUniform2i(pr.u("uMargin"), margin, margin);
+    glUniform2f(pr.u("uPx"), float(pw), float(ph));
+    glUniform4fv(pr.u("uDetail"), 1, p + G_DETAIL);
+    glUniform2fv(pr.u("uNr"), 1, p + G_NR);
+    glUniform4fv(pr.u("uFx"), 1, p + G_FX);
+    glUniform4fv(pr.u("uFx2"), 1, p + G_FX2);
+    glUniform4f(pr.u("uView"), vis.x, vis.y, vis.w, vis.h);
+    glUniform1f(pr.u("uAspect"), aspect);
     float fullPx = pw / std::max(vis.w, 1e-6f);
-    glUniform1f(glGetUniformLocation(pr, "uPxScale"), fullPx / 1920.f);
-    glUniformMatrix3fv(glGetUniformLocation(pr, "uToSrgb"), 1, GL_FALSE, space == 1 ? colourMats().p3 : colourMats().srgb);
-    glUniform1f(glGetUniformLocation(pr, "uHiPrec"), hiPrec);
-    glUniform1f(glGetUniformLocation(pr, "uChecker"), flip > 0.5f ? 1.f : 0.f);
-    glUniform1f(glGetUniformLocation(pr, "uFlipY"), flip);
+    glUniform1f(pr.u("uPxScale"), fullPx / 1920.f);
+    glUniformMatrix3fv(pr.u("uToSrgb"), 1, GL_FALSE, space == 1 ? colourMats().p3 : colourMats().srgb);
+    glUniform1f(pr.u("uHiPrec"), hiPrec);
+    glUniform1f(pr.u("uChecker"), flip > 0.5f ? 1.f : 0.f);
+    glUniform1f(pr.u("uFlipY"), flip);
 }
 
 bool Engine::renderToScreen(const float *p, int vx, int vy, int vw, int vh, Rect vis) {
@@ -465,7 +473,7 @@ bool Engine::renderToScreen(const float *p, int vx, int vy, int vw, int vh, Rect
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
     uploadTables(p);
     runAnalysis(p);
-    runMain(p, vis, vw, vh, e_, kMargin, GL_RGBA16F);
+    runMain(p, vis, vw, vh, e_, kMargin, GL_RGBA16F, false);
     glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
     glViewport(vx, vy, vw, vh);
     glUseProgram(out_.id);
@@ -477,7 +485,7 @@ bool Engine::renderToScreen(const float *p, int vx, int vy, int vw, int vh, Rect
     glBindTexture(GL_TEXTURE_2D, baseTex32_);
     int ow, oh;
     outputSize(p, ow, oh);
-    setOutUniforms(out_.id, p, vw, vh, vis, float(ow) / oh, 1.f, 0.f, kMargin, 0);
+    setOutUniforms(out_, p, vw, vh, vis, float(ow) / oh, 1.f, 0.f, kMargin, 0);
     draw();
     return targetsOk_ && glGetError() == GL_NO_ERROR;   // false: the frame is black or stale, the caller can say so
 }
@@ -487,21 +495,27 @@ bool Engine::drawOutput(const float *p, int pw, int ph, Rect vis) {
     targetsOk_ = true;
     uploadTables(p);
     runAnalysis(p);
-    runMain(p, vis, pw, ph, e_, kMargin, hiPrec_ ? GL_RGBA32F : GL_RGBA16F);
-    ensureTarget(outT_, pw, ph, hiPrec_ ? GL_RGBA32F : GL_RGBA8);
-    glBindFramebuffer(GL_FRAMEBUFFER, outT_.fbo);
+    // Small renders (histogram, colour picker, auto statistics, heal patches) have their own targets, so they never resize the
+    // targets the screen frame uses (each resize freed and re-made a screen sized RGBA16F texture, twice per slider tick).
+    const bool small = pw <= kSmallEdge && ph <= kSmallEdge && !forceBigTargets_;
+    Target &e = small ? eS_ : e_;
+    Target &o = small ? outS_ : outT_;
+    runMain(p, vis, pw, ph, e, kMargin, hiPrec_ ? GL_RGBA32F : GL_RGBA16F, small);
+    if (small) ensureTarget(o, kSmallEdge, kSmallEdge, hiPrec_ ? GL_RGBA32F : GL_RGBA8);
+    else ensureTarget(o, pw, ph, hiPrec_ ? GL_RGBA32F : GL_RGBA8);
+    glBindFramebuffer(GL_FRAMEBUFFER, o.fbo);
     glViewport(0, 0, pw, ph);
     glUseProgram(out_.id);
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, e_.tex);
+    glBindTexture(GL_TEXTURE_2D, e.tex);
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, baseTex_);
     glActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_2D, baseTex32_);
     int ow, oh;
     outputSize(p, ow, oh);
-    setOutUniforms(out_.id, p, pw, ph, vis, float(ow) / oh, 0.f, hiPrec_ ? 1.f : 0.f, kMargin, outputSpace_);
-    glUniform1f(glGetUniformLocation(out_.id, "uMark"), debugOutside_ ? 1.f : 0.f);
+    setOutUniforms(out_, p, pw, ph, vis, float(ow) / oh, 0.f, hiPrec_ ? 1.f : 0.f, kMargin, outputSpace_);
+    glUniform1f(out_.u("uMark"), debugOutside_ ? 1.f : 0.f);
     draw();
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     return targetsOk_;

@@ -2,6 +2,7 @@
 #include <GLES3/gl3.h>
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace rl {
@@ -51,8 +52,26 @@ public:
 
     void invalidateAnalysis() { analysisKey_ = ~0ull; }
 
+    /** Tests only: render small regions through the screen sized targets too, to compare the two paths. */
+    void setForceBigTargets(bool on) { forceBigTargets_ = on; }
+
+    /** How many render targets have been (re)allocated so far. Tests only: steady state rendering must not grow it. */
+    uint64_t targetAllocations() const { return targetAllocs_; }
+
 private:
-    struct Prog { GLuint id = 0; };
+    /** A linked program and its uniform locations (looked up once per name: about 60 glGetUniformLocation calls a frame before). The key is the
+     *  address of the string literal at the call site, so the lookup is a pointer hash, not a string compare. */
+    struct Prog {
+        GLuint id = 0;
+        std::unordered_map<const char *, GLint> loc;
+        GLint u(const char *name) {
+            auto it = loc.find(name);
+            if (it != loc.end()) return it->second;
+            GLint l = glGetUniformLocation(id, name);
+            loc.emplace(name, l);
+            return l;
+        }
+    };
     struct Target { GLuint tex = 0, fbo = 0; int w = 0, h = 0; GLenum fmt = 0; };
 
     bool build(Prog &p, const char *vs, const char *fs, std::string &err);
@@ -60,16 +79,16 @@ private:
     void freeTarget(Target &t);
     void uploadTables(const float *params);
     void runAnalysis(const float *params);
-    void runMain(const float *params, Rect vis, int pw, int ph, Target &e, int margin, GLenum fmt);
+    void runMain(const float *params, Rect vis, int pw, int ph, Target &e, int margin, GLenum fmt, bool fixedCapacity);
     bool drawOutput(const float *params, int pw, int ph, Rect vis);
     static void drainErrors() { int guard = 0; while (glGetError() != GL_NO_ERROR && ++guard < 16) {} }
-    void setGeometryUniforms(GLuint prog, const float *params);
+    void setGeometryUniforms(Prog &prog, const float *params);
     void draw();
 
     Prog lowres_, blur_, main_, out_;
     GLuint vao_ = 0;
     GLuint srcTex_ = 0, blocksTex_ = 0, masksTex_ = 0, curvesTex_ = 0, layersTex_ = 0, overlayTex_ = 0, baseTex_ = 0, baseTex32_ = 0;
-    Target l0_, bs_, bl_, bd_, tmp_, e_, outT_;
+    Target l0_, bs_, bl_, bd_, tmp_, e_, outT_, eS_, outS_;   // eS_ and outS_: small renders (see drawOutput)
     int srcW_ = 0, srcH_ = 0, srcLevels_ = 1;
     int overlayW_ = 0;
     uint64_t analysisKey_ = ~0ull;
@@ -79,6 +98,8 @@ private:
     bool debugOutside_ = false;
     bool hiPrec_ = false;
     bool targetsOk_ = true;
+    uint64_t targetAllocs_ = 0;
+    bool forceBigTargets_ = false;
 };
 
 }  // namespace rl

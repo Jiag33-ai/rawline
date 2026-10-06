@@ -8,5 +8,5 @@ mkdir -p $OUT
 cmake -DSHADER_DIR="$C/shaders" -DOUT="$OUT/shader_sources.h" -P "$C/gen_shaders.cmake"
 LR=${LIBRAW_SRC:-/tmp/lrbuild/LibRaw-0.22.2}
 g++ -O2 -std=c++17 -I"$OUT" -I"$C" -I"$C/engine" -I"$LR" "$ROOT/tools/golden/golden.cpp" "$C/engine/engine.cpp" "$C/raw_decode.cpp" \
-  ${LIBRAW_A:-/tmp/lrbuild/libraw_host.a} -lEGL -lGLESv2 -lpthread -o $OUT/golden
+  ${LIBRAW_A:-/tmp/lrbuild/libraw_host.a} -fopenmp -lEGL -lGLESv2 -lpthread -o $OUT/golden
 echo built $OUT/golden

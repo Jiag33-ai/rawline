@@ -74,6 +74,10 @@ class EditorSession(
     private var loadStart = 0L
     private var firstFrameDone = false
     @Volatile private var wantHistogram = false
+    private val histogramGate = HistogramGate()
+    @Volatile private var histogramTimerPending = false
+    private var histBuf = ByteArray(0)
+    private val paramsBuf = FloatArray(P.TOTAL)   // the parameter array is rebuilt on every slider tick; one array is reused (GL thread only)
     private var drawFailureShown = false
 
     @Volatile private var recipe = EditRecipe()
@@ -259,7 +263,6 @@ class EditorSession(
             val n = w * h
             fun pct(p: Float): Float { var acc = 0; val t = (n * p).toInt(); for (k in 0 until 256) { acc += luma[k]; if (acc >= t) return k / 255f }; return 1f }
             d.complete(ImageStats(pct(0.01f), pct(0.05f), pct(0.5f), pct(0.95f), pct(0.99f), (r / n / 255).toFloat(), (g / n / 255).toFloat(), (b / n / 255).toFloat()))
-            requestRender()
         }
         return d.await()
     }
@@ -274,8 +277,7 @@ class EditorSession(
             if (!Native.engineRenderRegion(engine, params, 8, 8, x, y, 2 * hw, 2 * hw, buf)) { d.complete(null); return@post }
             var r = 0f; var g = 0f; var b = 0f
             for (i in 0 until 64) { r += buf[i * 4].toInt() and 0xFF; g += buf[i * 4 + 1].toInt() and 0xFF; b += buf[i * 4 + 2].toInt() and 0xFF }
-            d.complete(floatArrayOf(r / 64f / 255f, g / 64f / 255f, b / 64f / 255f))
-            requestRender()
+            d.complete(floatArrayOf(r / 64f / 255f, g / 64f / 255f, b / 64f / 255f))   // small targets: the screen frame is untouched
         }
         return d.await()
     }
@@ -464,7 +466,7 @@ class EditorSession(
         var r = if (before) EditRecipe() else recipe
         if (cropMode && !before) r = r.copy(geometry = r.geometry.copy(cropX = 0f, cropY = 0f, cropW = 1f, cropH = 1f))
         val arr = RenderParams.build(r, orientation, layerIndex, showMask = if (before) -1 else showMask, overlayOn = overlayOn && !before, lens = if (before) null else lens, useBaseline = !finishedPicture,
-            srcW = if (cropMode || before) 0 else srcW, srcH = if (cropMode || before) 0 else srcH)
+            out = paramsBuf, srcW = if (cropMode || before) 0 else srcW, srcH = if (cropMode || before) 0 else srcH)
         val crop = floatArrayOf(arr[P.G_CROP], arr[P.G_CROP + 1], arr[P.G_CROP + 2], arr[P.G_CROP + 3])
         val cropChanged = !crop.contentEquals(effectiveCrop)
         effectiveCrop = crop
@@ -527,8 +529,17 @@ class EditorSession(
             ensureFull()
         }
         if (wantHistogram) {
-            wantHistogram = false
-            computeHistogram()
+            // At most one histogram every HistogramGate.MIN_GAP_MS while sliders move; the last request always runs (a delayed frame).
+            val wait = histogramGate.check(System.nanoTime() / 1_000_000)
+            if (wait == 0L) {
+                wantHistogram = false
+                computeHistogram()
+            } else if (!histogramTimerPending) {
+                histogramTimerPending = true
+                val v = glView
+                if (v == null) histogramTimerPending = false
+                else v.postDelayed({ histogramTimerPending = false; requestRender() }, wait)
+            }
         }
         onTiming("frame_render_ms", (System.nanoTime() - t0) / 1_000_000)
     }
@@ -538,7 +549,8 @@ class EditorSession(
         val ow = geometryOutSize[0].toFloat().coerceAtLeast(1f)
         val oh = geometryOutSize[1].toFloat().coerceAtLeast(1f)
         val h = (w * oh / ow).toInt().coerceIn(16, 512)
-        val buf = ByteArray(w * h * 4)
+        if (histBuf.size != w * h * 4) histBuf = ByteArray(w * h * 4)
+        val buf = histBuf
         if (!Native.engineRenderRegion(engine, params, w, h, 0f, 0f, 1f, 1f, buf)) return
         val hist = IntArray(256 * 3)
         var i = 0
@@ -549,7 +561,6 @@ class EditorSession(
             i += 4
         }
         _histogram.value = hist
-        // renderRegion used the shared target; redraw the screen next frame
-        requestRender()
+        // No redraw: this render uses the engine's small targets, so the screen frame and its targets are untouched.
     }
 }

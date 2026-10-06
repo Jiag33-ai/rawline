@@ -97,6 +97,41 @@ int main() {
         CHECK(e.sourceW() == 96, "size after refused uploads");
     }
 
+#ifndef OLD_ENGINE
+    // ---- AE-010: histogram, picker and statistics renders must not resize the targets the screen frame uses ----
+    {
+        Engine e;
+        CHECK(e.init(err), "init: %s", err.c_str());
+        auto img = picture(512, 384, 0.5f);
+        CHECK(e.setSource(512, 384, img.data()), "upload");
+        auto p = params();
+        std::vector<uint8_t> big(800 * 600 * 4), small(256 * 171 * 4), tiny(8 * 8 * 4);
+        CHECK(e.renderRegion(p.data(), 800, 600, {0, 0, 1, 1}, big.data()), "screen sized render");
+        CHECK(e.renderRegion(p.data(), 256, 171, {0, 0, 1, 1}, small.data()), "histogram sized render");
+        CHECK(e.renderRegion(p.data(), 8, 8, {0.4f, 0.4f, 0.01f, 0.01f}, tiny.data()), "picker sized render");
+        uint64_t settled = e.targetAllocations();
+        for (int i = 0; i < 20; i++) {   // a slider drag: a screen frame, a histogram, a sample, over and over
+            CHECK(e.renderRegion(p.data(), 800, 600, {0, 0, 1, 1}, big.data()), "screen frame");
+            CHECK(e.renderRegion(p.data(), 256, 171, {0, 0, 1, 1}, small.data()), "histogram");
+            CHECK(e.renderRegion(p.data(), 8, 8, {0.4f, 0.4f, 0.01f, 0.01f}, tiny.data()), "sample");
+        }
+        CHECK(e.targetAllocations() == settled, "steady state reallocated render targets %llu times", (unsigned long long)(e.targetAllocations() - settled));
+        // the small render must still give the same picture as a render at that size through the big targets would (same pipeline)
+        std::vector<uint8_t> again(256 * 171 * 4);
+        e.renderRegion(p.data(), 256, 171, {0, 0, 1, 1}, again.data());
+        CHECK(again == small, "small render is not repeatable");
+        // the fixed capacity small targets (drawn through a smaller viewport) give exactly the picture the exact size targets give
+        for (int w : {256, 100, 37}) {
+            int h = w * 2 / 3;
+            std::vector<uint8_t> a(size_t(w) * h * 4), b(size_t(w) * h * 4);
+            e.setForceBigTargets(false); CHECK(e.renderRegion(p.data(), w, h, {0.1f, 0.2f, 0.7f, 0.6f}, a.data()), "small path %d", w);
+            e.setForceBigTargets(true);  CHECK(e.renderRegion(p.data(), w, h, {0.1f, 0.2f, 0.7f, 0.6f}, b.data()), "big path %d", w);
+            e.setForceBigTargets(false);
+            CHECK(a == b, "small and exact size targets disagree at %dx%d", w, h);
+        }
+    }
+#endif
+
     // ---- AE-034: a stale GL error must not fail a good upload ----
     {
         Engine e;
