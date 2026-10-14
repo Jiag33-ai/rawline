@@ -107,7 +107,7 @@ jobs:
           ./gradlew lintDebug --no-daemon --continue
       - name: Lint reports
         if: always()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: lint-reports
           path: "**/build/reports/lint-results-debug.html"
